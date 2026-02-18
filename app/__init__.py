@@ -1,0 +1,1 @@
+"""Mahjong scoring PoC package."""

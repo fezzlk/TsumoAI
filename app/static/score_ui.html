@@ -1,0 +1,958 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>麻雀 点数算出 PoC</title>
+    <style>
+      :root {
+        --bg: #f5f1e8;
+        --card: #fffdf8;
+        --line: #d8ccb8;
+        --text: #2f2a21;
+        --accent: #0f766e;
+        --accent-2: #115e59;
+        --error: #b91c1c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Hiragino Sans", "Noto Sans JP", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 20% 10%, #fff7e3 0 18%, transparent 19%),
+          radial-gradient(circle at 80% 0%, #e4f4ef 0 16%, transparent 17%),
+          var(--bg);
+      }
+      .wrap {
+        max-width: 1120px;
+        margin: 24px auto;
+        padding: 0 16px 40px;
+      }
+      h1 {
+        margin: 0 0 14px;
+        letter-spacing: 0.02em;
+      }
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: 1fr;
+      }
+      @media (min-width: 980px) {
+        .grid {
+          grid-template-columns: 1.25fr 1fr;
+        }
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: 0 8px 20px rgba(28, 28, 30, 0.04);
+      }
+      .card h2 {
+        margin-top: 0;
+        font-size: 1.08rem;
+      }
+      label { display: block; margin: 10px 0 4px; font-weight: 600; }
+      input[type="text"], input[type="number"], select, textarea {
+        width: 100%;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fff;
+      }
+      textarea { min-height: 84px; }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .checks {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .check {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
+      }
+      button {
+        margin-top: 14px;
+        border: 0;
+        background: linear-gradient(120deg, var(--accent), var(--accent-2));
+        color: #fff;
+        border-radius: 10px;
+        font-weight: 700;
+        padding: 10px 16px;
+        cursor: pointer;
+      }
+      pre {
+        white-space: pre-wrap;
+        background: #f8f9fb;
+        border-radius: 10px;
+        padding: 12px;
+        border: 1px solid #e6e8ef;
+        font-size: 0.92rem;
+      }
+      .hint { color: #5f5849; font-size: 0.9rem; }
+      .error { color: var(--error); font-weight: 700; }
+      .result-line { margin: 6px 0; }
+      .tile-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px;
+        border: 1px solid #e6e8ef;
+        border-radius: 10px;
+        background: #fafbfd;
+        min-height: 72px;
+      }
+      .tile-row img {
+        width: 44px;
+        height: auto;
+        border-radius: 4px;
+        border: 1px solid #d7dce8;
+        background: #fff;
+      }
+      .tile-fallback {
+        width: 44px;
+        height: 62px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        background: #fff;
+      }
+      .feedback-card {
+        margin-top: 14px;
+        padding: 12px;
+        border: 1px solid #d5dbe7;
+        border-radius: 10px;
+        background: #fbfcff;
+      }
+      .feedback-title {
+        margin: 0 0 8px;
+        font-size: 0.98rem;
+      }
+      .feedback-status {
+        margin-top: 8px;
+        font-size: 0.88rem;
+        color: #0b5f58;
+      }
+      .small {
+        font-size: 0.84rem;
+      }
+      .pattern-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 8px 0 12px;
+      }
+      .pattern-item {
+        border: 1px solid #d8dfeb;
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
+      }
+      .hidden { display: none !important; }
+      .disabled-block {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+      .section-block {
+        border: 1px solid #d8dfeb;
+        border-radius: 10px;
+        padding: 10px;
+        background: #fff;
+        margin-bottom: 10px;
+      }
+      .meld-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 8px;
+      }
+      .slot-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .tile-slot-btn {
+        margin-top: 0;
+        background: #334155;
+        padding: 6px;
+        border-radius: 8px;
+        min-width: 54px;
+        min-height: 70px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .tile-slot-btn img {
+        width: 36px;
+        height: auto;
+      }
+      .pair-tiles {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+      }
+      .pair-tiles img {
+        width: 24px;
+        height: auto;
+      }
+      .tile-slot-btn.empty {
+        color: #d1d5db;
+        font-size: 0.72rem;
+      }
+      .pair-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 8px;
+      }
+      .picker-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.35);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+        z-index: 1200;
+      }
+      .picker-modal.open { display: flex; }
+      .picker-panel {
+        width: min(940px, 100%);
+        max-height: 88vh;
+        overflow: auto;
+        padding: 12px;
+        border: 1px solid #d9dde7;
+        border-radius: 12px;
+        background: #fcfdff;
+        box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+      }
+      .picker-grid {
+        display: grid;
+        grid-template-columns: repeat(10, minmax(34px, 1fr));
+        gap: 6px;
+      }
+      .picker-btn {
+        border: 1px solid #d0d7e2;
+        border-radius: 8px;
+        background: #fff;
+        padding: 2px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 54px;
+      }
+      .picker-btn img { width: 32px; }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <h1>麻雀 点数算出モジュール</h1>
+      <p class="hint">牌姿と補完情報を入力し、<code>/api/v1/score</code> を呼び出します。</p>
+      <div class="grid">
+        <section class="card">
+          <h2>入力</h2>
+
+          <label>和了形</label>
+          <label class="pattern-item" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <input type="checkbox" id="jsonDirectSwitch" />
+            JSON直接入力
+          </label>
+          <label for="handJsonInput">手牌JSON（closed_tiles / melds / win_tile）</label>
+          <textarea id="handJsonInput" disabled></textarea>
+          <p class="hint">JSON直接入力ONで編集可能。OFF時は牌入力フォーム状態で自動上書きされます。</p>
+
+          <div id="tileInputArea">
+          <div class="pattern-row">
+            <label class="pattern-item"><input type="radio" name="handPattern" value="standard" checked /> 4面子1雀頭</label>
+            <label class="pattern-item"><input type="radio" name="handPattern" value="chiitoi" /> 七対子</label>
+            <label class="pattern-item"><input type="radio" name="handPattern" value="kokushi" /> 国士無双</label>
+          </div>
+
+          <div id="patternStandard" class="section-block">
+            <div class="meld-grid" id="standardMelds"></div>
+          </div>
+
+          <div id="patternChiitoi" class="section-block hidden">
+            <label>対子 x 7</label>
+            <div class="pair-grid" id="chiitoiPairs"></div>
+          </div>
+
+          <div id="patternKokushi" class="section-block hidden">
+            <label>対子（国士無双）</label>
+            <div class="slot-row">
+              <button type="button" class="tile-slot-btn empty" id="kokushiPairBtn">対子</button>
+            </div>
+            <p class="hint">構成牌は国士無双13種から、選択した対子1種を重ねた14枚になります。</p>
+          </div>
+          </div>
+
+          <label for="melds">副露JSON (任意)</label>
+          <textarea id="melds">[]</textarea>
+          <p class="hint">この入力は予備です。通常は上のフォームで手牌を組みます。</p>
+
+          <div class="row">
+            <div>
+              <label for="winType">和了方法</label>
+              <select id="winType">
+                <option value="ron">ロン</option>
+                <option value="tsumo">ツモ</option>
+              </select>
+            </div>
+            <div>
+              <label for="isDealer">親</label>
+              <select id="isDealer">
+                <option value="false" selected>子</option>
+                <option value="true">親</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="roundWind">場風</label>
+              <select id="roundWind">
+                <option>E</option><option>S</option><option>W</option><option>N</option>
+              </select>
+            </div>
+            <div>
+              <label for="seatWind">自風</label>
+              <select id="seatWind">
+                <option>E</option><option selected>S</option><option>W</option><option>N</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="doraIndicators">ドラ表示牌 (カンマ区切り)</label>
+              <input id="doraIndicators" type="text" value="4m" />
+            </div>
+            <div>
+              <label for="akaDoraCount">赤ドラ枚数</label>
+              <input id="akaDoraCount" type="number" min="0" value="0" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="honba">本場</label>
+              <input id="honba" type="number" min="0" value="0" />
+            </div>
+            <div>
+              <label for="kyotaku">供託</label>
+              <input id="kyotaku" type="number" min="0" value="0" />
+            </div>
+          </div>
+
+          <label for="renpuFu">連風符</label>
+          <select id="renpuFu">
+            <option value="4" selected>4符</option>
+            <option value="2">2符</option>
+          </select>
+
+          <label>フラグ</label>
+          <div class="checks">
+            <label class="check"><input id="riichi" type="checkbox" /> 立直</label>
+            <label class="check"><input id="ippatsu" type="checkbox" /> 一発</label>
+            <label class="check"><input id="haitei" type="checkbox" /> 海底</label>
+            <label class="check"><input id="houtei" type="checkbox" /> 河底</label>
+            <label class="check"><input id="rinshan" type="checkbox" /> 嶺上</label>
+            <label class="check"><input id="chankan" type="checkbox" /> 槍槓</label>
+          </div>
+
+          <button id="submitBtn">点数を算出</button>
+          <div id="error" class="error"></div>
+        </section>
+
+        <section class="card">
+          <h2>結果</h2>
+          <label>入力牌姿（画像）</label>
+          <div id="handImage" class="tile-row"></div>
+          <div id="summary"></div>
+          <label>リクエストJSON</label>
+          <pre id="requestJson"></pre>
+          <label>レスポンスJSON</label>
+          <pre id="responseJson"></pre>
+
+          <div class="feedback-card">
+            <p class="feedback-title">誤り指摘（GCS保存）</p>
+            <p class="hint small">算出結果が誤っている場合、訂正値を入力して送信してください。</p>
+            <div class="row">
+              <div>
+                <label for="correctedHan">訂正 翻</label>
+                <input id="correctedHan" type="number" min="0" />
+              </div>
+              <div>
+                <label for="correctedFu">訂正 符</label>
+                <input id="correctedFu" type="number" min="0" />
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label for="correctedLabel">訂正 点数ラベル</label>
+                <input id="correctedLabel" type="text" placeholder="例: 満貫" />
+              </div>
+              <div>
+                <label for="correctedTotal">訂正 受取合計</label>
+                <input id="correctedTotal" type="number" min="0" />
+              </div>
+            </div>
+            <label for="correctedJson">訂正結果JSON（任意、上書き）</label>
+            <textarea id="correctedJson" placeholder='{"han":3,"fu":40,"point_label":"満貫"}'></textarea>
+            <div class="row">
+              <div>
+                <label for="reporter">報告者（任意）</label>
+                <input id="reporter" type="text" placeholder="name or id" />
+              </div>
+              <div>
+                <label for="feedbackComment">コメント</label>
+                <input id="feedbackComment" type="text" placeholder="どこが違うか" />
+              </div>
+            </div>
+            <button id="sendFeedbackBtn" type="button">訂正を送信</button>
+            <div id="feedbackStatus" class="feedback-status"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div id="tilePickerModal" class="picker-modal">
+      <div class="picker-panel">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <strong>牌を選択</strong>
+          <button id="closeTilePickerBtn" type="button" style="margin-top:0;background:#64748b;">中断</button>
+        </div>
+        <div id="tilePickerTarget" class="hint" style="margin:6px 0 10px;"></div>
+        <div id="tilePickerGrid" class="picker-grid"></div>
+      </div>
+    </div>
+
+    <script>
+      const KOKUSHI_TILES = ["1m","9m","1p","9p","1s","9s","E","S","W","N","P","F","C"];
+      const TILE_LIST = [
+        "1m","2m","3m","4m","5m","6m","7m","8m","9m","5mr",
+        "1p","2p","3p","4p","5p","6p","7p","8p","9p","5pr",
+        "1s","2s","3s","4s","5s","6s","7s","8s","9s","5sr",
+        "E","S","W","N","P","F","C"
+      ];
+
+      function value(id) { return document.getElementById(id).value; }
+      function checked(id) { return document.getElementById(id).checked; }
+      function toInt(id) { return Number.parseInt(value(id), 10) || 0; }
+      function parseCsvTiles(raw) {
+        return raw.split(",").map(v => v.trim()).filter(Boolean);
+      }
+
+      function tileToFilename(tileCode) {
+        const t = tileCode.trim();
+        if (/^5[smpr]r$/.test(t)) return `Mpu0${t[1]}.png`;
+        if (/^[1-9][mps]$/.test(t)) return `Mpu${t[0]}${t[1]}.png`;
+        const honors = { E: "1", S: "2", W: "3", N: "4", P: "5", F: "6", C: "7" };
+        if (honors[t]) return `Mpu${honors[t]}z.png`;
+        return null;
+      }
+
+      class TilePreviewComponent {
+        constructor(container, imgClass = "preview-tile", fallbackClass = "preview-fallback") {
+          this.container = container;
+          this.imgClass = imgClass;
+          this.fallbackClass = fallbackClass;
+        }
+
+        _createNode(tile) {
+          const filename = tileToFilename(tile);
+          if (!filename) {
+            const fb = document.createElement("div");
+            fb.className = this.fallbackClass;
+            fb.textContent = tile;
+            return fb;
+          }
+          const img = document.createElement("img");
+          img.className = this.imgClass;
+          img.src = `/static/tiles/${filename}`;
+          img.alt = tile;
+          img.title = tile;
+          img.onerror = () => {
+            const fb = document.createElement("div");
+            fb.className = this.fallbackClass;
+            fb.textContent = tile;
+            img.replaceWith(fb);
+          };
+          return img;
+        }
+
+        render(tiles) {
+          this.container.innerHTML = "";
+          tiles.forEach((t) => this.container.appendChild(this._createNode(t)));
+        }
+      }
+
+      class TilePickerModalComponent {
+        constructor(modalId, gridId, targetId, closeBtnId) {
+          this.modal = document.getElementById(modalId);
+          this.grid = document.getElementById(gridId);
+          this.target = document.getElementById(targetId);
+          this.closeBtn = document.getElementById(closeBtnId);
+          this.selectHandler = null;
+          this._renderGrid();
+          this.closeBtn.addEventListener("click", () => this.close());
+          this.modal.addEventListener("click", (e) => {
+            if (e.target === this.modal) this.close();
+          });
+        }
+
+        _renderGrid() {
+          this.grid.innerHTML = "";
+          TILE_LIST.forEach((tile) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "picker-btn";
+            btn.title = tile;
+            const filename = tileToFilename(tile);
+            if (filename) {
+              const img = document.createElement("img");
+              img.src = `/static/tiles/${filename}`;
+              img.alt = tile;
+              btn.appendChild(img);
+            } else {
+              btn.textContent = tile;
+            }
+            btn.addEventListener("click", () => {
+              if (this.selectHandler) this.selectHandler(tile);
+              this.close();
+            });
+            this.grid.appendChild(btn);
+          });
+        }
+
+        open(targetText, onSelect) {
+          this.target.textContent = targetText;
+          this.selectHandler = onSelect;
+          this.modal.classList.add("open");
+        }
+
+        close() {
+          this.selectHandler = null;
+          this.modal.classList.remove("open");
+        }
+      }
+
+      const handPreview = new TilePreviewComponent(document.getElementById("handImage"), "", "tile-fallback");
+      const picker = new TilePickerModalComponent("tilePickerModal", "tilePickerGrid", "tilePickerTarget", "closeTilePickerBtn");
+
+      const uiState = {
+        pattern: "standard",
+        jsonDirect: false,
+        standard: {
+          melds: Array.from({ length: 4 }, () => ({ type: "concealed", tiles: [null, null, null, null] })),
+          pair: null
+        },
+        chiitoi: { pairs: Array.from({ length: 7 }, () => null) },
+        kokushi: { pair: null }
+      };
+
+      function openPickerForPair(targetKey, label) {
+        picker.open(label, (tile) => {
+          targetKey.setter(tile);
+          renderAllPatternInputs();
+        });
+      }
+
+      function setSlotButtonContent(btn, tile) {
+        btn.classList.toggle("empty", !tile);
+        btn.innerHTML = "";
+        if (!tile) {
+          btn.textContent = "未選択";
+          return;
+        }
+        const filename = tileToFilename(tile);
+        if (!filename) {
+          btn.textContent = tile;
+          return;
+        }
+        const img = document.createElement("img");
+        img.src = `/static/tiles/${filename}`;
+        img.alt = tile;
+        btn.appendChild(img);
+      }
+
+      function setPairButtonContent(btn, tile) {
+        btn.classList.toggle("empty", !tile);
+        btn.innerHTML = "";
+        if (!tile) {
+          btn.textContent = "未選択";
+          return;
+        }
+        const filename = tileToFilename(tile);
+        if (!filename) {
+          btn.textContent = `${tile}${tile}`;
+          return;
+        }
+        const wrap = document.createElement("div");
+        wrap.className = "pair-tiles";
+        for (let i = 0; i < 2; i += 1) {
+          const img = document.createElement("img");
+          img.src = `/static/tiles/${filename}`;
+          img.alt = tile;
+          wrap.appendChild(img);
+        }
+        btn.appendChild(wrap);
+      }
+
+      function requiredMeldLen(type) {
+        return type === "kan" ? 4 : 3;
+      }
+
+      function buildStandardMeldInputs() {
+        const root = document.getElementById("standardMelds");
+        root.innerHTML = "";
+        uiState.standard.melds.forEach((m, idx) => {
+          const block = document.createElement("div");
+          block.className = "section-block";
+
+          const title = document.createElement("label");
+          title.textContent = `面子${idx + 1}`;
+          block.appendChild(title);
+
+          const sel = document.createElement("select");
+          sel.innerHTML = `
+            <option value="concealed">副露なし</option>
+            <option value="pon">ポン</option>
+            <option value="chi">チー</option>
+            <option value="kan">カン</option>
+          `;
+          sel.value = m.type;
+          sel.addEventListener("change", () => {
+            m.type = sel.value;
+            if (requiredMeldLen(m.type) === 3) m.tiles[3] = null;
+            renderAllPatternInputs();
+          });
+          block.appendChild(sel);
+
+          const row = document.createElement("div");
+          row.className = "slot-row";
+          const needed = requiredMeldLen(m.type);
+          for (let i = 0; i < 4; i += 1) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "tile-slot-btn";
+            if (i >= needed) b.classList.add("hidden");
+            setSlotButtonContent(b, m.tiles[i]);
+            b.addEventListener("click", () => {
+              picker.open(`面子${idx + 1} 牌${i + 1}`, (tile) => {
+                m.tiles[i] = tile;
+                renderAllPatternInputs();
+              });
+            });
+            row.appendChild(b);
+          }
+          block.appendChild(row);
+          root.appendChild(block);
+        });
+
+        const pairBlock = document.createElement("div");
+        pairBlock.className = "section-block";
+        const pairTitle = document.createElement("label");
+        pairTitle.textContent = "雀頭";
+        pairBlock.appendChild(pairTitle);
+        const pairRow = document.createElement("div");
+        pairRow.className = "slot-row";
+        const pairBtn = document.createElement("button");
+        pairBtn.type = "button";
+        pairBtn.className = "tile-slot-btn";
+        setPairButtonContent(pairBtn, uiState.standard.pair);
+        pairBtn.addEventListener("click", () => {
+          picker.open("4面子1雀頭 雀頭", (tile) => {
+            uiState.standard.pair = tile;
+            renderAllPatternInputs();
+          });
+        });
+        pairRow.appendChild(pairBtn);
+        pairBlock.appendChild(pairRow);
+        root.appendChild(pairBlock);
+      }
+
+      function renderPairButton(id, tile, label, setter) {
+        const btn = document.getElementById(id);
+        setPairButtonContent(btn, tile);
+        btn.onclick = () => openPickerForPair({ setter }, label);
+      }
+
+      function buildChiitoiInputs() {
+        const root = document.getElementById("chiitoiPairs");
+        root.innerHTML = "";
+        uiState.chiitoi.pairs.forEach((tile, i) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "tile-slot-btn";
+          setPairButtonContent(b, tile);
+          b.onclick = () => {
+            picker.open(`七対子 対子${i + 1}`, (selected) => {
+              uiState.chiitoi.pairs[i] = selected;
+              renderAllPatternInputs();
+            });
+          };
+          root.appendChild(b);
+        });
+      }
+
+      function switchPattern(pattern) {
+        uiState.pattern = pattern;
+        document.getElementById("patternStandard").classList.toggle("hidden", pattern !== "standard");
+        document.getElementById("patternChiitoi").classList.toggle("hidden", pattern !== "chiitoi");
+        document.getElementById("patternKokushi").classList.toggle("hidden", pattern !== "kokushi");
+        renderAllPatternInputs();
+        syncHandJsonFromState();
+      }
+
+      function renderAllPatternInputs() {
+        buildStandardMeldInputs();
+        buildChiitoiInputs();
+        renderPairButton("kokushiPairBtn", uiState.kokushi.pair, "国士無双 対子", (tile) => {
+          uiState.kokushi.pair = tile;
+        });
+        syncHandJsonFromState();
+      }
+
+      function setTileInputEnabled(enabled) {
+        const root = document.getElementById("tileInputArea");
+        root.classList.toggle("disabled-block", !enabled);
+        const controls = root.querySelectorAll("button, select, input[type='radio']");
+        controls.forEach((el) => {
+          el.disabled = !enabled;
+        });
+        if (!enabled) picker.close();
+      }
+
+      function buildHandByPatternState() {
+        if (uiState.pattern === "standard") {
+          if (!uiState.standard.pair) throw new Error("対子を入力してください");
+          const closedTiles = [uiState.standard.pair, uiState.standard.pair];
+          const melds = [];
+          for (const meld of uiState.standard.melds) {
+            const need = requiredMeldLen(meld.type);
+            const tiles = meld.tiles.slice(0, need);
+            if (tiles.some((t) => !t)) throw new Error("4面子1雀頭の面子牌が不足しています");
+            if (meld.type === "concealed") {
+              closedTiles.push(...tiles);
+            } else {
+              melds.push({ type: meld.type, tiles, open: true });
+            }
+          }
+          if (closedTiles.length + melds.reduce((n, m) => n + m.tiles.length, 0) !== 14) {
+            throw new Error("牌数が14枚になっていません");
+          }
+          return { closed_tiles: closedTiles, melds, win_tile: closedTiles[closedTiles.length - 1] };
+        }
+
+        if (uiState.pattern === "chiitoi") {
+          if (uiState.chiitoi.pairs.some((p) => !p)) throw new Error("七対子の対子が不足しています");
+          const closedTiles = [];
+          uiState.chiitoi.pairs.forEach((p) => {
+            closedTiles.push(p, p);
+          });
+          return { closed_tiles: closedTiles, melds: [], win_tile: closedTiles[closedTiles.length - 1] };
+        }
+
+        if (!uiState.kokushi.pair) throw new Error("国士無双の対子を入力してください");
+        if (!KOKUSHI_TILES.includes(uiState.kokushi.pair.replace("r", ""))) {
+          throw new Error("国士無双の対子は么九牌/字牌を選んでください");
+        }
+        const pairTile = uiState.kokushi.pair;
+        const base = [...KOKUSHI_TILES];
+        const closedTiles = [...base, pairTile];
+        return { closed_tiles: closedTiles, melds: [], win_tile: pairTile };
+      }
+
+      function syncHandJsonFromState() {
+        if (uiState.jsonDirect) return;
+        const box = document.getElementById("handJsonInput");
+        try {
+          box.value = JSON.stringify(buildHandByPatternState(), null, 2);
+        } catch {
+          box.value = "";
+        }
+      }
+
+      function readHandFromJsonInput() {
+        let parsed;
+        try {
+          parsed = JSON.parse(value("handJsonInput"));
+        } catch {
+          throw new Error("手牌JSONの形式が不正です");
+        }
+        if (!parsed || typeof parsed !== "object") throw new Error("手牌JSONはオブジェクトで入力してください");
+        if (!Array.isArray(parsed.closed_tiles)) throw new Error("手牌JSON: closed_tiles は配列が必要です");
+        if (!Array.isArray(parsed.melds)) throw new Error("手牌JSON: melds は配列が必要です");
+        if (!parsed.win_tile || typeof parsed.win_tile !== "string") throw new Error("手牌JSON: win_tile は文字列が必要です");
+        return parsed;
+      }
+
+      function buildHandByPattern() {
+        return uiState.jsonDirect ? readHandFromJsonInput() : buildHandByPatternState();
+      }
+
+      function buildPayload() {
+        const hand = buildHandByPattern();
+        return {
+          hand,
+          context: {
+            win_type: value("winType"),
+            is_dealer: value("isDealer") === "true",
+            round_wind: value("roundWind"),
+            seat_wind: value("seatWind"),
+            riichi: checked("riichi"),
+            ippatsu: checked("ippatsu"),
+            haitei: checked("haitei"),
+            houtei: checked("houtei"),
+            rinshan: checked("rinshan"),
+            chankan: checked("chankan"),
+            dora_indicators: parseCsvTiles(value("doraIndicators")),
+            aka_dora_count: toInt("akaDoraCount"),
+            honba: toInt("honba"),
+            kyotaku: toInt("kyotaku")
+          },
+          rules: {
+            aka_ari: true,
+            kuitan_ari: true,
+            double_yakuman_ari: true,
+            kazoe_yakuman_ari: true,
+            renpu_fu: toInt("renpuFu")
+          }
+        };
+      }
+
+      let lastScoreRequest = null;
+      let lastScoreResponse = null;
+
+      function renderHandImages(closedTiles, melds) {
+        const tiles = [...closedTiles];
+        (melds || []).forEach((m) => (m.tiles || []).forEach((t) => tiles.push(t)));
+        handPreview.render(tiles);
+      }
+
+      async function submitScore() {
+        const error = document.getElementById("error");
+        error.textContent = "";
+        document.getElementById("summary").innerHTML = "";
+
+        let payload;
+        try {
+          payload = buildPayload();
+        } catch (e) {
+          error.textContent = e.message;
+          return;
+        }
+
+        renderHandImages(payload.hand.closed_tiles, payload.hand.melds);
+        document.getElementById("requestJson").textContent = JSON.stringify(payload, null, 2);
+        lastScoreRequest = payload;
+
+        const res = await fetch("/api/v1/score", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        document.getElementById("responseJson").textContent = JSON.stringify(data, null, 2);
+        lastScoreResponse = data;
+
+        if (!res.ok) {
+          error.textContent = data.detail || "API呼び出しに失敗しました";
+          return;
+        }
+
+        const r = data.result;
+        document.getElementById("summary").innerHTML = `
+          <div class="result-line"><strong>${r.point_label}</strong></div>
+          <div class="result-line">翻: ${r.han} / 符: ${r.fu}</div>
+          <div class="result-line">ロン: ${r.points.ron}</div>
+          <div class="result-line">ツモ(親支払): ${r.points.tsumo_dealer_pay}</div>
+          <div class="result-line">ツモ(子支払): ${r.points.tsumo_non_dealer_pay}</div>
+          <div class="result-line">受取合計: ${r.payments.total_received}</div>
+        `;
+      }
+
+      function buildCorrectedResult() {
+        const correctedJson = value("correctedJson").trim();
+        if (correctedJson) {
+          try {
+            return JSON.parse(correctedJson);
+          } catch {
+            throw new Error("訂正結果JSONの形式が不正です");
+          }
+        }
+        const out = {};
+        if (value("correctedHan").trim()) out.han = toInt("correctedHan");
+        if (value("correctedFu").trim()) out.fu = toInt("correctedFu");
+        if (value("correctedLabel").trim()) out.point_label = value("correctedLabel").trim();
+        if (value("correctedTotal").trim()) out.total_received = toInt("correctedTotal");
+        return out;
+      }
+
+      async function sendFeedback() {
+        const status = document.getElementById("feedbackStatus");
+        status.textContent = "";
+        if (!lastScoreRequest || !lastScoreResponse || !lastScoreResponse.result) {
+          status.textContent = "先に点数算出を実行してください。";
+          return;
+        }
+        let corrected;
+        try {
+          corrected = buildCorrectedResult();
+        } catch (e) {
+          status.textContent = e.message;
+          return;
+        }
+        const payload = {
+          score_request: lastScoreRequest,
+          score_response: lastScoreResponse,
+          corrected_result: corrected,
+          comment: value("feedbackComment"),
+          reporter: value("reporter")
+        };
+        const res = await fetch("/api/v1/score/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          status.textContent = `送信失敗: ${data.detail || "unknown error"}`;
+          return;
+        }
+        status.textContent = `送信完了: gs://${data.storage.bucket}/${data.storage.object_name}`;
+      }
+
+      document.querySelectorAll('input[name="handPattern"]').forEach((el) => {
+        el.addEventListener("change", () => switchPattern(el.value));
+      });
+      document.getElementById("jsonDirectSwitch").addEventListener("change", (e) => {
+        const on = e.target.checked;
+        uiState.jsonDirect = on;
+        document.getElementById("handJsonInput").disabled = !on;
+        setTileInputEnabled(!on);
+        if (!on) syncHandJsonFromState();
+      });
+      document.getElementById("submitBtn").addEventListener("click", submitScore);
+      document.getElementById("sendFeedbackBtn").addEventListener("click", sendFeedback);
+
+      switchPattern("standard");
+      syncHandJsonFromState();
+      submitScore();
+    </script>
+  </body>
+</html>
