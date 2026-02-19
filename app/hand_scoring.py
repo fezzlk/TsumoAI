@@ -111,8 +111,12 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku.append(YakuItem(name="地和", han=13))
         han += 13
 
-    han += context.aka_dora_count
     dora = DoraBreakdown(dora=len(context.dora_indicators), aka_dora=context.aka_dora_count, ura_dora=0)
+    if dora.dora > 0:
+        yaku.append(YakuItem(name="ドラ", han=dora.dora))
+    if dora.aka_dora > 0:
+        yaku.append(YakuItem(name="赤ドラ", han=dora.aka_dora))
+    han += context.aka_dora_count
     han += dora.dora
     fu = 30
     label = _point_label_from_han_fu(han, fu)
