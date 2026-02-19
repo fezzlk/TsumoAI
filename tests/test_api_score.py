@@ -154,7 +154,7 @@ def test_score_feedback_success(monkeypatch):
     def fake_save(payload):
         assert "score_request" in payload
         assert "score_response" in payload
-        assert "corrected_result" in payload
+        assert "comment" in payload
         return {"bucket": "test-bucket", "object_name": "score-feedback/test.json"}
 
     monkeypatch.setattr(gcs_feedback_store, "save", fake_save)
@@ -166,9 +166,7 @@ def test_score_feedback_success(monkeypatch):
         json={
             "score_request": valid_payload(),
             "score_response": score_res.json(),
-            "corrected_result": {"han": 5, "point_label": "満貫"},
             "comment": "manual fix",
-            "reporter": "tester",
         },
     )
     assert feedback_res.status_code == 200

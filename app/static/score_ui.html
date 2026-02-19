@@ -481,40 +481,10 @@
 
           <div class="feedback-card">
             <p class="feedback-title">誤り指摘（GCS保存）</p>
-            <p class="hint small">算出結果が誤っている場合、訂正値を入力して送信してください。</p>
-            <div class="row">
-              <div>
-                <label for="correctedHan">訂正 翻</label>
-                <input id="correctedHan" type="number" min="0" />
-              </div>
-              <div>
-                <label for="correctedFu">訂正 符</label>
-                <input id="correctedFu" type="number" min="0" />
-              </div>
-            </div>
-            <div class="row">
-              <div>
-                <label for="correctedLabel">訂正 点数ラベル</label>
-                <input id="correctedLabel" type="text" placeholder="例: 満貫" />
-              </div>
-              <div>
-                <label for="correctedTotal">訂正 受取合計</label>
-                <input id="correctedTotal" type="number" min="0" />
-              </div>
-            </div>
-            <label for="correctedJson">訂正結果JSON（任意、上書き）</label>
-            <textarea id="correctedJson" placeholder='{"han":3,"fu":40,"point_label":"満貫"}'></textarea>
-            <div class="row">
-              <div>
-                <label for="reporter">報告者（任意）</label>
-                <input id="reporter" type="text" placeholder="name or id" />
-              </div>
-              <div>
-                <label for="feedbackComment">コメント</label>
-                <input id="feedbackComment" type="text" placeholder="どこが違うか" />
-              </div>
-            </div>
-            <button id="sendFeedbackBtn" type="button">訂正を送信</button>
+            <p class="hint small">算出結果が誤っている場合、自然言語でコメントを入力して送信してください。</p>
+            <label for="feedbackComment">コメント</label>
+            <textarea id="feedbackComment" placeholder="例: 立直のみで一発は付かないはず"></textarea>
+            <button id="sendFeedbackBtn" type="button">コメントを送信</button>
             <div id="feedbackStatus" class="feedback-status"></div>
           </div>
         </section>
@@ -1150,23 +1120,6 @@
         `;
       }
 
-      function buildCorrectedResult() {
-        const correctedJson = value("correctedJson").trim();
-        if (correctedJson) {
-          try {
-            return JSON.parse(correctedJson);
-          } catch {
-            throw new Error("訂正結果JSONの形式が不正です");
-          }
-        }
-        const out = {};
-        if (value("correctedHan").trim()) out.han = toInt("correctedHan");
-        if (value("correctedFu").trim()) out.fu = toInt("correctedFu");
-        if (value("correctedLabel").trim()) out.point_label = value("correctedLabel").trim();
-        if (value("correctedTotal").trim()) out.total_received = toInt("correctedTotal");
-        return out;
-      }
-
       async function sendFeedback() {
         const status = document.getElementById("feedbackStatus");
         status.textContent = "";
@@ -1174,19 +1127,15 @@
           status.textContent = "先に点数算出を実行してください。";
           return;
         }
-        let corrected;
-        try {
-          corrected = buildCorrectedResult();
-        } catch (e) {
-          status.textContent = e.message;
+        const comment = value("feedbackComment").trim();
+        if (!comment) {
+          status.textContent = "コメントを入力してください。";
           return;
         }
         const payload = {
           score_request: lastScoreRequest,
           score_response: lastScoreResponse,
-          corrected_result: corrected,
-          comment: value("feedbackComment"),
-          reporter: value("reporter")
+          comment
         };
         const res = await fetch("/api/v1/score/feedback", {
           method: "POST",
