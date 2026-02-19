@@ -105,6 +105,7 @@ class ContextInput(BaseModel):
     chiihou: bool = False
     tenhou: bool = False
     dora_indicators: list[TileCode] = Field(default_factory=list)
+    ura_dora_indicators: list[TileCode] = Field(default_factory=list)
     aka_dora_count: conint(ge=0) = 0
     honba: conint(ge=0) = 0
     kyotaku: conint(ge=0) = 0
@@ -190,9 +191,7 @@ class ResultGetResponse(BaseModel):
 class ScoreFeedbackRequest(BaseModel):
     score_request: ScoreRequest
     score_response: ScoreResponse
-    corrected_result: dict
-    comment: str = ""
-    reporter: str = ""
+    comment: str
 
 
 class ScoreFeedbackResponse(BaseModel):

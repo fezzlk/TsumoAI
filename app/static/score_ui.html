@@ -420,12 +420,18 @@
             <label>ドラ牌</label>
             <div id="doraTileRow" class="slot-row"></div>
             <button id="addDoraTileBtn" type="button" class="mini-btn">ドラ牌を追加</button>
+            <label>裏ドラ牌</label>
+            <div id="uraDoraTileRow" class="slot-row"></div>
+            <button id="addUraDoraTileBtn" type="button" class="mini-btn">裏ドラ牌を追加</button>
           </div>
 
           <div id="doraIndicatorsBlock" class="hidden">
             <label>ドラ表示牌</label>
             <div id="doraIndicatorRow" class="slot-row"></div>
             <button id="addDoraIndicatorBtn" type="button" class="mini-btn">ドラ表示牌を追加</button>
+            <label>裏ドラ表示牌</label>
+            <div id="uraDoraIndicatorRow" class="slot-row"></div>
+            <button id="addUraDoraIndicatorBtn" type="button" class="mini-btn">裏ドラ表示牌を追加</button>
           </div>
 
           <div class="row">
@@ -611,7 +617,9 @@
         doraMode: "dora",
         handJsonFromTiles: { closed_tiles: [], melds: [], win_tile: "" },
         doraTiles: ["4m"],
+        uraDoraTiles: [],
         doraIndicators: ["4m"],
+        uraDoraIndicators: [],
         standard: {
           melds: [
             { type: "concealed", tiles: ["1m", "2m", "3m", null] },
@@ -720,7 +728,9 @@
 
       function renderDoraInputs() {
         renderDoraList("doraTileRow", uiState.doraTiles, "ドラ牌", "4m");
+        renderDoraList("uraDoraTileRow", uiState.uraDoraTiles, "裏ドラ牌", "4m");
         renderDoraList("doraIndicatorRow", uiState.doraIndicators, "ドラ表示牌", "4m");
+        renderDoraList("uraDoraIndicatorRow", uiState.uraDoraIndicators, "裏ドラ表示牌", "4m");
         syncDoraModeFromUi();
       }
 
@@ -1038,6 +1048,7 @@
       function buildPayload() {
         const hand = buildHandByPattern();
         const activeDoraValues = (uiState.doraMode === "indicator" ? uiState.doraIndicators : uiState.doraTiles).filter(Boolean);
+        const activeUraDoraValues = (uiState.doraMode === "indicator" ? uiState.uraDoraIndicators : uiState.uraDoraTiles).filter(Boolean);
         const riichiState = radioValue("riichiState") || "none";
         return {
           hand,
@@ -1056,6 +1067,7 @@
             chiihou: checked("chiihou"),
             tenhou: checked("tenhou"),
             dora_indicators: activeDoraValues,
+            ura_dora_indicators: activeUraDoraValues,
             aka_dora_count: 0,
             honba: toInt("honba"),
             kyotaku: toInt("kyotaku")
@@ -1215,8 +1227,18 @@
         renderDoraInputs();
         refreshSubmitAvailability();
       });
+      document.getElementById("addUraDoraTileBtn").addEventListener("click", () => {
+        uiState.uraDoraTiles.push(null);
+        renderDoraInputs();
+        refreshSubmitAvailability();
+      });
       document.getElementById("addDoraIndicatorBtn").addEventListener("click", () => {
         uiState.doraIndicators.push(null);
+        renderDoraInputs();
+        refreshSubmitAvailability();
+      });
+      document.getElementById("addUraDoraIndicatorBtn").addEventListener("click", () => {
+        uiState.uraDoraIndicators.push(null);
         renderDoraInputs();
         refreshSubmitAvailability();
       });

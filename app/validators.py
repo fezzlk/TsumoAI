@@ -121,6 +121,8 @@ def validate_score_request(req: ScoreRequest) -> None:
     validate_tile(req.hand.win_tile)
     for tile in req.context.dora_indicators:
         validate_tile(tile)
+    for tile in req.context.ura_dora_indicators:
+        validate_tile(tile)
 
     for meld in req.hand.melds:
         if meld.type in {"chi", "pon"} and len(meld.tiles) != 3:

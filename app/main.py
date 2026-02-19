@@ -151,7 +151,6 @@ def get_result(item_id: UUID) -> ResultGetResponse:
 def score_feedback(req: ScoreFeedbackRequest) -> ScoreFeedbackResponse:
     payload = req.model_dump()
     payload["comment"] = req.comment.strip()
-    payload["reporter"] = req.reporter.strip()
     try:
         storage_info = gcs_feedback_store.save(payload)
     except ValueError as exc:
