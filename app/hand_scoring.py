@@ -83,7 +83,10 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     """Hand shape -> score. This module must not parse image bytes."""
     yaku: list[YakuItem] = []
     han = 0
-    if context.riichi:
+    if context.double_riichi:
+        yaku.append(YakuItem(name="ダブル立直", han=2))
+        han += 2
+    elif context.riichi:
         yaku.append(YakuItem(name="立直", han=1))
         han += 1
     if context.ippatsu:
@@ -101,6 +104,12 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     if context.chankan:
         yaku.append(YakuItem(name="槍槓", han=1))
         han += 1
+    if context.tenhou:
+        yaku.append(YakuItem(name="天和", han=13))
+        han += 13
+    if context.chiihou:
+        yaku.append(YakuItem(name="地和", han=13))
+        han += 13
 
     han += context.aka_dora_count
     dora = DoraBreakdown(dora=len(context.dora_indicators), aka_dora=context.aka_dora_count, ura_dora=0)

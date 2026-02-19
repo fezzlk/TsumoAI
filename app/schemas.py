@@ -96,11 +96,14 @@ class ContextInput(BaseModel):
     round_wind: Wind
     seat_wind: Wind
     riichi: bool
+    double_riichi: bool = False
     ippatsu: bool
     haitei: bool
     houtei: bool
     rinshan: bool
     chankan: bool
+    chiihou: bool = False
+    tenhou: bool = False
     dora_indicators: list[TileCode] = Field(default_factory=list)
     aka_dora_count: conint(ge=0) = 0
     honba: conint(ge=0) = 0

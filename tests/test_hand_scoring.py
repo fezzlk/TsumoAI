@@ -17,11 +17,14 @@ def base_context(**kwargs) -> ContextInput:
         "round_wind": "E",
         "seat_wind": "S",
         "riichi": True,
+        "double_riichi": False,
         "ippatsu": False,
         "haitei": False,
         "houtei": False,
         "rinshan": False,
         "chankan": False,
+        "chiihou": False,
+        "tenhou": False,
         "dora_indicators": ["4m"],
         "aka_dora_count": 2,
         "honba": 0,
@@ -65,3 +68,10 @@ def test_score_hand_shape_limit_label_haneman():
     assert result.han == 7
     assert result.point_label == "跳満"
     assert result.points.ron == 12000
+
+
+def test_score_hand_shape_double_riichi():
+    context = base_context(riichi=False, double_riichi=True, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.han == 2
+    assert any(y.name == "ダブル立直" for y in result.yaku)

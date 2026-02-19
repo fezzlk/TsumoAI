@@ -101,6 +101,26 @@
       .hint { color: #5f5849; font-size: 0.9rem; }
       .error { color: var(--error); font-weight: 700; }
       .result-line { margin: 6px 0; }
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 8px 0;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        font-size: 0.82rem;
+      }
+      .badge-empty {
+        color: #64748b;
+        border-style: dashed;
+      }
       .tile-row {
         display: flex;
         flex-wrap: wrap;
@@ -198,6 +218,37 @@
         width: 36px;
         height: auto;
       }
+      .winning-tile-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px;
+        border: 1px solid #e6e8ef;
+        border-radius: 10px;
+        background: #fafbfd;
+        min-height: 72px;
+        margin-top: 6px;
+      }
+      .winning-tile-btn {
+        margin-top: 0;
+        border: 2px solid #cbd5e1;
+        background: #fff;
+        border-radius: 8px;
+        padding: 4px;
+        min-width: 44px;
+        min-height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .winning-tile-btn.selected {
+        border-color: #0f766e;
+        box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.2);
+      }
+      .winning-tile-btn img {
+        width: 34px;
+        height: auto;
+      }
       .pair-tiles {
         display: flex;
         align-items: center;
@@ -255,6 +306,32 @@
         min-height: 54px;
       }
       .picker-btn img { width: 32px; }
+      .option-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .option-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dora-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .mini-btn {
+        margin-top: 0;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: #64748b;
+        font-size: 0.8rem;
+      }
     </style>
   </head>
   <body>
@@ -266,14 +343,6 @@
           <h2>入力</h2>
 
           <label>和了形</label>
-          <label class="pattern-item" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;">
-            <input type="checkbox" id="jsonDirectSwitch" />
-            JSON直接入力
-          </label>
-          <label for="handJsonInput">手牌JSON（closed_tiles / melds / win_tile）</label>
-          <textarea id="handJsonInput" disabled></textarea>
-          <p class="hint">JSON直接入力ONで編集可能。OFF時は牌入力フォーム状態で自動上書きされます。</p>
-
           <div id="tileInputArea">
           <div class="pattern-row">
             <label class="pattern-item"><input type="radio" name="handPattern" value="standard" checked /> 4面子1雀頭</label>
@@ -299,51 +368,64 @@
           </div>
           </div>
 
-          <label for="melds">副露JSON (任意)</label>
-          <textarea id="melds">[]</textarea>
-          <p class="hint">この入力は予備です。通常は上のフォームで手牌を組みます。</p>
-
-          <div class="row">
-            <div>
-              <label for="winType">和了方法</label>
-              <select id="winType">
-                <option value="ron">ロン</option>
-                <option value="tsumo">ツモ</option>
-              </select>
-            </div>
-            <div>
-              <label for="isDealer">親</label>
-              <select id="isDealer">
-                <option value="false" selected>子</option>
-                <option value="true">親</option>
-              </select>
-            </div>
+          <div id="winningTileBlock">
+            <label for="winningTileRow">入力牌（クリックで上がり牌を選択）</label>
+            <div id="winningTileRow" class="winning-tile-row"></div>
+            <p class="hint">牌入力で組んだ14〜18枚から上がり牌を選択します。選択中の牌は枠で表示されます。</p>
           </div>
 
-          <div class="row">
-            <div>
-              <label for="roundWind">場風</label>
-              <select id="roundWind">
-                <option>E</option><option>S</option><option>W</option><option>N</option>
-              </select>
-            </div>
-            <div>
-              <label for="seatWind">自風</label>
-              <select id="seatWind">
-                <option>E</option><option selected>S</option><option>W</option><option>N</option>
-              </select>
-            </div>
+          <label class="pattern-item" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <input type="checkbox" id="jsonDirectSwitch" />
+            JSON直接入力
+          </label>
+          <label for="handJsonInput">手牌JSON（closed_tiles / melds / win_tile）</label>
+          <textarea id="handJsonInput" disabled></textarea>
+          <p class="hint">JSON直接入力ONで編集可能。OFF時は牌入力フォーム状態で自動上書きされます。</p>
+
+          <label>和了方法</label>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="winType" value="ron" checked /> ロン</label>
+            <label class="option-item"><input type="radio" name="winType" value="tsumo" /> ツモ</label>
           </div>
 
-          <div class="row">
-            <div>
-              <label for="doraIndicators">ドラ表示牌 (カンマ区切り)</label>
-              <input id="doraIndicators" type="text" value="4m" />
-            </div>
-            <div>
-              <label for="akaDoraCount">赤ドラ枚数</label>
-              <input id="akaDoraCount" type="number" min="0" value="0" />
-            </div>
+          <label>親子</label>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="isDealer" value="false" checked /> 子</label>
+            <label class="option-item"><input type="radio" name="isDealer" value="true" /> 親</label>
+          </div>
+
+          <label>場風</label>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="roundWind" value="E" checked /> 東</label>
+            <label class="option-item"><input type="radio" name="roundWind" value="S" /> 南</label>
+            <label class="option-item"><input type="radio" name="roundWind" value="W" /> 西</label>
+            <label class="option-item"><input type="radio" name="roundWind" value="N" /> 北</label>
+          </div>
+
+          <label>自風</label>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="seatWind" value="E" /> 東</label>
+            <label class="option-item"><input type="radio" name="seatWind" value="S" checked /> 南</label>
+            <label class="option-item"><input type="radio" name="seatWind" value="W" /> 西</label>
+            <label class="option-item"><input type="radio" name="seatWind" value="N" /> 北</label>
+          </div>
+
+          <label>ドラ入力モード</label>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="doraMode" value="dora" checked /> ドラ入力</label>
+            <label class="option-item"><input type="radio" name="doraMode" value="indicator" /> ドラ表示牌入力</label>
+          </div>
+
+          <div id="doraTilesBlock">
+            <label>ドラ牌</label>
+            <div id="doraTileRow" class="slot-row"></div>
+            <button id="addDoraTileBtn" type="button" class="mini-btn">ドラ牌を追加</button>
+          </div>
+
+          <div id="doraIndicatorsBlock" class="hidden">
+            <label>ドラ表示牌</label>
+            <div id="doraIndicatorRow" class="slot-row"></div>
+            <button id="addDoraIndicatorBtn" type="button" class="mini-btn">ドラ表示牌を追加</button>
           </div>
 
           <div class="row">
@@ -352,25 +434,32 @@
               <input id="honba" type="number" min="0" value="0" />
             </div>
             <div>
-              <label for="kyotaku">供託</label>
+              <label for="kyotaku">供託（リーチ棒本数）</label>
               <input id="kyotaku" type="number" min="0" value="0" />
             </div>
           </div>
 
-          <label for="renpuFu">連風符</label>
-          <select id="renpuFu">
-            <option value="4" selected>4符</option>
-            <option value="2">2符</option>
-          </select>
+          <label>連風符</label>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="renpuFu" value="4" checked /> 4符</label>
+            <label class="option-item"><input type="radio" name="renpuFu" value="2" /> 2符</label>
+          </div>
 
           <label>フラグ</label>
           <div class="checks">
-            <label class="check"><input id="riichi" type="checkbox" /> 立直</label>
+            <label class="check" style="grid-column: 1 / -1;">
+              <span style="display:block;margin-bottom:4px;">立直</span>
+              <label style="margin:0 10px 0 0;font-weight:400;"><input type="radio" name="riichiState" value="none" checked /> なし</label>
+              <label style="margin:0 10px 0 0;font-weight:400;"><input type="radio" name="riichiState" value="riichi" /> リーチ</label>
+              <label style="margin:0;font-weight:400;"><input type="radio" name="riichiState" value="double" /> ダブルリーチ</label>
+            </label>
             <label class="check"><input id="ippatsu" type="checkbox" /> 一発</label>
             <label class="check"><input id="haitei" type="checkbox" /> 海底</label>
             <label class="check"><input id="houtei" type="checkbox" /> 河底</label>
             <label class="check"><input id="rinshan" type="checkbox" /> 嶺上</label>
             <label class="check"><input id="chankan" type="checkbox" /> 槍槓</label>
+            <label class="check"><input id="chiihou" type="checkbox" /> 地和</label>
+            <label class="check"><input id="tenhou" type="checkbox" /> 天和</label>
           </div>
 
           <button id="submitBtn">点数を算出</button>
@@ -379,13 +468,10 @@
 
         <section class="card">
           <h2>結果</h2>
-          <label>入力牌姿（画像）</label>
-          <div id="handImage" class="tile-row"></div>
           <div id="summary"></div>
-          <label>リクエストJSON</label>
-          <pre id="requestJson"></pre>
           <label>レスポンスJSON</label>
-          <pre id="responseJson"></pre>
+          <button id="toggleResponseJsonBtn" type="button" class="mini-btn">開く</button>
+          <pre id="responseJson" class="hidden"></pre>
 
           <div class="feedback-card">
             <p class="feedback-title">誤り指摘（GCS保存）</p>
@@ -452,8 +538,9 @@
       function value(id) { return document.getElementById(id).value; }
       function checked(id) { return document.getElementById(id).checked; }
       function toInt(id) { return Number.parseInt(value(id), 10) || 0; }
-      function parseCsvTiles(raw) {
-        return raw.split(",").map(v => v.trim()).filter(Boolean);
+      function radioValue(name) {
+        const checkedInput = document.querySelector(`input[name="${name}"]:checked`);
+        return checkedInput ? checkedInput.value : "";
       }
 
       function tileToFilename(tileCode) {
@@ -463,41 +550,6 @@
         const honors = { E: "1", S: "2", W: "3", N: "4", P: "5", F: "6", C: "7" };
         if (honors[t]) return `Mpu${honors[t]}z.png`;
         return null;
-      }
-
-      class TilePreviewComponent {
-        constructor(container, imgClass = "preview-tile", fallbackClass = "preview-fallback") {
-          this.container = container;
-          this.imgClass = imgClass;
-          this.fallbackClass = fallbackClass;
-        }
-
-        _createNode(tile) {
-          const filename = tileToFilename(tile);
-          if (!filename) {
-            const fb = document.createElement("div");
-            fb.className = this.fallbackClass;
-            fb.textContent = tile;
-            return fb;
-          }
-          const img = document.createElement("img");
-          img.className = this.imgClass;
-          img.src = `/static/tiles/${filename}`;
-          img.alt = tile;
-          img.title = tile;
-          img.onerror = () => {
-            const fb = document.createElement("div");
-            fb.className = this.fallbackClass;
-            fb.textContent = tile;
-            img.replaceWith(fb);
-          };
-          return img;
-        }
-
-        render(tiles) {
-          this.container.innerHTML = "";
-          tiles.forEach((t) => this.container.appendChild(this._createNode(t)));
-        }
       }
 
       class TilePickerModalComponent {
@@ -550,15 +602,24 @@
         }
       }
 
-      const handPreview = new TilePreviewComponent(document.getElementById("handImage"), "", "tile-fallback");
       const picker = new TilePickerModalComponent("tilePickerModal", "tilePickerGrid", "tilePickerTarget", "closeTilePickerBtn");
 
       const uiState = {
         pattern: "standard",
         jsonDirect: false,
+        selectedWinTileIndex: null,
+        doraMode: "dora",
+        handJsonFromTiles: { closed_tiles: [], melds: [], win_tile: "" },
+        doraTiles: ["4m"],
+        doraIndicators: ["4m"],
         standard: {
-          melds: Array.from({ length: 4 }, () => ({ type: "concealed", tiles: [null, null, null, null] })),
-          pair: null
+          melds: [
+            { type: "concealed", tiles: ["1m", "2m", "3m", null] },
+            { type: "concealed", tiles: ["4p", "5p", "6p", null] },
+            { type: "concealed", tiles: ["7s", "8s", "9s", null] },
+            { type: "concealed", tiles: ["E", "E", "E", null] }
+          ],
+          pair: "2p"
         },
         chiitoi: { pairs: Array.from({ length: 7 }, () => null) },
         kokushi: { pair: null }
@@ -613,7 +674,117 @@
       }
 
       function requiredMeldLen(type) {
-        return type === "kan" ? 4 : 3;
+        return ["kan", "ankan", "kakan"].includes(type) ? 4 : 3;
+      }
+
+      function renderDoraList(rootId, list, labelPrefix, fallbackTile) {
+        const root = document.getElementById(rootId);
+        root.innerHTML = "";
+        list.forEach((tile, idx) => {
+          const item = document.createElement("div");
+          item.className = "dora-item";
+
+          const pickBtn = document.createElement("button");
+          pickBtn.type = "button";
+          pickBtn.className = "tile-slot-btn";
+          setSlotButtonContent(pickBtn, tile);
+          pickBtn.addEventListener("click", () => {
+            picker.open(`${labelPrefix}${idx + 1}`, (selected) => {
+              list[idx] = selected;
+              renderDoraInputs();
+            });
+          });
+          item.appendChild(pickBtn);
+
+          const delBtn = document.createElement("button");
+          delBtn.type = "button";
+          delBtn.className = "mini-btn";
+          delBtn.textContent = "削除";
+          delBtn.disabled = list.length <= 1;
+          delBtn.addEventListener("click", () => {
+            list.splice(idx, 1);
+            if (!list.length) list.push(fallbackTile);
+            renderDoraInputs();
+          });
+          item.appendChild(delBtn);
+
+          root.appendChild(item);
+        });
+      }
+
+      function syncDoraModeFromUi() {
+        uiState.doraMode = radioValue("doraMode") || "dora";
+        document.getElementById("doraTilesBlock").classList.toggle("hidden", uiState.doraMode !== "dora");
+        document.getElementById("doraIndicatorsBlock").classList.toggle("hidden", uiState.doraMode !== "indicator");
+      }
+
+      function renderDoraInputs() {
+        renderDoraList("doraTileRow", uiState.doraTiles, "ドラ牌", "4m");
+        renderDoraList("doraIndicatorRow", uiState.doraIndicators, "ドラ表示牌", "4m");
+        syncDoraModeFromUi();
+      }
+
+      function flattenHandTiles(hand) {
+        const out = [];
+        (hand.closed_tiles || []).forEach((tile) => out.push(tile));
+        (hand.melds || []).forEach((meld) => (meld.tiles || []).forEach((tile) => out.push(tile)));
+        return out;
+      }
+
+      function renderWinningTileSelector() {
+        const row = document.getElementById("winningTileRow");
+        row.innerHTML = "";
+        const tiles = flattenHandTiles(uiState.handJsonFromTiles);
+        if (!tiles.length) {
+          const empty = document.createElement("div");
+          empty.className = "hint";
+          empty.textContent = "牌を入力するとここに表示されます";
+          row.appendChild(empty);
+          return;
+        }
+        tiles.forEach((tile, idx) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "winning-tile-btn";
+          if (idx === uiState.selectedWinTileIndex) btn.classList.add("selected");
+          const filename = tileToFilename(tile);
+          if (filename) {
+            const img = document.createElement("img");
+            img.src = `/static/tiles/${filename}`;
+            img.alt = tile;
+            img.title = `上がり牌に選択: ${tile}`;
+            btn.appendChild(img);
+          } else {
+            btn.textContent = tile;
+          }
+          btn.addEventListener("click", () => {
+            uiState.selectedWinTileIndex = idx;
+            uiState.handJsonFromTiles.win_tile = tile;
+            if (!uiState.jsonDirect) {
+              document.getElementById("handJsonInput").value = JSON.stringify(uiState.handJsonFromTiles, null, 2);
+            }
+            renderWinningTileSelector();
+          });
+          row.appendChild(btn);
+        });
+      }
+
+      function applySelectedWinTile(hand) {
+        const tiles = flattenHandTiles(hand);
+        if (!tiles.length) {
+          hand.win_tile = "";
+          uiState.selectedWinTileIndex = null;
+          return hand;
+        }
+        if (
+          uiState.selectedWinTileIndex === null ||
+          uiState.selectedWinTileIndex < 0 ||
+          uiState.selectedWinTileIndex >= tiles.length
+        ) {
+          uiState.selectedWinTileIndex = tiles.length - 1;
+        }
+        hand.win_tile = tiles[uiState.selectedWinTileIndex];
+        return hand;
       }
 
       function buildStandardMeldInputs() {
@@ -630,9 +801,10 @@
           const sel = document.createElement("select");
           sel.innerHTML = `
             <option value="concealed">副露なし</option>
-            <option value="pon">ポン</option>
-            <option value="chi">チー</option>
-            <option value="kan">カン</option>
+            <option value="pon">碰（ポン）</option>
+            <option value="chi">吃（チー）</option>
+            <option value="ankan">暗槓（アンカン）</option>
+            <option value="kan">明槓（ミンカン）</option>
           `;
           sel.value = m.type;
           sel.addEventListener("change", () => {
@@ -725,6 +897,7 @@
           uiState.kokushi.pair = tile;
         });
         syncHandJsonFromState();
+        refreshSubmitAvailability();
       }
 
       function setTileInputEnabled(enabled) {
@@ -732,6 +905,12 @@
         root.classList.toggle("disabled-block", !enabled);
         const controls = root.querySelectorAll("button, select, input[type='radio']");
         controls.forEach((el) => {
+          el.disabled = !enabled;
+        });
+        const winningBlock = document.getElementById("winningTileBlock");
+        winningBlock.classList.toggle("disabled-block", !enabled);
+        const winningControls = winningBlock.querySelectorAll("button");
+        winningControls.forEach((el) => {
           el.disabled = !enabled;
         });
         if (!enabled) picker.close();
@@ -749,13 +928,16 @@
             if (meld.type === "concealed") {
               closedTiles.push(...tiles);
             } else {
-              melds.push({ type: meld.type, tiles, open: true });
+              melds.push({ type: meld.type, tiles, open: meld.type !== "ankan" });
             }
           }
-          if (closedTiles.length + melds.reduce((n, m) => n + m.tiles.length, 0) !== 14) {
-            throw new Error("牌数が14枚になっていません");
+          const kanCount = melds.filter((m) => ["kan", "ankan", "kakan"].includes(m.type)).length;
+          const total = closedTiles.length + melds.reduce((n, m) => n + m.tiles.length, 0);
+          const expectedTotal = 14 + kanCount;
+          if (total !== expectedTotal) {
+            throw new Error(`牌数が${expectedTotal}枚になっていません`);
           }
-          return { closed_tiles: closedTiles, melds, win_tile: closedTiles[closedTiles.length - 1] };
+          return applySelectedWinTile({ closed_tiles: closedTiles, melds, win_tile: "" });
         }
 
         if (uiState.pattern === "chiitoi") {
@@ -764,7 +946,7 @@
           uiState.chiitoi.pairs.forEach((p) => {
             closedTiles.push(p, p);
           });
-          return { closed_tiles: closedTiles, melds: [], win_tile: closedTiles[closedTiles.length - 1] };
+          return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
         }
 
         if (!uiState.kokushi.pair) throw new Error("国士無双の対子を入力してください");
@@ -774,14 +956,62 @@
         const pairTile = uiState.kokushi.pair;
         const base = [...KOKUSHI_TILES];
         const closedTiles = [...base, pairTile];
-        return { closed_tiles: closedTiles, melds: [], win_tile: pairTile };
+        return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
+      }
+
+      function buildHandDraftByPatternState() {
+        if (uiState.pattern === "standard") {
+          const closedTiles = [];
+          const melds = [];
+          if (uiState.standard.pair) {
+            closedTiles.push(uiState.standard.pair, uiState.standard.pair);
+          }
+          for (const meld of uiState.standard.melds) {
+            const need = requiredMeldLen(meld.type);
+            const tiles = meld.tiles.slice(0, need).filter(Boolean);
+            if (meld.type === "concealed") {
+              closedTiles.push(...tiles);
+            } else {
+              melds.push({ type: meld.type, tiles, open: meld.type !== "ankan" });
+            }
+          }
+          return applySelectedWinTile({
+            closed_tiles: closedTiles,
+            melds,
+            win_tile: closedTiles[closedTiles.length - 1] || ""
+          });
+        }
+
+        if (uiState.pattern === "chiitoi") {
+          const closedTiles = [];
+          uiState.chiitoi.pairs.forEach((p) => {
+            if (p) closedTiles.push(p, p);
+          });
+          return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
+        }
+
+        const closedTiles = [...KOKUSHI_TILES];
+        if (uiState.kokushi.pair) closedTiles.push(uiState.kokushi.pair);
+        return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
       }
 
       function syncHandJsonFromState() {
+        try {
+          uiState.handJsonFromTiles = buildHandByPatternState();
+        } catch {
+          uiState.handJsonFromTiles = buildHandDraftByPatternState();
+        }
+        renderWinningTileSelector();
+
         if (uiState.jsonDirect) return;
         const box = document.getElementById("handJsonInput");
+        box.value = JSON.stringify(uiState.handJsonFromTiles, null, 2);
+      }
+
+      function writeHandJsonFromStoredState() {
+        const box = document.getElementById("handJsonInput");
         try {
-          box.value = JSON.stringify(buildHandByPatternState(), null, 2);
+          box.value = JSON.stringify(uiState.handJsonFromTiles, null, 2);
         } catch {
           box.value = "";
         }
@@ -807,21 +1037,26 @@
 
       function buildPayload() {
         const hand = buildHandByPattern();
+        const activeDoraValues = (uiState.doraMode === "indicator" ? uiState.doraIndicators : uiState.doraTiles).filter(Boolean);
+        const riichiState = radioValue("riichiState") || "none";
         return {
           hand,
           context: {
-            win_type: value("winType"),
-            is_dealer: value("isDealer") === "true",
-            round_wind: value("roundWind"),
-            seat_wind: value("seatWind"),
-            riichi: checked("riichi"),
+            win_type: radioValue("winType"),
+            is_dealer: radioValue("isDealer") === "true",
+            round_wind: radioValue("roundWind"),
+            seat_wind: radioValue("seatWind"),
+            riichi: riichiState === "riichi",
+            double_riichi: riichiState === "double",
             ippatsu: checked("ippatsu"),
             haitei: checked("haitei"),
             houtei: checked("houtei"),
             rinshan: checked("rinshan"),
             chankan: checked("chankan"),
-            dora_indicators: parseCsvTiles(value("doraIndicators")),
-            aka_dora_count: toInt("akaDoraCount"),
+            chiihou: checked("chiihou"),
+            tenhou: checked("tenhou"),
+            dora_indicators: activeDoraValues,
+            aka_dora_count: 0,
             honba: toInt("honba"),
             kyotaku: toInt("kyotaku")
           },
@@ -830,19 +1065,31 @@
             kuitan_ari: true,
             double_yakuman_ari: true,
             kazoe_yakuman_ari: true,
-            renpu_fu: toInt("renpuFu")
+            renpu_fu: Number.parseInt(radioValue("renpuFu"), 10) || 4
           }
         };
       }
 
+      function refreshSubmitAvailability() {
+        const submitBtn = document.getElementById("submitBtn");
+        const error = document.getElementById("error");
+        try {
+          buildPayload();
+          submitBtn.disabled = false;
+          if (error.dataset.validation === "1") {
+            error.textContent = "";
+            error.dataset.validation = "0";
+          }
+        } catch (e) {
+          submitBtn.disabled = true;
+          error.textContent = e.message || "入力エラーがあります";
+          error.dataset.validation = "1";
+        }
+      }
+
       let lastScoreRequest = null;
       let lastScoreResponse = null;
-
-      function renderHandImages(closedTiles, melds) {
-        const tiles = [...closedTiles];
-        (melds || []).forEach((m) => (m.tiles || []).forEach((t) => tiles.push(t)));
-        handPreview.render(tiles);
-      }
+      let responseJsonExpanded = false;
 
       async function submitScore() {
         const error = document.getElementById("error");
@@ -857,8 +1104,6 @@
           return;
         }
 
-        renderHandImages(payload.hand.closed_tiles, payload.hand.melds);
-        document.getElementById("requestJson").textContent = JSON.stringify(payload, null, 2);
         lastScoreRequest = payload;
 
         const res = await fetch("/api/v1/score", {
@@ -876,8 +1121,15 @@
         }
 
         const r = data.result;
+        const yakuBadges = (r.yaku || []).map((y) => `<span class="badge">${y.name} ${y.han}翻</span>`).join("");
+        const yakumanBadges = (r.yakuman || []).map((name) => `<span class="badge">${name}</span>`).join("");
+        const roleBadgeHtml =
+          yakuBadges || yakumanBadges
+            ? `<div class="badge-row">${yakuBadges}${yakumanBadges}</div>`
+            : `<div class="badge-row"><span class="badge badge-empty">役なし</span></div>`;
         document.getElementById("summary").innerHTML = `
           <div class="result-line"><strong>${r.point_label}</strong></div>
+          ${roleBadgeHtml}
           <div class="result-line">翻: ${r.han} / 符: ${r.fu}</div>
           <div class="result-line">ロン: ${r.points.ron}</div>
           <div class="result-line">ツモ(親支払): ${r.points.tsumo_dealer_pay}</div>
@@ -945,13 +1197,41 @@
         uiState.jsonDirect = on;
         document.getElementById("handJsonInput").disabled = !on;
         setTileInputEnabled(!on);
-        if (!on) syncHandJsonFromState();
+        if (!on) writeHandJsonFromStoredState();
+        refreshSubmitAvailability();
+      });
+      document.getElementById("handJsonInput").addEventListener("input", refreshSubmitAvailability);
+      document.querySelectorAll('input[name="doraMode"]').forEach((el) => {
+        el.addEventListener("change", () => {
+          syncDoraModeFromUi();
+          refreshSubmitAvailability();
+        });
+      });
+      document.querySelectorAll('input[name="riichiState"]').forEach((el) => {
+        el.addEventListener("change", refreshSubmitAvailability);
+      });
+      document.getElementById("addDoraTileBtn").addEventListener("click", () => {
+        uiState.doraTiles.push(null);
+        renderDoraInputs();
+        refreshSubmitAvailability();
+      });
+      document.getElementById("addDoraIndicatorBtn").addEventListener("click", () => {
+        uiState.doraIndicators.push(null);
+        renderDoraInputs();
+        refreshSubmitAvailability();
       });
       document.getElementById("submitBtn").addEventListener("click", submitScore);
       document.getElementById("sendFeedbackBtn").addEventListener("click", sendFeedback);
+      document.getElementById("toggleResponseJsonBtn").addEventListener("click", () => {
+        responseJsonExpanded = !responseJsonExpanded;
+        document.getElementById("responseJson").classList.toggle("hidden", !responseJsonExpanded);
+        document.getElementById("toggleResponseJsonBtn").textContent = responseJsonExpanded ? "閉じる" : "開く";
+      });
 
       switchPattern("standard");
+      renderDoraInputs();
       syncHandJsonFromState();
+      refreshSubmitAvailability();
       submitScore();
     </script>
   </body>

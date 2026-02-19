@@ -19,11 +19,14 @@ def valid_payload() -> dict:
             "round_wind": "E",
             "seat_wind": "S",
             "riichi": True,
+            "double_riichi": False,
             "ippatsu": False,
             "haitei": False,
             "houtei": False,
             "rinshan": False,
             "chankan": False,
+            "chiihou": False,
+            "tenhou": False,
             "dora_indicators": ["4m"],
             "aka_dora_count": 2,
             "honba": 0,
@@ -73,7 +76,69 @@ def test_score_endpoint_validation_error():
     payload["hand"]["closed_tiles"] = payload["hand"]["closed_tiles"][:-1]
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 422
-    assert "Total tiles must be 14" in response.text
+    assert "14 + number of kans" in response.text
+
+
+def test_score_endpoint_accepts_kan_hand():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "2p", "2p"],
+        "melds": [
+            {
+                "type": "kan",
+                "tiles": ["E", "E", "E", "E"],
+                "open": True,
+            }
+        ],
+        "win_tile": "2p",
+    }
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+
+
+def test_score_endpoint_accepts_two_kans_hand():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "2p", "2p"],
+        "melds": [
+            {"type": "kan", "tiles": ["E", "E", "E", "E"], "open": True},
+            {"type": "kan", "tiles": ["S", "S", "S", "S"], "open": True},
+        ],
+        "win_tile": "2p",
+    }
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+
+
+def test_score_endpoint_accepts_three_kans_hand():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "2p", "2p"],
+        "melds": [
+            {"type": "kan", "tiles": ["E", "E", "E", "E"], "open": True},
+            {"type": "kan", "tiles": ["S", "S", "S", "S"], "open": True},
+            {"type": "kan", "tiles": ["W", "W", "W", "W"], "open": True},
+        ],
+        "win_tile": "2p",
+    }
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+
+
+def test_score_endpoint_accepts_four_kans_hand():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["2p", "2p"],
+        "melds": [
+            {"type": "kan", "tiles": ["E", "E", "E", "E"], "open": True},
+            {"type": "kan", "tiles": ["S", "S", "S", "S"], "open": True},
+            {"type": "kan", "tiles": ["W", "W", "W", "W"], "open": True},
+            {"type": "kan", "tiles": ["N", "N", "N", "N"], "open": True},
+        ],
+        "win_tile": "2p",
+    }
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
 
 
 def test_score_endpoint_rejects_non_winning_shape():

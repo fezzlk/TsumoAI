@@ -122,21 +122,36 @@ def validate_score_request(req: ScoreRequest) -> None:
     for tile in req.context.dora_indicators:
         validate_tile(tile)
 
-    total_tiles = len(req.hand.closed_tiles) + sum(len(m.tiles) for m in req.hand.melds)
-    if total_tiles != 14:
-        raise HTTPException(status_code=422, detail="Total tiles must be 14 at win state")
-
     for meld in req.hand.melds:
         if meld.type in {"chi", "pon"} and len(meld.tiles) != 3:
             raise HTTPException(status_code=422, detail=f"{meld.type} must contain exactly 3 tiles")
         if meld.type in {"kan", "ankan", "kakan"} and len(meld.tiles) != 4:
             raise HTTPException(status_code=422, detail=f"{meld.type} must contain exactly 4 tiles")
 
-    if not req.context.riichi and req.context.ippatsu:
-        raise HTTPException(status_code=422, detail="ippatsu cannot be true when riichi is false")
+    kan_melds = sum(1 for m in req.hand.melds if m.type in {"kan", "ankan", "kakan"})
+    total_tiles = len(req.hand.closed_tiles) + sum(len(m.tiles) for m in req.hand.melds)
+    expected_total_tiles = 14 + kan_melds
+    if total_tiles != expected_total_tiles:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Total tiles must be {expected_total_tiles} at win state (14 + number of kans)",
+        )
+
+    if req.context.riichi and req.context.double_riichi:
+        raise HTTPException(status_code=422, detail="riichi and double_riichi cannot both be true")
+    if not (req.context.riichi or req.context.double_riichi) and req.context.ippatsu:
+        raise HTTPException(status_code=422, detail="ippatsu cannot be true when riichi/double_riichi is false")
     if req.context.win_type == "ron" and req.context.haitei:
         raise HTTPException(status_code=422, detail="haitei cannot be true on ron")
     if req.context.win_type == "tsumo" and req.context.houtei:
         raise HTTPException(status_code=422, detail="houtei cannot be true on tsumo")
+    if req.context.chiihou and req.context.tenhou:
+        raise HTTPException(status_code=422, detail="chiihou and tenhou cannot both be true")
+    if (req.context.chiihou or req.context.tenhou) and req.context.win_type != "tsumo":
+        raise HTTPException(status_code=422, detail="chiihou/tenhou require tsumo")
+    if req.context.tenhou and not req.context.is_dealer:
+        raise HTTPException(status_code=422, detail="tenhou requires dealer")
+    if req.context.chiihou and req.context.is_dealer:
+        raise HTTPException(status_code=422, detail="chiihou requires non-dealer")
     if not _is_valid_winning_shape(req):
         raise HTTPException(status_code=422, detail="Hand is not a valid winning shape")
