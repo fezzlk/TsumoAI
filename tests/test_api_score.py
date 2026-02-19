@@ -167,6 +167,7 @@ def test_score_feedback_success(monkeypatch):
         assert "score_request" in payload
         assert "score_response" in payload
         assert "comment" in payload
+        assert isinstance(payload["score_response"]["score_id"], str)
         return {"bucket": "test-bucket", "object_name": "score-feedback/test.json"}
 
     monkeypatch.setattr(gcs_feedback_store, "save", fake_save)

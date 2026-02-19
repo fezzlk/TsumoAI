@@ -152,7 +152,7 @@ def get_result(item_id: UUID) -> ResultGetResponse:
 
 @app.post("/api/v1/score/feedback", response_model=ScoreFeedbackResponse)
 def score_feedback(req: ScoreFeedbackRequest) -> ScoreFeedbackResponse:
-    payload = req.model_dump()
+    payload = req.model_dump(mode="json")
     payload["comment"] = req.comment.strip()
     try:
         storage_info = gcs_feedback_store.save(payload)
