@@ -28,6 +28,75 @@ Health check:
 curl http://localhost:8000/health
 ```
 
+## Deploy (Google Cloud Run)
+
+この構成は Cloud Run 向けに対応済みです（`Dockerfile` が `PORT` 環境変数で起動）。
+
+### 1. 前提
+
+- `gcloud` CLI インストール済み
+- GCP プロジェクト作成済み
+- 課金有効化済み
+- `GCS_BUCKET_NAME`（フィードバック保存先）作成済み
+
+### 2. 初回ログイン
+
+```bash
+gcloud auth login
+gcloud auth application-default login
+```
+
+### 3. OpenAI APIキーを Secret Manager に登録（任意）
+
+未登録でもデプロイ可能ですが、`/recognize` はダミー応答になります。
+
+```bash
+export PROJECT_ID="<your-gcp-project-id>"
+export OPENAI_API_KEY="<your-openai-api-key>"
+
+printf '%s' "${OPENAI_API_KEY}" | gcloud secrets create openai-api-key \
+  --project "${PROJECT_ID}" \
+  --replication-policy="automatic" \
+  --data-file=-
+```
+
+すでに secret がある場合は新バージョン追加:
+
+```bash
+printf '%s' "${OPENAI_API_KEY}" | gcloud secrets versions add openai-api-key \
+  --project "${PROJECT_ID}" \
+  --data-file=-
+```
+
+### 4. デプロイ実行
+
+```bash
+export PROJECT_ID="<your-gcp-project-id>"
+export REGION="asia-northeast1"
+export SERVICE_NAME="tsumoai-api"
+export GCS_BUCKET_NAME="<your-feedback-bucket>"
+export OPENAI_MODEL="gpt-4o-mini"
+
+./scripts/deploy_cloud_run.sh
+```
+
+スクリプトが実行する内容:
+
+- 必要 API の有効化
+- Cloud Run 実行用サービスアカウント作成
+- GCS 書き込み権限付与（`roles/storage.objectCreator`）
+- `openai-api-key` secret が存在する場合のみ `OPENAI_API_KEY` を注入
+- `gcloud run deploy --source .` によるビルドとデプロイ
+
+### 5. 動作確認
+
+```bash
+SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" --region "${REGION}" --format='value(status.url)')"
+curl "${SERVICE_URL}/health"
+```
+
+`{"status":"ok"}` が返ればデプロイ成功です。
+
 ## Endpoints
 
 - `POST /api/v1/recognize`
