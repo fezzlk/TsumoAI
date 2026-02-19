@@ -95,7 +95,10 @@ async def recognize(image: UploadFile = File(...), game_id: str | None = Form(No
 @app.post("/api/v1/score", response_model=ScoreResponse)
 def score(req: ScoreRequest) -> ScoreResponse:
     validate_score_request(req)
-    result = score_hand_shape(req.hand, req.context, req.rules)
+    try:
+        result = score_hand_shape(req.hand, req.context, req.rules)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     record = repo.create(
         "score",
         {

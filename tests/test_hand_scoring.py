@@ -1,3 +1,5 @@
+import pytest
+
 from app.hand_scoring import score_hand_shape
 from app.schemas import ContextInput, HandInput, RuleSet
 
@@ -45,11 +47,8 @@ def test_score_hand_shape_ron_non_dealer():
 
 def test_score_hand_shape_tsumo_dealer():
     context = base_context(win_type="tsumo", is_dealer=True, riichi=False, aka_dora_count=0, dora_indicators=[])
-    result = score_hand_shape(base_hand(), context, RuleSet())
-    assert result.han == 0
-    assert result.points.tsumo_dealer_pay == 300
-    assert result.points.tsumo_non_dealer_pay == 300
-    assert result.payments.total_received == 900
+    with pytest.raises(ValueError):
+        score_hand_shape(base_hand(), context, RuleSet())
 
 
 def test_score_hand_shape_limit_label_haneman():
@@ -75,3 +74,9 @@ def test_score_hand_shape_double_riichi():
     result = score_hand_shape(base_hand(), context, RuleSet())
     assert result.han == 2
     assert any(y.name == "ダブル立直" for y in result.yaku)
+
+
+def test_score_hand_shape_rejects_dora_only():
+    context = base_context(riichi=False, double_riichi=False, aka_dora_count=0, dora_indicators=["4m"])
+    with pytest.raises(ValueError):
+        score_hand_shape(base_hand(), context, RuleSet())

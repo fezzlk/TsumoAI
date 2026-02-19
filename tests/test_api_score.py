@@ -28,6 +28,7 @@ def valid_payload() -> dict:
             "chiihou": False,
             "tenhou": False,
             "dora_indicators": ["4m"],
+            "ura_dora_indicators": [],
             "aka_dora_count": 2,
             "honba": 0,
             "kyotaku": 0,
@@ -148,6 +149,17 @@ def test_score_endpoint_rejects_non_winning_shape():
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 422
     assert "valid winning shape" in response.text
+
+
+def test_score_endpoint_rejects_dora_only_hand():
+    payload = valid_payload()
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = ["4m"]
+    payload["context"]["aka_dora_count"] = 0
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "No yaku" in response.text
 
 
 def test_score_feedback_success(monkeypatch):

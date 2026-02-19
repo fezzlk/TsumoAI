@@ -82,34 +82,37 @@ def _calc_points(context: ContextInput, han: int, fu: int) -> tuple[Points, Paym
 def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> ScoreResult:
     """Hand shape -> score. This module must not parse image bytes."""
     yaku: list[YakuItem] = []
-    han = 0
+    yaku_han = 0
     if context.double_riichi:
         yaku.append(YakuItem(name="ダブル立直", han=2))
-        han += 2
+        yaku_han += 2
     elif context.riichi:
         yaku.append(YakuItem(name="立直", han=1))
-        han += 1
+        yaku_han += 1
     if context.ippatsu:
         yaku.append(YakuItem(name="一発", han=1))
-        han += 1
+        yaku_han += 1
     if context.haitei:
         yaku.append(YakuItem(name="海底摸月", han=1))
-        han += 1
+        yaku_han += 1
     if context.houtei:
         yaku.append(YakuItem(name="河底撈魚", han=1))
-        han += 1
+        yaku_han += 1
     if context.rinshan:
         yaku.append(YakuItem(name="嶺上開花", han=1))
-        han += 1
+        yaku_han += 1
     if context.chankan:
         yaku.append(YakuItem(name="槍槓", han=1))
-        han += 1
+        yaku_han += 1
     if context.tenhou:
         yaku.append(YakuItem(name="天和", han=13))
-        han += 13
+        yaku_han += 13
     if context.chiihou:
         yaku.append(YakuItem(name="地和", han=13))
-        han += 13
+        yaku_han += 13
+
+    if yaku_han == 0:
+        raise ValueError("No yaku: dora-only hands cannot win")
 
     dora = DoraBreakdown(
         dora=len(context.dora_indicators),
@@ -122,9 +125,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku.append(YakuItem(name="赤ドラ", han=dora.aka_dora))
     if dora.ura_dora > 0:
         yaku.append(YakuItem(name="裏ドラ", han=dora.ura_dora))
-    han += context.aka_dora_count
-    han += dora.dora
-    han += dora.ura_dora
+    han = yaku_han + context.aka_dora_count + dora.dora + dora.ura_dora
     fu = 30
     label = _point_label_from_han_fu(han, fu)
     points, payments = _calc_points(context, han, fu)
