@@ -68,8 +68,8 @@ def test_score_endpoint_success():
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["result"]["han"] == 5
-    assert body["result"]["points"]["ron"] == 8000
+    assert body["result"]["han"] == 4
+    assert body["result"]["points"]["ron"] == 7700
 
 
 def test_score_endpoint_validation_error():
@@ -358,6 +358,49 @@ def test_score_endpoint_adds_tanyao_chanta_junchan_sanshoku_doujun():
     yaku_names = [y["name"] for y in res.json()["result"]["yaku"]]
     assert "純全帯么九" in yaku_names
     assert "混全帯么九" not in yaku_names
+
+
+def test_score_endpoint_does_not_add_fake_dora_and_adds_menzen_tsumo():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["2p", "2p", "1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "E"],
+        "melds": [],
+        "win_tile": "E",
+    }
+    payload["context"]["win_type"] = "tsumo"
+    payload["context"]["round_wind"] = "E"
+    payload["context"]["seat_wind"] = "S"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["aka_dora_count"] = 0
+    payload["context"]["dora_indicators"] = ["4m"]
+    payload["context"]["ura_dora_indicators"] = []
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    names = [y["name"] for y in body["result"]["yaku"]]
+    assert "門前清自摸和" in names
+    assert "ドラ" not in names
+    assert body["result"]["dora"]["dora"] == 0
+
+
+def test_score_endpoint_adds_pinfu():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "2p", "3p", "4p", "6s", "7s", "8s", "5p", "5p"],
+        "melds": [],
+        "win_tile": "2p",
+    }
+    payload["context"]["round_wind"] = "E"
+    payload["context"]["seat_wind"] = "S"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = []
+    payload["context"]["aka_dora_count"] = 0
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert any(y["name"] == "平和" and y["han"] == 1 for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_rejects_dora_only_hand():

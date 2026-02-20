@@ -38,11 +38,11 @@ def base_context(**kwargs) -> ContextInput:
 
 def test_score_hand_shape_ron_non_dealer():
     result = score_hand_shape(base_hand(), base_context(), RuleSet())
-    assert result.han == 5
+    assert result.han == 4
     assert result.fu == 30
-    assert result.point_label == "満貫"
-    assert result.points.ron == 8000
-    assert result.payments.total_received == 8000
+    assert result.point_label == "通常"
+    assert result.points.ron == 7700
+    assert result.payments.total_received == 7700
     assert any(y.name == "場風 東" for y in result.yaku)
 
 
@@ -56,8 +56,8 @@ def test_score_hand_shape_tsumo_dealer():
         aka_dora_count=0,
         dora_indicators=[],
     )
-    with pytest.raises(ValueError):
-        score_hand_shape(base_hand(), context, RuleSet())
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert any(y.name == "門前清自摸和" for y in result.yaku)
 
 
 def test_score_hand_shape_limit_label_haneman():
@@ -309,6 +309,29 @@ def test_score_hand_shape_adds_tanyao():
     assert any(y.name == "断么九" for y in result.yaku)
 
 
+def test_score_hand_shape_does_not_add_fake_dora_from_indicator():
+    hand = base_hand().model_copy(update={"win_tile": "E"})
+    context = base_context(riichi=False, double_riichi=False, aka_dora_count=0, dora_indicators=["4m"])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.dora.dora == 0
+    assert all(y.name != "ドラ" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_menzen_tsumo():
+    hand = base_hand().model_copy(update={"win_tile": "2p"})
+    context = base_context(
+        win_type="tsumo",
+        round_wind="W",
+        seat_wind="S",
+        riichi=False,
+        double_riichi=False,
+        aka_dora_count=0,
+        dora_indicators=[],
+    )
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "門前清自摸和" and y.han == 1 for y in result.yaku)
+
+
 def test_score_hand_shape_adds_sanshoku_doujun():
     hand = HandInput(
         closed_tiles=["1m", "2m", "3m", "1p", "2p", "3p", "1s", "2s", "3s", "7m", "8m", "9m", "5p", "5p"],
@@ -359,3 +382,36 @@ def test_score_hand_shape_adds_honitsu_and_chinitsu():
     chinitsu_result = score_hand_shape(chinitsu_hand, context, RuleSet())
     assert any(y.name == "混一色" for y in honitsu_result.yaku)
     assert any(y.name == "清一色" for y in chinitsu_result.yaku)
+
+
+def test_score_hand_shape_adds_sanankou_with_open_chi():
+    hand = HandInput(
+        closed_tiles=["2m", "2m", "2m", "3p", "3p", "3p", "4s", "4s", "4s", "5s", "5s"],
+        melds=[{"type": "chi", "tiles": ["1m", "2m", "3m"], "open": True}],
+        win_tile="5s",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "三暗刻" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_pinfu():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "2p", "3p", "4p", "6s", "7s", "8s", "5p", "5p"],
+        melds=[],
+        win_tile="2p",
+    )
+    context = base_context(round_wind="E", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "平和" and y.han == 1 for y in result.yaku)
+
+
+def test_score_hand_shape_does_not_add_pinfu_for_value_pair():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "2p", "3p", "4p", "6s", "7s", "8s", "E", "E"],
+        melds=[],
+        win_tile="2p",
+    )
+    context = base_context(round_wind="E", seat_wind="S", riichi=True, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert all(y.name != "平和" for y in result.yaku)

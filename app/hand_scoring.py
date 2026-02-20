@@ -30,6 +30,25 @@ def _all_tiles(hand: HandInput) -> list[str]:
     return tiles
 
 
+def _next_dora_tile(indicator: str) -> str:
+    t = _normalize_tile(indicator)
+    if len(t) == 2 and t[1] in {"m", "p", "s"}:
+        n = int(t[0])
+        return f"{1 if n == 9 else n + 1}{t[1]}"
+    if t in {"E", "S", "W", "N"}:
+        order = ["E", "S", "W", "N"]
+        return order[(order.index(t) + 1) % len(order)]
+    if t in {"P", "F", "C"}:
+        order = ["P", "F", "C"]
+        return order[(order.index(t) + 1) % len(order)]
+    return t
+
+
+def _count_dora(hand: HandInput, indicators: list[str]) -> int:
+    counts = Counter(_all_tiles(hand))
+    return sum(counts.get(_next_dora_tile(ind), 0) for ind in indicators)
+
+
 def _wind_name(tile: str) -> str:
     return {"E": "東", "S": "南", "W": "西", "N": "北"}[tile]
 
@@ -122,7 +141,7 @@ def _collect_closed_meld_patterns(counts: list[int], needed_melds: int) -> list[
     return patterns
 
 
-def _all_meld_patterns(hand: HandInput) -> list[list[tuple[str, str]]]:
+def _open_meld_patterns(hand: HandInput) -> list[tuple[str, str]]:
     open_melds: list[tuple[str, str]] = []
     for meld in hand.melds:
         tiles = [_normalize_tile(t) for t in meld.tiles]
@@ -130,32 +149,15 @@ def _all_meld_patterns(hand: HandInput) -> list[list[tuple[str, str]]]:
             open_melds.append(("chi", min(tiles, key=_tile_to_index)))
         else:
             open_melds.append(("pon", tiles[0]))
+    return open_melds
 
-    needed_closed_melds = 4 - len(open_melds)
-    if needed_closed_melds < 0:
-        return []
 
-    counts = _closed_tile_counts(hand)
-    patterns: list[list[tuple[str, str]]] = []
-    for i, c in enumerate(counts):
-        if c < 2:
-            continue
-        work = counts[:]
-        work[i] -= 2
-        closed_patterns = _collect_closed_meld_patterns(work, needed_closed_melds)
-        for closed in closed_patterns:
-            patterns.append(open_melds + closed)
-    return patterns
+def _all_meld_patterns(hand: HandInput) -> list[list[tuple[str, str]]]:
+    return [melds for melds, _ in _all_meld_patterns_with_pair(hand)]
 
 
 def _all_meld_patterns_with_pair(hand: HandInput) -> list[tuple[list[tuple[str, str]], str]]:
-    open_melds: list[tuple[str, str]] = []
-    for meld in hand.melds:
-        tiles = [_normalize_tile(t) for t in meld.tiles]
-        if meld.type == "chi":
-            open_melds.append(("chi", min(tiles, key=_tile_to_index)))
-        else:
-            open_melds.append(("pon", tiles[0]))
+    open_melds = _open_meld_patterns(hand)
 
     needed_closed_melds = 4 - len(open_melds)
     if needed_closed_melds < 0:
@@ -367,16 +369,12 @@ def _has_sankantsu(hand: HandInput) -> bool:
 
 
 def _has_sanankou(hand: HandInput) -> bool:
-    concealed_pons = 0
-    for meld in hand.melds:
-        if meld.open:
-            continue
-        if meld.type in {"pon", "kan", "ankan", "kakan"}:
-            concealed_pons += 1
-
+    open_pon_like_count = sum(
+        1 for meld in hand.melds if meld.open and meld.type in {"pon", "kan", "ankan", "kakan"}
+    )
     for melds in _all_meld_patterns(hand):
-        closed_pon_count = sum(1 for kind, _ in melds if kind == "pon") - sum(1 for m in hand.melds if m.open)
-        if concealed_pons + max(closed_pon_count, 0) >= 3:
+        concealed_pon_count = sum(1 for kind, _ in melds if kind == "pon") - open_pon_like_count
+        if concealed_pon_count >= 3:
             return True
     return False
 
@@ -392,6 +390,47 @@ def _has_iipeikou(hand: HandInput) -> bool:
                 key = (t[1], int(t[0]))
                 seq_counts[key] = seq_counts.get(key, 0) + 1
         if any(v >= 2 for v in seq_counts.values()):
+            return True
+    return False
+
+
+def _is_value_pair(tile: str, context: ContextInput) -> bool:
+    t = _normalize_tile(tile)
+    return t in {context.round_wind.value, context.seat_wind.value, "P", "F", "C"}
+
+
+def _is_ryanmen_wait(start_tile: str, win_tile: str) -> bool:
+    s = _normalize_tile(start_tile)
+    w = _normalize_tile(win_tile)
+    if len(s) != 2 or len(w) != 2:
+        return False
+    if s[1] != w[1]:
+        return False
+    start = int(s[0])
+    win = int(w[0])
+    if win not in {start, start + 1, start + 2}:
+        return False
+    if win == start + 1:
+        return False  # kanchan
+    if win == start and start == 7:
+        return False  # penchan 7 wait (8-9)
+    if win == start + 2 and start == 1:
+        return False  # penchan 3 wait (1-2)
+    return True
+
+
+def _has_pinfu(hand: HandInput, context: ContextInput) -> bool:
+    if hand.melds:
+        return False
+    if len(_normalize_tile(hand.win_tile)) != 2:
+        return False
+
+    for melds, pair in _all_meld_patterns_with_pair(hand):
+        if any(kind != "chi" for kind, _ in melds):
+            continue
+        if _is_value_pair(pair, context):
+            continue
+        if any(_is_ryanmen_wait(tile, hand.win_tile) for kind, tile in melds if kind == "chi"):
             return True
     return False
 
@@ -601,6 +640,9 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     if context.chankan:
         yaku.append(YakuItem(name="槍槓", han=1))
         yaku_han += 1
+    if context.win_type == "tsumo" and not any(m.open for m in hand.melds):
+        yaku.append(YakuItem(name="門前清自摸和", han=1))
+        yaku_han += 1
     if context.tenhou:
         yaku.append(YakuItem(name="天和", han=13))
         yaku_han += 13
@@ -611,6 +653,9 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     yaku_han += _append_yakuhai_yaku(yaku, hand, context)
     if _has_tanyao(hand, rules):
         yaku.append(YakuItem(name="断么九", han=1))
+        yaku_han += 1
+    if _has_pinfu(hand, context):
+        yaku.append(YakuItem(name="平和", han=1))
         yaku_han += 1
     if _has_iipeikou(hand):
         yaku.append(YakuItem(name="一盃口", han=1))
@@ -666,9 +711,9 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         raise ValueError("No yaku: dora-only hands cannot win")
 
     dora = DoraBreakdown(
-        dora=len(context.dora_indicators),
+        dora=_count_dora(hand, context.dora_indicators),
         aka_dora=context.aka_dora_count,
-        ura_dora=len(context.ura_dora_indicators),
+        ura_dora=_count_dora(hand, context.ura_dora_indicators),
     )
     if dora.dora > 0:
         yaku.append(YakuItem(name="ドラ", han=dora.dora))
