@@ -406,6 +406,25 @@ def test_score_hand_shape_adds_pinfu():
     assert any(y.name == "平和" and y.han == 1 for y in result.yaku)
 
 
+def test_score_hand_shape_pinfu_tsumo_is_20_fu():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "2p", "3p", "4p", "6s", "7s", "8s", "5p", "5p"],
+        melds=[],
+        win_tile="2p",
+    )
+    context = base_context(
+        win_type="tsumo",
+        round_wind="E",
+        seat_wind="S",
+        riichi=False,
+        aka_dora_count=0,
+        dora_indicators=[],
+    )
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "平和" and y.han == 1 for y in result.yaku)
+    assert result.fu == 20
+
+
 def test_score_hand_shape_does_not_add_pinfu_for_value_pair():
     hand = HandInput(
         closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "2p", "3p", "4p", "6s", "7s", "8s", "E", "E"],

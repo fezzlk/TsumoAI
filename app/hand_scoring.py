@@ -651,10 +651,12 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku_han += 13
 
     yaku_han += _append_yakuhai_yaku(yaku, hand, context)
+    has_pinfu = _has_pinfu(hand, context)
+
     if _has_tanyao(hand, rules):
         yaku.append(YakuItem(name="断么九", han=1))
         yaku_han += 1
-    if _has_pinfu(hand, context):
+    if has_pinfu:
         yaku.append(YakuItem(name="平和", han=1))
         yaku_han += 1
     if _has_iipeikou(hand):
@@ -722,7 +724,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     if dora.ura_dora > 0:
         yaku.append(YakuItem(name="裏ドラ", han=dora.ura_dora))
     han = yaku_han + context.aka_dora_count + dora.dora + dora.ura_dora
-    fu = 30
+    fu = 20 if (has_pinfu and context.win_type == "tsumo") else 30
     label = _point_label_from_han_fu(han, fu)
     points, payments = _calc_points(context, han, fu)
     return ScoreResult(
