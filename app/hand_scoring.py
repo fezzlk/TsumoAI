@@ -615,16 +615,125 @@ def _calc_points(context: ContextInput, han: int, fu: int, base_override: int | 
     )
 
 
-def _build_fu_breakdown(fu: int, has_pinfu: bool, context: ContextInput) -> list[FuBreakdownItem]:
-    if fu == 20 and has_pinfu and context.win_type == "tsumo":
-        return [
-            FuBreakdownItem(name="副底", fu=20),
-        ]
+def _is_closed_hand(hand: HandInput) -> bool:
+    return not any(m.open for m in hand.melds)
 
-    return [
-        FuBreakdownItem(name="副底", fu=20),
-        FuBreakdownItem(name="切り上げ", fu=10),
-    ]
+
+def _meld_tiles(kind: str, tile: str) -> list[str]:
+    t = _normalize_tile(tile)
+    if kind == "chi" and len(t) == 2 and t[1] in {"m", "p", "s"}:
+        start = int(t[0])
+        return [f"{start + i}{t[1]}" for i in range(3)]
+    if kind == "pon":
+        return [t, t, t]
+    return [t, t, t, t]
+
+
+def _pair_fu(pair_tile: str, context: ContextInput, rules: RuleSet) -> int:
+    t = _normalize_tile(pair_tile)
+    if t in {"P", "F", "C"}:
+        return 2
+    if t == context.round_wind.value and t == context.seat_wind.value:
+        return rules.renpu_fu
+    if t in {context.round_wind.value, context.seat_wind.value}:
+        return 2
+    return 0
+
+
+def _meld_fu(kind: str, tile: str, is_open: bool) -> int:
+    if kind == "chi":
+        return 0
+    t = _normalize_tile(tile)
+    is_yaochu = _is_terminal_or_honor(t)
+    if kind == "pon":
+        return 4 if is_yaochu and is_open else 8 if is_yaochu else 2 if is_open else 4
+    return 16 if is_yaochu and is_open else 32 if is_yaochu else 8 if is_open else 16
+
+
+def _calc_regular_fu(hand: HandInput, context: ContextInput, rules: RuleSet, has_pinfu: bool) -> tuple[int, list[FuBreakdownItem]]:
+    if has_pinfu and context.win_type == "tsumo":
+        return 20, [FuBreakdownItem(name="副底", fu=20)]
+    if _has_chiitoitsu(hand):
+        return 25, [FuBreakdownItem(name="七対子", fu=25)]
+
+    breakdown_base: list[FuBreakdownItem] = [FuBreakdownItem(name="副底", fu=20)]
+    if context.win_type == "tsumo":
+        breakdown_base.append(FuBreakdownItem(name="ツモ", fu=2))
+    if context.win_type == "ron" and _is_closed_hand(hand):
+        breakdown_base.append(FuBreakdownItem(name="門前ロン", fu=10))
+
+    best_total = 20
+    best_breakdown = breakdown_base
+
+    for melds, pair in _all_meld_patterns_with_pair(hand):
+        meld_entries: list[dict] = []
+        for kind, tile in melds:
+            meld_entries.append({"kind": kind, "tile": tile, "open": False})
+        for meld in hand.melds:
+            tiles = [_normalize_tile(t) for t in meld.tiles]
+            kind = "chi" if meld.type == "chi" else "pon" if meld.type == "pon" else "kan"
+            base_tile = min(tiles, key=_tile_to_index) if kind == "chi" else tiles[0]
+            meld_entries.append({"kind": kind, "tile": base_tile, "open": meld.open})
+
+        win = _normalize_tile(hand.win_tile)
+        win_targets: list[tuple[str, int]] = []
+        if _normalize_tile(pair) == win:
+            win_targets.append(("pair", -1))
+        for idx, m in enumerate(meld_entries):
+            if win in _meld_tiles(m["kind"], m["tile"]):
+                win_targets.append(("meld", idx))
+        if not win_targets:
+            win_targets = [("meld", -1)]
+
+        for target_type, target_idx in win_targets:
+            details = breakdown_base.copy()
+            total = sum(item.fu for item in details)
+
+            pfu = _pair_fu(pair, context, rules)
+            if pfu:
+                details.append(FuBreakdownItem(name="雀頭", fu=pfu))
+                total += pfu
+
+            wait_fu = 0
+            if target_type == "pair":
+                wait_fu = 2
+            elif target_idx >= 0:
+                target_meld = meld_entries[target_idx]
+                if target_meld["kind"] == "chi":
+                    s = _normalize_tile(target_meld["tile"])
+                    start = int(s[0])
+                    n = int(win[0])
+                    if n == start + 1:
+                        wait_fu = 2
+                    elif (start == 1 and n == 3) or (start == 7 and n == 7):
+                        wait_fu = 2
+            if wait_fu:
+                details.append(FuBreakdownItem(name="待ち", fu=2))
+                total += 2
+
+            for idx, m in enumerate(meld_entries):
+                is_open = m["open"]
+                if (
+                    context.win_type == "ron"
+                    and idx == target_idx
+                    and m["kind"] == "pon"
+                    and not m["open"]
+                ):
+                    is_open = True
+                mfu = _meld_fu(m["kind"], m["tile"], is_open)
+                if mfu:
+                    details.append(FuBreakdownItem(name="面子", fu=mfu))
+                    total += mfu
+
+            rounded = ((total + 9) // 10) * 10
+            if rounded > total:
+                details.append(FuBreakdownItem(name="切り上げ", fu=rounded - total))
+
+            if rounded >= best_total:
+                best_total = rounded
+                best_breakdown = details
+
+    return best_total, best_breakdown
 
 
 def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> ScoreResult:
@@ -757,8 +866,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     if dora.ura_dora > 0:
         yaku.append(YakuItem(name="裏ドラ", han=dora.ura_dora))
     han = yaku_han + context.aka_dora_count + dora.dora + dora.ura_dora
-    fu = 20 if (has_pinfu and context.win_type == "tsumo") else 30
-    fu_breakdown = _build_fu_breakdown(fu, has_pinfu, context)
+    fu, fu_breakdown = _calc_regular_fu(hand, context, rules, has_pinfu)
     label = _point_label_from_han_fu(han, fu)
     points, payments = _calc_points(context, han, fu)
     return ScoreResult(

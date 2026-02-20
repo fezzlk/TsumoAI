@@ -70,10 +70,10 @@ def test_score_endpoint_success():
     body = response.json()
     assert body["status"] == "ok"
     assert body["result"]["han"] == 4
-    assert body["result"]["points"]["ron"] == 7700
-    assert body["result"]["fu_breakdown"] == [{"name": "副底", "fu": 20}, {"name": "切り上げ", "fu": 10}]
-    assert body["result"]["payments"]["hand_points_received"] == 7700
-    assert body["result"]["payments"]["hand_points_with_honba"] == 7700
+    assert body["result"]["points"]["ron"] == 8000
+    assert body["result"]["fu_breakdown"] == [{"name": "副底", "fu": 20}, {"name": "門前ロン", "fu": 10}, {"name": "待ち", "fu": 2}, {"name": "面子", "fu": 8}]
+    assert body["result"]["payments"]["hand_points_received"] == 8000
+    assert body["result"]["payments"]["hand_points_with_honba"] == 8000
 
 
 def test_score_endpoint_validation_error():
@@ -91,11 +91,11 @@ def test_score_endpoint_includes_payment_breakdown():
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
     payments = response.json()["result"]["payments"]
-    assert payments["hand_points_received"] == 7700
+    assert payments["hand_points_received"] == 8000
     assert payments["honba_bonus"] == 600
-    assert payments["hand_points_with_honba"] == 8300
+    assert payments["hand_points_with_honba"] == 8600
     assert payments["kyotaku_bonus"] == 1000
-    assert payments["total_received"] == 9300
+    assert payments["total_received"] == 9600
 
 
 def test_score_endpoint_accepts_kan_hand():
