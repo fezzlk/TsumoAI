@@ -173,8 +173,8 @@ def test_score_endpoint_adds_ittsuu():
 def test_score_endpoint_adds_toitoi_and_sanshoku_doukou():
     payload = valid_payload()
     payload["hand"] = {
-        "closed_tiles": ["1m", "1m", "1m", "1p", "1p", "1p", "1s", "1s", "1s", "9m", "9m", "9m", "5p", "5p"],
-        "melds": [],
+        "closed_tiles": ["1p", "1p", "1p", "1s", "1s", "1s", "9m", "9m", "9m", "5p", "5p"],
+        "melds": [{"type": "pon", "tiles": ["1m", "1m", "1m"], "open": True}],
         "win_tile": "5p",
     }
     payload["context"]["round_wind"] = "W"
@@ -249,6 +249,46 @@ def test_score_endpoint_adds_kokushi_13_wait_double_yakuman():
     assert body["result"]["point_label"] == "ダブル役満"
     assert body["result"]["points"]["ron"] == 64000
     assert body["result"]["yakuman"] == ["国士無双十三面待ち"]
+
+
+def test_score_endpoint_adds_daisangen():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["P", "P", "P", "F", "F", "F", "C", "C", "C", "1m", "1m", "1m", "9p", "9p"],
+        "melds": [],
+        "win_tile": "9p",
+    }
+    payload["context"]["round_wind"] = "W"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = []
+    payload["context"]["aka_dora_count"] = 0
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert "大三元" in body["result"]["yakuman"]
+    assert "四暗刻" in body["result"]["yakuman"]
+    assert body["result"]["point_label"] == "ダブル役満"
+
+
+def test_score_endpoint_adds_chuuren():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "1m", "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "9m", "9m", "5m"],
+        "melds": [],
+        "win_tile": "5m",
+    }
+    payload["context"]["round_wind"] = "W"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = []
+    payload["context"]["aka_dora_count"] = 0
+    payload["rules"]["double_yakuman_ari"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert "純正九蓮宝燈" in body["result"]["yakuman"]
+    assert body["result"]["point_label"] == "ダブル役満"
 
 
 def test_score_endpoint_rejects_dora_only_hand():

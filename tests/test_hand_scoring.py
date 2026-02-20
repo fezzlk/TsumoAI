@@ -154,8 +154,10 @@ def test_score_hand_shape_does_not_add_ittsuu_for_near_shape():
 
 
 def test_score_hand_shape_adds_toitoi():
-    hand = base_hand().model_copy(
-        update={"closed_tiles": ["1m", "1m", "1m", "2m", "2m", "2m", "3p", "3p", "3p", "4s", "4s", "4s", "5s", "5s"]}
+    hand = HandInput(
+        closed_tiles=["2m", "2m", "2m", "3p", "3p", "3p", "4s", "4s", "4s", "5s", "5s"],
+        melds=[{"type": "pon", "tiles": ["1m", "1m", "1m"], "open": True}],
+        win_tile="5s",
     )
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
@@ -164,8 +166,10 @@ def test_score_hand_shape_adds_toitoi():
 
 
 def test_score_hand_shape_adds_sanshoku_doukou():
-    hand = base_hand().model_copy(
-        update={"closed_tiles": ["1m", "1m", "1m", "1p", "1p", "1p", "1s", "1s", "1s", "9m", "9m", "9m", "5p", "5p"]}
+    hand = HandInput(
+        closed_tiles=["1p", "1p", "1p", "1s", "1s", "1s", "9m", "9m", "9m", "5p", "5p"],
+        melds=[{"type": "pon", "tiles": ["1m", "1m", "1m"], "open": True}],
+        win_tile="5p",
     )
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
@@ -195,8 +199,10 @@ def test_score_hand_shape_adds_chiitoitsu_and_honroutou():
 
 
 def test_score_hand_shape_adds_honroutou_with_toitoi():
-    hand = base_hand().model_copy(
-        update={"closed_tiles": ["1m", "1m", "1m", "9m", "9m", "9m", "1p", "1p", "1p", "E", "E", "E", "9s", "9s"]}
+    hand = HandInput(
+        closed_tiles=["9m", "9m", "9m", "1p", "1p", "1p", "E", "E", "E", "9s", "9s"],
+        melds=[{"type": "pon", "tiles": ["1m", "1m", "1m"], "open": True}],
+        win_tile="9s",
     )
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
@@ -205,8 +211,10 @@ def test_score_hand_shape_adds_honroutou_with_toitoi():
 
 
 def test_score_hand_shape_does_not_add_honroutou_when_middle_tile_exists():
-    hand = base_hand().model_copy(
-        update={"closed_tiles": ["1m", "1m", "1m", "9m", "9m", "9m", "1p", "1p", "1p", "9s", "9s", "9s", "5s", "5s"]}
+    hand = HandInput(
+        closed_tiles=["9m", "9m", "9m", "1p", "1p", "1p", "9s", "9s", "9s", "5s", "5s"],
+        melds=[{"type": "pon", "tiles": ["1m", "1m", "1m"], "open": True}],
+        win_tile="5s",
     )
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
@@ -238,3 +246,50 @@ def test_score_hand_shape_adds_kokushi_13_wait_double_yakuman():
     assert result.point_label == "ダブル役満"
     assert result.points.ron == 64000
     assert result.yakuman == ["国士無双十三面待ち"]
+
+
+def test_score_hand_shape_adds_daisangen():
+    hand = HandInput(
+        closed_tiles=["P", "P", "P", "F", "F", "F", "C", "C", "C", "1m", "1m", "1m", "9p", "9p"],
+        melds=[],
+        win_tile="9p",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert "大三元" in result.yakuman
+    assert "四暗刻" in result.yakuman
+    assert result.point_label == "ダブル役満"
+
+
+def test_score_hand_shape_adds_tsuuiisou():
+    hand = HandInput(
+        closed_tiles=["E", "E", "E", "S", "S", "S", "W", "W", "W", "P", "P", "P", "F", "F"],
+        melds=[],
+        win_tile="F",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert "字一色" in result.yakuman
+
+
+def test_score_hand_shape_adds_ryuuiisou():
+    hand = HandInput(
+        closed_tiles=["2s", "2s", "2s", "3s", "3s", "3s", "4s", "4s", "4s", "F", "F", "F", "8s", "8s"],
+        melds=[],
+        win_tile="8s",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert "緑一色" in result.yakuman
+
+
+def test_score_hand_shape_adds_chuuren_poutou():
+    hand = HandInput(
+        closed_tiles=["1m", "1m", "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "9m", "9m", "5m"],
+        melds=[],
+        win_tile="5m",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet(double_yakuman_ari=True))
+    assert "純正九蓮宝燈" in result.yakuman
+    assert result.point_label == "ダブル役満"
