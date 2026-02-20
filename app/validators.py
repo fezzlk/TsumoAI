@@ -124,6 +124,13 @@ def validate_score_request(req: ScoreRequest) -> None:
     for tile in req.context.ura_dora_indicators:
         validate_tile(tile)
 
+    tile_counts: dict[str, int] = {}
+    for tile in all_tiles:
+        normalized = _normalize_tile(tile)
+        tile_counts[normalized] = tile_counts.get(normalized, 0) + 1
+        if tile_counts[normalized] >= 5:
+            raise HTTPException(status_code=422, detail=f"Tile appears 5+ times in hand: {normalized}")
+
     for meld in req.hand.melds:
         if meld.type in {"chi", "pon"} and len(meld.tiles) != 3:
             raise HTTPException(status_code=422, detail=f"{meld.type} must contain exactly 3 tiles")
