@@ -1015,10 +1015,32 @@
         return uiState.jsonDirect ? readHandFromJsonInput() : buildHandByPatternState();
       }
 
+      function toDoraIndicatorFromDoraTile(tile) {
+        const t = (tile || "").replace(/r$/, "");
+        if (/^[1-9][mps]$/.test(t)) {
+          const n = Number.parseInt(t[0], 10);
+          const suit = t[1];
+          return `${n === 1 ? 9 : n - 1}${suit}`;
+        }
+        if (["E", "S", "W", "N"].includes(t)) {
+          const order = ["E", "S", "W", "N"];
+          return order[(order.indexOf(t) + order.length - 1) % order.length];
+        }
+        if (["P", "F", "C"].includes(t)) {
+          const order = ["P", "F", "C"];
+          return order[(order.indexOf(t) + order.length - 1) % order.length];
+        }
+        return t;
+      }
+
       function buildPayload() {
         const hand = buildHandByPattern();
         const activeDoraValues = (uiState.doraMode === "indicator" ? uiState.doraIndicators : uiState.doraTiles).filter(Boolean);
         const activeUraDoraValues = (uiState.doraMode === "indicator" ? uiState.uraDoraIndicators : uiState.uraDoraTiles).filter(Boolean);
+        const doraIndicators =
+          uiState.doraMode === "indicator" ? activeDoraValues : activeDoraValues.map(toDoraIndicatorFromDoraTile);
+        const uraDoraIndicators =
+          uiState.doraMode === "indicator" ? activeUraDoraValues : activeUraDoraValues.map(toDoraIndicatorFromDoraTile);
         const riichiState = radioValue("riichiState") || "none";
         return {
           hand,
@@ -1036,8 +1058,8 @@
             chankan: checked("chankan"),
             chiihou: checked("chiihou"),
             tenhou: checked("tenhou"),
-            dora_indicators: activeDoraValues,
-            ura_dora_indicators: activeUraDoraValues,
+            dora_indicators: doraIndicators,
+            ura_dora_indicators: uraDoraIndicators,
             aka_dora_count: 0,
             honba: toInt("honba"),
             kyotaku: toInt("kyotaku")
