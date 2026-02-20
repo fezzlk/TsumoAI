@@ -13,6 +13,8 @@ from app.schemas import (
     YakuItem,
 )
 
+TERMINAL_HONOR_TILES = {"1m", "9m", "1p", "9p", "1s", "9s", "E", "S", "W", "N", "P", "F", "C"}
+
 
 def _normalize_tile(tile: str) -> str:
     if tile in {"5mr", "5pr", "5sr"}:
@@ -186,6 +188,29 @@ def _has_honroutou(hand: HandInput) -> bool:
     return all(_is_terminal_or_honor(tile) for tile in _all_tiles(hand))
 
 
+def _is_kokushi(hand: HandInput) -> bool:
+    if hand.melds:
+        return False
+    counts = Counter(_all_tiles(hand))
+    if set(counts.keys()) - TERMINAL_HONOR_TILES:
+        return False
+    if not TERMINAL_HONOR_TILES.issubset(counts.keys()):
+        return False
+    return any(counts[t] >= 2 for t in TERMINAL_HONOR_TILES)
+
+
+def _is_kokushi_13_wait(hand: HandInput, win_tile: str) -> bool:
+    if not _is_kokushi(hand):
+        return False
+    w = _normalize_tile(win_tile)
+    counts = Counter(_all_tiles(hand))
+    if w not in TERMINAL_HONOR_TILES:
+        return False
+    if counts[w] != 2:
+        return False
+    return all(counts[t] == (2 if t == w else 1) for t in TERMINAL_HONOR_TILES)
+
+
 def _point_label_from_han_fu(han: int, fu: int) -> str:
     if han >= 13:
         return "数え役満"
@@ -215,8 +240,8 @@ def _base_points(han: int, fu: int) -> int:
     return fu * (2 ** (han + 2))
 
 
-def _calc_points(context: ContextInput, han: int, fu: int) -> tuple[Points, Payments]:
-    base = _base_points(han, fu)
+def _calc_points(context: ContextInput, han: int, fu: int, base_override: int | None = None) -> tuple[Points, Payments]:
+    base = base_override if base_override is not None else _base_points(han, fu)
     if context.win_type == "ron":
         ron = base * (6 if context.is_dealer else 4)
         rounded = ((ron + 99) // 100) * 100
@@ -255,6 +280,29 @@ def _calc_points(context: ContextInput, han: int, fu: int) -> tuple[Points, Paym
 
 def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> ScoreResult:
     """Hand shape -> score. This module must not parse image bytes."""
+    if _is_kokushi(hand):
+        is_13_wait = _is_kokushi_13_wait(hand, hand.win_tile)
+        yakuman_multiplier = 2 if (is_13_wait and rules.double_yakuman_ari) else 1
+        yakuman_name = "国士無双十三面待ち" if is_13_wait else "国士無双"
+        han = 13 * yakuman_multiplier
+        points, payments = _calc_points(context, han=han, fu=0, base_override=8000 * yakuman_multiplier)
+        label = "ダブル役満" if yakuman_multiplier == 2 else "役満"
+        return ScoreResult(
+            han=han,
+            fu=0,
+            yaku=[],
+            yakuman=[yakuman_name],
+            dora=DoraBreakdown(dora=0, aka_dora=0, ura_dora=0),
+            point_label=label,
+            points=points,
+            payments=payments,
+            explanation=[
+                "PoC scoring mode is active.",
+                "Kokushi musou path was selected.",
+                f"13-sided wait detected={is_13_wait}, double_yakuman_ari={rules.double_yakuman_ari}.",
+            ],
+        )
+
     yaku: list[YakuItem] = []
     yaku_han = 0
     if context.double_riichi:

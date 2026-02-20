@@ -210,6 +210,47 @@ def test_score_endpoint_adds_chiitoitsu_and_honroutou():
     assert any(y["name"] == "混老頭" and y["han"] == 2 for y in body["result"]["yaku"])
 
 
+def test_score_endpoint_adds_kokushi():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "1m", "9m", "1p", "9p", "1s", "9s", "E", "S", "W", "N", "P", "F", "C"],
+        "melds": [],
+        "win_tile": "9m",
+    }
+    payload["context"]["round_wind"] = "W"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = []
+    payload["context"]["aka_dora_count"] = 0
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"]["point_label"] == "役満"
+    assert body["result"]["points"]["ron"] == 32000
+    assert body["result"]["yakuman"] == ["国士無双"]
+
+
+def test_score_endpoint_adds_kokushi_13_wait_double_yakuman():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "9m", "9m", "1p", "9p", "1s", "9s", "E", "S", "W", "N", "P", "F", "C"],
+        "melds": [],
+        "win_tile": "9m",
+    }
+    payload["context"]["round_wind"] = "W"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = []
+    payload["context"]["aka_dora_count"] = 0
+    payload["rules"]["double_yakuman_ari"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"]["point_label"] == "ダブル役満"
+    assert body["result"]["points"]["ron"] == 64000
+    assert body["result"]["yakuman"] == ["国士無双十三面待ち"]
+
+
 def test_score_endpoint_rejects_dora_only_hand():
     payload = valid_payload()
     payload["context"]["round_wind"] = "W"

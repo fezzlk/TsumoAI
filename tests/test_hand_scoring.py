@@ -212,3 +212,29 @@ def test_score_hand_shape_does_not_add_honroutou_when_middle_tile_exists():
     result = score_hand_shape(hand, context, RuleSet())
     assert any(y.name == "対々和" and y.han == 2 for y in result.yaku)
     assert all(y.name != "混老頭" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_kokushi():
+    hand = HandInput(
+        closed_tiles=["1m", "1m", "9m", "1p", "9p", "1s", "9s", "E", "S", "W", "N", "P", "F", "C"],
+        melds=[],
+        win_tile="9m",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.point_label == "役満"
+    assert result.points.ron == 32000
+    assert result.yakuman == ["国士無双"]
+
+
+def test_score_hand_shape_adds_kokushi_13_wait_double_yakuman():
+    hand = HandInput(
+        closed_tiles=["1m", "9m", "9m", "1p", "9p", "1s", "9s", "E", "S", "W", "N", "P", "F", "C"],
+        melds=[],
+        win_tile="9m",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet(double_yakuman_ari=True))
+    assert result.point_label == "ダブル役満"
+    assert result.points.ron == 64000
+    assert result.yakuman == ["国士無双十三面待ち"]
