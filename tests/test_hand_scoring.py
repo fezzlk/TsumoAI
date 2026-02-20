@@ -161,8 +161,9 @@ def test_score_hand_shape_adds_toitoi():
     )
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
-    assert result.han == 2
+    assert result.han == 4
     assert any(y.name == "対々和" and y.han == 2 for y in result.yaku)
+    assert any(y.name == "三暗刻" and y.han == 2 for y in result.yaku)
 
 
 def test_score_hand_shape_adds_sanshoku_doukou():
@@ -173,9 +174,10 @@ def test_score_hand_shape_adds_sanshoku_doukou():
     )
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
-    assert result.han == 4
+    assert result.han == 6
     assert any(y.name == "対々和" and y.han == 2 for y in result.yaku)
     assert any(y.name == "三色同刻" and y.han == 2 for y in result.yaku)
+    assert any(y.name == "三暗刻" and y.han == 2 for y in result.yaku)
 
 
 def test_score_hand_shape_does_not_add_sanshoku_doukou_for_sequences():
@@ -183,8 +185,9 @@ def test_score_hand_shape_does_not_add_sanshoku_doukou_for_sequences():
         update={"closed_tiles": ["1m", "2m", "3m", "1p", "2p", "3p", "1s", "2s", "3s", "7m", "8m", "9m", "5p", "5p"]}
     )
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
-    with pytest.raises(ValueError):
-        score_hand_shape(hand, context, RuleSet())
+    result = score_hand_shape(hand, context, RuleSet())
+    assert all(y.name != "三色同刻" for y in result.yaku)
+    assert any(y.name == "三色同順" for y in result.yaku)
 
 
 def test_score_hand_shape_adds_chiitoitsu_and_honroutou():
@@ -293,3 +296,66 @@ def test_score_hand_shape_adds_chuuren_poutou():
     result = score_hand_shape(hand, context, RuleSet(double_yakuman_ari=True))
     assert "純正九蓮宝燈" in result.yakuman
     assert result.point_label == "ダブル役満"
+
+
+def test_score_hand_shape_adds_tanyao():
+    hand = HandInput(
+        closed_tiles=["2m", "3m", "4m", "3p", "4p", "5p", "4s", "5s", "6s", "6m", "7m", "8m", "6p", "6p"],
+        melds=[],
+        win_tile="6p",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "断么九" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_sanshoku_doujun():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "1p", "2p", "3p", "1s", "2s", "3s", "7m", "8m", "9m", "5p", "5p"],
+        melds=[],
+        win_tile="5p",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "三色同順" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_chanta():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "7p", "8p", "9p", "E", "E", "E", "9s", "9s", "9s", "1p", "1p"],
+        melds=[],
+        win_tile="1p",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "混全帯么九" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_junchan():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "7p", "8p", "9p", "1s", "2s", "3s", "9m", "9m", "9m", "1p", "1p"],
+        melds=[],
+        win_tile="1p",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "純全帯么九" and y.han == 3 for y in result.yaku)
+    assert all(y.name != "混全帯么九" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_honitsu_and_chinitsu():
+    honitsu_hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "E", "E", "E", "1m", "1m"],
+        melds=[],
+        win_tile="1m",
+    )
+    chinitsu_hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "2m", "2m", "2m", "5m", "5m"],
+        melds=[],
+        win_tile="5m",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    honitsu_result = score_hand_shape(honitsu_hand, context, RuleSet())
+    chinitsu_result = score_hand_shape(chinitsu_hand, context, RuleSet())
+    assert any(y.name == "混一色" for y in honitsu_result.yaku)
+    assert any(y.name == "清一色" for y in chinitsu_result.yaku)

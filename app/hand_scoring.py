@@ -148,6 +148,33 @@ def _all_meld_patterns(hand: HandInput) -> list[list[tuple[str, str]]]:
     return patterns
 
 
+def _all_meld_patterns_with_pair(hand: HandInput) -> list[tuple[list[tuple[str, str]], str]]:
+    open_melds: list[tuple[str, str]] = []
+    for meld in hand.melds:
+        tiles = [_normalize_tile(t) for t in meld.tiles]
+        if meld.type == "chi":
+            open_melds.append(("chi", min(tiles, key=_tile_to_index)))
+        else:
+            open_melds.append(("pon", tiles[0]))
+
+    needed_closed_melds = 4 - len(open_melds)
+    if needed_closed_melds < 0:
+        return []
+
+    counts = _closed_tile_counts(hand)
+    patterns: list[tuple[list[tuple[str, str]], str]] = []
+    for i, c in enumerate(counts):
+        if c < 2:
+            continue
+        work = counts[:]
+        work[i] -= 2
+        pair_tile = _index_to_tile(i)
+        closed_patterns = _collect_closed_meld_patterns(work, needed_closed_melds)
+        for closed in closed_patterns:
+            patterns.append((open_melds + closed, pair_tile))
+    return patterns
+
+
 def _has_toitoi(hand: HandInput) -> bool:
     for pattern in _all_meld_patterns(hand):
         if all(kind == "pon" for kind, _ in pattern):
@@ -256,6 +283,115 @@ def _has_suuankou(hand: HandInput) -> bool:
         return False
     for pattern in _all_meld_patterns(hand):
         if all(kind == "pon" for kind, _ in pattern):
+            return True
+    return False
+
+
+def _is_simple_tile(tile: str) -> bool:
+    t = _normalize_tile(tile)
+    return len(t) == 2 and t[1] in {"m", "p", "s"} and t[0] in {"2", "3", "4", "5", "6", "7", "8"}
+
+
+def _has_tanyao(hand: HandInput, rules: RuleSet) -> bool:
+    if any(m.open for m in hand.melds) and not rules.kuitan_ari:
+        return False
+    return all(_is_simple_tile(tile) for tile in _all_tiles(hand))
+
+
+def _meld_has_terminal_or_honor(kind: str, tile: str) -> bool:
+    t = _normalize_tile(tile)
+    if kind == "chi":
+        return len(t) == 2 and t[1] in {"m", "p", "s"} and t[0] in {"1", "7"}
+    return _is_terminal_or_honor(t)
+
+
+def _has_chanta(hand: HandInput) -> bool:
+    for melds, pair in _all_meld_patterns_with_pair(hand):
+        if not _is_terminal_or_honor(pair):
+            continue
+        if not all(_meld_has_terminal_or_honor(kind, tile) for kind, tile in melds):
+            continue
+        tiles = _all_tiles(hand)
+        if any(len(_normalize_tile(t)) == 1 for t in tiles):
+            return True
+    return False
+
+
+def _has_junchan(hand: HandInput) -> bool:
+    for melds, pair in _all_meld_patterns_with_pair(hand):
+        if not _is_terminal_or_honor(pair):
+            continue
+        if len(_normalize_tile(pair)) != 2:
+            continue
+        if not all(_meld_has_terminal_or_honor(kind, tile) for kind, tile in melds):
+            continue
+        if any(len(_normalize_tile(t)) == 1 for t in _all_tiles(hand)):
+            continue
+        return True
+    return False
+
+
+def _has_sanshoku_doujun(hand: HandInput) -> bool:
+    for melds, _ in _all_meld_patterns_with_pair(hand):
+        starts = {"m": set(), "p": set(), "s": set()}
+        for kind, tile in melds:
+            t = _normalize_tile(tile)
+            if kind == "chi" and len(t) == 2 and t[1] in {"m", "p", "s"}:
+                starts[t[1]].add(int(t[0]))
+        if starts["m"] & starts["p"] & starts["s"]:
+            return True
+    return False
+
+
+def _has_honitsu(hand: HandInput) -> bool:
+    suits = {t[1] for t in (_normalize_tile(x) for x in _all_tiles(hand)) if len(t) == 2}
+    has_honor = any(len(_normalize_tile(x)) == 1 for x in _all_tiles(hand))
+    return len(suits) == 1 and has_honor
+
+
+def _has_chinitsu(hand: HandInput) -> bool:
+    suits = {t[1] for t in (_normalize_tile(x) for x in _all_tiles(hand)) if len(t) == 2}
+    has_honor = any(len(_normalize_tile(x)) == 1 for x in _all_tiles(hand))
+    return len(suits) == 1 and not has_honor
+
+
+def _has_shousangen(hand: HandInput) -> bool:
+    counts = Counter(_all_tiles(hand))
+    dragon_triplets = sum(1 for t in ("P", "F", "C") if counts[t] >= 3)
+    dragon_pairs = sum(1 for t in ("P", "F", "C") if counts[t] == 2)
+    return dragon_triplets == 2 and dragon_pairs == 1
+
+
+def _has_sankantsu(hand: HandInput) -> bool:
+    return sum(1 for m in hand.melds if m.type in {"kan", "ankan", "kakan"}) == 3
+
+
+def _has_sanankou(hand: HandInput) -> bool:
+    concealed_pons = 0
+    for meld in hand.melds:
+        if meld.open:
+            continue
+        if meld.type in {"pon", "kan", "ankan", "kakan"}:
+            concealed_pons += 1
+
+    for melds in _all_meld_patterns(hand):
+        closed_pon_count = sum(1 for kind, _ in melds if kind == "pon") - sum(1 for m in hand.melds if m.open)
+        if concealed_pons + max(closed_pon_count, 0) >= 3:
+            return True
+    return False
+
+
+def _has_iipeikou(hand: HandInput) -> bool:
+    if hand.melds:
+        return False
+    for melds, _ in _all_meld_patterns_with_pair(hand):
+        seq_counts: dict[tuple[str, int], int] = {}
+        for kind, tile in melds:
+            t = _normalize_tile(tile)
+            if kind == "chi" and len(t) == 2 and t[1] in {"m", "p", "s"}:
+                key = (t[1], int(t[0]))
+                seq_counts[key] = seq_counts.get(key, 0) + 1
+        if any(v >= 2 for v in seq_counts.values()):
             return True
     return False
 
@@ -473,16 +609,43 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku_han += 13
 
     yaku_han += _append_yakuhai_yaku(yaku, hand, context)
+    if _has_tanyao(hand, rules):
+        yaku.append(YakuItem(name="断么九", han=1))
+        yaku_han += 1
+    if _has_iipeikou(hand):
+        yaku.append(YakuItem(name="一盃口", han=1))
+        yaku_han += 1
+    if _has_sanshoku_doujun(hand):
+        sanshoku_han = 1 if any(m.open for m in hand.melds) else 2
+        yaku.append(YakuItem(name="三色同順", han=sanshoku_han))
+        yaku_han += sanshoku_han
     if _has_ittsuu(hand):
         is_open_hand = any(meld.open for meld in hand.melds)
         ittsuu_han = 1 if is_open_hand else 2
         yaku.append(YakuItem(name="一気通貫", han=ittsuu_han))
         yaku_han += ittsuu_han
+    if _has_junchan(hand):
+        junchan_han = 2 if any(m.open for m in hand.melds) else 3
+        yaku.append(YakuItem(name="純全帯么九", han=junchan_han))
+        yaku_han += junchan_han
+    elif _has_chanta(hand):
+        chanta_han = 1 if any(m.open for m in hand.melds) else 2
+        yaku.append(YakuItem(name="混全帯么九", han=chanta_han))
+        yaku_han += chanta_han
     if _has_toitoi(hand):
         yaku.append(YakuItem(name="対々和", han=2))
         yaku_han += 2
     if _has_sanshoku_doukou(hand):
         yaku.append(YakuItem(name="三色同刻", han=2))
+        yaku_han += 2
+    if _has_shousangen(hand):
+        yaku.append(YakuItem(name="小三元", han=2))
+        yaku_han += 2
+    if _has_sanankou(hand):
+        yaku.append(YakuItem(name="三暗刻", han=2))
+        yaku_han += 2
+    if _has_sankantsu(hand):
+        yaku.append(YakuItem(name="三槓子", han=2))
         yaku_han += 2
     if _has_chiitoitsu(hand):
         yaku.append(YakuItem(name="七対子", han=2))
@@ -490,6 +653,14 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     if _has_honroutou(hand):
         yaku.append(YakuItem(name="混老頭", han=2))
         yaku_han += 2
+    if _has_chinitsu(hand):
+        chinitsu_han = 5 if any(m.open for m in hand.melds) else 6
+        yaku.append(YakuItem(name="清一色", han=chinitsu_han))
+        yaku_han += chinitsu_han
+    elif _has_honitsu(hand):
+        honitsu_han = 2 if any(m.open for m in hand.melds) else 3
+        yaku.append(YakuItem(name="混一色", han=honitsu_han))
+        yaku_han += honitsu_han
 
     if yaku_han == 0:
         raise ValueError("No yaku: dora-only hands cannot win")

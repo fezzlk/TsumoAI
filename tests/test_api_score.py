@@ -185,9 +185,10 @@ def test_score_endpoint_adds_toitoi_and_sanshoku_doukou():
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
     body = response.json()
-    assert body["result"]["han"] == 4
+    assert body["result"]["han"] == 6
     assert any(y["name"] == "対々和" and y["han"] == 2 for y in body["result"]["yaku"])
     assert any(y["name"] == "三色同刻" and y["han"] == 2 for y in body["result"]["yaku"])
+    assert any(y["name"] == "三暗刻" and y["han"] == 2 for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_adds_chiitoitsu_and_honroutou():
@@ -289,6 +290,74 @@ def test_score_endpoint_adds_chuuren():
     body = response.json()
     assert "純正九蓮宝燈" in body["result"]["yakuman"]
     assert body["result"]["point_label"] == "ダブル役満"
+
+
+def test_score_endpoint_adds_tanyao_chanta_junchan_sanshoku_doujun():
+    # Tanyao
+    tanyao = valid_payload()
+    tanyao["hand"] = {
+        "closed_tiles": ["2m", "3m", "4m", "3p", "4p", "5p", "4s", "5s", "6s", "6m", "7m", "8m", "6p", "6p"],
+        "melds": [],
+        "win_tile": "6p",
+    }
+    tanyao["context"]["round_wind"] = "W"
+    tanyao["context"]["riichi"] = False
+    tanyao["context"]["double_riichi"] = False
+    tanyao["context"]["dora_indicators"] = []
+    tanyao["context"]["aka_dora_count"] = 0
+    res = client.post("/api/v1/score", json=tanyao)
+    assert res.status_code == 200
+    assert any(y["name"] == "断么九" for y in res.json()["result"]["yaku"])
+
+    # Sanshoku doujun
+    sanshoku = valid_payload()
+    sanshoku["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "1p", "2p", "3p", "1s", "2s", "3s", "7m", "8m", "9m", "5p", "5p"],
+        "melds": [],
+        "win_tile": "5p",
+    }
+    sanshoku["context"]["round_wind"] = "W"
+    sanshoku["context"]["riichi"] = False
+    sanshoku["context"]["double_riichi"] = False
+    sanshoku["context"]["dora_indicators"] = []
+    sanshoku["context"]["aka_dora_count"] = 0
+    res = client.post("/api/v1/score", json=sanshoku)
+    assert res.status_code == 200
+    assert any(y["name"] == "三色同順" for y in res.json()["result"]["yaku"])
+
+    # Chanta
+    chanta = valid_payload()
+    chanta["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "7p", "8p", "9p", "E", "E", "E", "9s", "9s", "9s", "1p", "1p"],
+        "melds": [],
+        "win_tile": "1p",
+    }
+    chanta["context"]["round_wind"] = "W"
+    chanta["context"]["riichi"] = False
+    chanta["context"]["double_riichi"] = False
+    chanta["context"]["dora_indicators"] = []
+    chanta["context"]["aka_dora_count"] = 0
+    res = client.post("/api/v1/score", json=chanta)
+    assert res.status_code == 200
+    assert any(y["name"] == "混全帯么九" for y in res.json()["result"]["yaku"])
+
+    # Junchan
+    junchan = valid_payload()
+    junchan["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "7p", "8p", "9p", "1s", "2s", "3s", "9m", "9m", "9m", "1p", "1p"],
+        "melds": [],
+        "win_tile": "1p",
+    }
+    junchan["context"]["round_wind"] = "W"
+    junchan["context"]["riichi"] = False
+    junchan["context"]["double_riichi"] = False
+    junchan["context"]["dora_indicators"] = []
+    junchan["context"]["aka_dora_count"] = 0
+    res = client.post("/api/v1/score", json=junchan)
+    assert res.status_code == 200
+    yaku_names = [y["name"] for y in res.json()["result"]["yaku"]]
+    assert "純全帯么九" in yaku_names
+    assert "混全帯么九" not in yaku_names
 
 
 def test_score_endpoint_rejects_dora_only_hand():
