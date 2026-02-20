@@ -49,6 +49,14 @@ def _append_yakuhai_yaku(yaku: list[YakuItem], hand: HandInput, context: Context
     return han
 
 
+def _has_ittsuu(hand: HandInput) -> bool:
+    counts = Counter(_all_tiles(hand))
+    for suit in ("m", "p", "s"):
+        if all(counts.get(f"{n}{suit}", 0) >= 1 for n in range(1, 10)):
+            return True
+    return False
+
+
 def _point_label_from_han_fu(han: int, fu: int) -> str:
     if han >= 13:
         return "数え役満"
@@ -149,6 +157,11 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku_han += 13
 
     yaku_han += _append_yakuhai_yaku(yaku, hand, context)
+    if _has_ittsuu(hand):
+        is_open_hand = any(meld.open for meld in hand.melds)
+        ittsuu_han = 1 if is_open_hand else 2
+        yaku.append(YakuItem(name="一気通貫", han=ittsuu_han))
+        yaku_han += ittsuu_han
 
     if yaku_han == 0:
         raise ValueError("No yaku: dora-only hands cannot win")

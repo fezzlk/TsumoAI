@@ -151,6 +151,25 @@ def test_score_endpoint_rejects_non_winning_shape():
     assert "valid winning shape" in response.text
 
 
+def test_score_endpoint_adds_ittsuu():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "2p", "2p", "2p", "5s", "5s"],
+        "melds": [],
+        "win_tile": "5s",
+    }
+    payload["context"]["round_wind"] = "W"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = []
+    payload["context"]["aka_dora_count"] = 0
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"]["han"] == 2
+    assert any(y["name"] == "一気通貫" and y["han"] == 2 for y in body["result"]["yaku"])
+
+
 def test_score_endpoint_rejects_dora_only_hand():
     payload = valid_payload()
     payload["context"]["round_wind"] = "W"

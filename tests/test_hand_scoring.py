@@ -120,3 +120,34 @@ def test_score_hand_shape_adds_dragon_yakuhai():
     result = score_hand_shape(hand, context, RuleSet())
     assert result.han == 1
     assert any(y.name == "役牌 白" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_closed_ittsuu():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "2p", "2p", "2p", "5s", "5s"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 2
+    assert any(y.name == "一気通貫" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_open_ittsuu():
+    hand = HandInput(
+        closed_tiles=["4m", "5m", "6m", "7m", "8m", "9m", "2p", "2p", "2p", "5s", "5s"],
+        melds=[{"type": "chi", "tiles": ["1m", "2m", "3m"], "open": True}],
+        win_tile="5s",
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 1
+    assert any(y.name == "一気通貫" and y.han == 1 for y in result.yaku)
+
+
+def test_score_hand_shape_does_not_add_ittsuu_for_near_shape():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "7p", "8p", "9p", "2s", "2s", "2s", "5s", "5s"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    with pytest.raises(ValueError):
+        score_hand_shape(hand, context, RuleSet())
