@@ -151,9 +151,15 @@ class Payments(BaseModel):
     total_received: int
 
 
+class FuBreakdownItem(BaseModel):
+    name: str
+    fu: int
+
+
 class ScoreResult(BaseModel):
     han: int
     fu: int
+    fu_breakdown: list[FuBreakdownItem] = Field(default_factory=list)
     yaku: list[YakuItem] = Field(default_factory=list)
     yakuman: list[str] = Field(default_factory=list)
     dora: DoraBreakdown

@@ -1131,10 +1131,14 @@
           yakuBadges || yakumanBadges
             ? `<div class="badge-row">${yakuBadges}${yakumanBadges}</div>`
             : `<div class="badge-row"><span class="badge badge-empty">役なし</span></div>`;
+        const fuBreakdownText = (r.fu_breakdown || []).length
+          ? r.fu_breakdown.map((item) => `${item.name} ${item.fu}`).join(" + ")
+          : "-";
         document.getElementById("summary").innerHTML = `
           <div class="result-line"><strong>${r.point_label}</strong></div>
           ${roleBadgeHtml}
           <div class="result-line">翻: ${r.han} / 符: ${r.fu}</div>
+          <div class="result-line">符内訳: ${fuBreakdownText}</div>
           <div class="result-line">ロン: ${r.points.ron}</div>
           <div class="result-line">ツモ(親支払): ${r.points.tsumo_dealer_pay}</div>
           <div class="result-line">ツモ(子支払): ${r.points.tsumo_non_dealer_pay}</div>

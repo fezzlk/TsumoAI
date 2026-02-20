@@ -40,6 +40,7 @@ def test_score_hand_shape_ron_non_dealer():
     result = score_hand_shape(base_hand(), base_context(), RuleSet())
     assert result.han == 4
     assert result.fu == 30
+    assert [item.model_dump() for item in result.fu_breakdown] == [{"name": "副底", "fu": 20}, {"name": "切り上げ", "fu": 10}]
     assert result.point_label == "通常"
     assert result.points.ron == 7700
     assert result.payments.hand_points_received == 7700
@@ -60,6 +61,26 @@ def test_score_hand_shape_tsumo_dealer():
     )
     result = score_hand_shape(base_hand(), context, RuleSet())
     assert any(y.name == "門前清自摸和" for y in result.yaku)
+
+
+
+def test_score_hand_shape_includes_fu_breakdown_for_pinfu_tsumo():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "3p", "4p", "5p", "6s", "7s", "8s", "5p", "5p"],
+        melds=[],
+        win_tile="5p",
+    )
+    context = base_context(
+        win_type="tsumo",
+        riichi=False,
+        aka_dora_count=0,
+        dora_indicators=[],
+        round_wind="E",
+        seat_wind="S",
+    )
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.fu == 20
+    assert [item.model_dump() for item in result.fu_breakdown] == [{"name": "副底", "fu": 20}]
 
 
 def test_score_hand_shape_payments_breakdown_with_honba_kyotaku():
