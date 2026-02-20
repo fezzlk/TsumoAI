@@ -61,6 +61,7 @@ def test_score_ui_has_feedback_controls():
     assert "誤り指摘（GCS保存）" in response.text
     assert "和了形" in response.text
     assert "4面子1雀頭" in response.text
+    assert "符内訳" in response.text
 
 
 def test_score_endpoint_success():
@@ -70,6 +71,7 @@ def test_score_endpoint_success():
     assert body["status"] == "ok"
     assert body["result"]["han"] == 4
     assert body["result"]["points"]["ron"] == 7700
+    assert body["result"]["fu_breakdown"] == [{"name": "副底", "fu": 20}, {"name": "切り上げ", "fu": 10}]
     assert body["result"]["payments"]["hand_points_received"] == 7700
     assert body["result"]["payments"]["hand_points_with_honba"] == 7700
 

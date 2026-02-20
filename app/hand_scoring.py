@@ -8,6 +8,7 @@ from app.schemas import (
     HandInput,
     Payments,
     Points,
+    FuBreakdownItem,
     RuleSet,
     ScoreResult,
     YakuItem,
@@ -614,6 +615,18 @@ def _calc_points(context: ContextInput, han: int, fu: int, base_override: int | 
     )
 
 
+def _build_fu_breakdown(fu: int, has_pinfu: bool, context: ContextInput) -> list[FuBreakdownItem]:
+    if fu == 20 and has_pinfu and context.win_type == "tsumo":
+        return [
+            FuBreakdownItem(name="副底", fu=20),
+        ]
+
+    return [
+        FuBreakdownItem(name="副底", fu=20),
+        FuBreakdownItem(name="切り上げ", fu=10),
+    ]
+
+
 def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> ScoreResult:
     """Hand shape -> score. This module must not parse image bytes."""
     yakuman_hits, yakuman_multiplier = _yakuman_hits(hand, context, rules)
@@ -623,6 +636,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         return ScoreResult(
             han=han,
             fu=0,
+            fu_breakdown=[],
             yaku=[],
             yakuman=yakuman_hits,
             dora=DoraBreakdown(dora=0, aka_dora=0, ura_dora=0),
@@ -744,11 +758,13 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku.append(YakuItem(name="裏ドラ", han=dora.ura_dora))
     han = yaku_han + context.aka_dora_count + dora.dora + dora.ura_dora
     fu = 20 if (has_pinfu and context.win_type == "tsumo") else 30
+    fu_breakdown = _build_fu_breakdown(fu, has_pinfu, context)
     label = _point_label_from_han_fu(han, fu)
     points, payments = _calc_points(context, han, fu)
     return ScoreResult(
         han=han,
         fu=fu,
+        fu_breakdown=fu_breakdown,
         yaku=yaku,
         yakuman=[],
         dora=dora,
