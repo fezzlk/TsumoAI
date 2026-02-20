@@ -68,8 +68,8 @@ def test_score_endpoint_success():
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["result"]["han"] == 4
-    assert body["result"]["points"]["ron"] == 7700
+    assert body["result"]["han"] == 5
+    assert body["result"]["points"]["ron"] == 8000
 
 
 def test_score_endpoint_validation_error():
@@ -153,6 +153,7 @@ def test_score_endpoint_rejects_non_winning_shape():
 
 def test_score_endpoint_rejects_dora_only_hand():
     payload = valid_payload()
+    payload["context"]["round_wind"] = "W"
     payload["context"]["riichi"] = False
     payload["context"]["double_riichi"] = False
     payload["context"]["dora_indicators"] = ["4m"]
@@ -186,3 +187,49 @@ def test_score_feedback_success(monkeypatch):
     body = feedback_res.json()
     assert body["status"] == "ok"
     assert body["storage"]["bucket"] == "test-bucket"
+
+
+def test_score_feedback_accepts_comment_without_score(monkeypatch):
+    def fake_save(payload):
+        assert payload["score_request"] is None
+        assert payload["score_response"] is None
+        assert payload["comment"] == "manual comment only"
+        return {"bucket": "test-bucket", "object_name": "score-feedback/comment-only.json"}
+
+    monkeypatch.setattr(gcs_feedback_store, "save", fake_save)
+    feedback_res = client.post(
+        "/api/v1/score/feedback",
+        json={
+            "comment": "manual comment only",
+        },
+    )
+    assert feedback_res.status_code == 200
+    body = feedback_res.json()
+    assert body["status"] == "ok"
+
+
+def test_score_feedback_accepts_error_response_payload(monkeypatch):
+    def fake_save(payload):
+        assert payload["score_request"] is not None
+        assert payload["score_response"]["detail"] == "No yaku: dora-only hands cannot win"
+        return {"bucket": "test-bucket", "object_name": "score-feedback/error-response.json"}
+
+    monkeypatch.setattr(gcs_feedback_store, "save", fake_save)
+    payload = valid_payload()
+    payload["context"]["round_wind"] = "W"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = ["4m"]
+    payload["context"]["aka_dora_count"] = 0
+    score_res = client.post("/api/v1/score", json=payload)
+    assert score_res.status_code == 422
+
+    feedback_res = client.post(
+        "/api/v1/score/feedback",
+        json={
+            "score_request": payload,
+            "score_response": score_res.json(),
+            "comment": "役なし判定の確認依頼",
+        },
+    )
+    assert feedback_res.status_code == 200

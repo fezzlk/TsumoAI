@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+
 from app.schemas import (
     ContextInput,
     DoraBreakdown,
@@ -10,6 +12,41 @@ from app.schemas import (
     ScoreResult,
     YakuItem,
 )
+
+
+def _normalize_tile(tile: str) -> str:
+    if tile in {"5mr", "5pr", "5sr"}:
+        return tile[:2]
+    return tile
+
+
+def _all_tiles(hand: HandInput) -> list[str]:
+    tiles = [_normalize_tile(t) for t in hand.closed_tiles]
+    for meld in hand.melds:
+        tiles.extend(_normalize_tile(t) for t in meld.tiles)
+    return tiles
+
+
+def _wind_name(tile: str) -> str:
+    return {"E": "東", "S": "南", "W": "西", "N": "北"}[tile]
+
+
+def _append_yakuhai_yaku(yaku: list[YakuItem], hand: HandInput, context: ContextInput) -> int:
+    han = 0
+    counts = Counter(_all_tiles(hand))
+
+    if counts.get(context.round_wind.value, 0) >= 3:
+        yaku.append(YakuItem(name=f"場風 {_wind_name(context.round_wind.value)}", han=1))
+        han += 1
+    if counts.get(context.seat_wind.value, 0) >= 3:
+        yaku.append(YakuItem(name=f"自風 {_wind_name(context.seat_wind.value)}", han=1))
+        han += 1
+
+    for tile, name in {"P": "役牌 白", "F": "役牌 發", "C": "役牌 中"}.items():
+        if counts.get(tile, 0) >= 3:
+            yaku.append(YakuItem(name=name, han=1))
+            han += 1
+    return han
 
 
 def _point_label_from_han_fu(han: int, fu: int) -> str:
@@ -111,6 +148,8 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku.append(YakuItem(name="地和", han=13))
         yaku_han += 13
 
+    yaku_han += _append_yakuhai_yaku(yaku, hand, context)
+
     if yaku_han == 0:
         raise ValueError("No yaku: dora-only hands cannot win")
 
@@ -141,7 +180,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         explanation=[
             "PoC scoring mode is active.",
             f"Hand-shape input accepted: closed_tiles={len(hand.closed_tiles)}, melds={len(hand.melds)}.",
-            "Current engine calculates points from context flags and dora only.",
+            "Current engine calculates points from context flags, yakuhai and dora.",
             f"Rules snapshot: aka_ari={rules.aka_ari}, kuitan_ari={rules.kuitan_ari}, renpu_fu={rules.renpu_fu}.",
         ],
     )

@@ -1123,14 +1123,17 @@
       async function sendFeedback() {
         const status = document.getElementById("feedbackStatus");
         status.textContent = "";
-        if (!lastScoreRequest || !lastScoreResponse || !lastScoreResponse.result) {
-          status.textContent = "先に点数算出を実行してください。";
-          return;
-        }
         const comment = value("feedbackComment").trim();
         if (!comment) {
           status.textContent = "コメントを入力してください。";
           return;
+        }
+        if (!lastScoreRequest) {
+          try {
+            lastScoreRequest = buildPayload();
+          } catch (_e) {
+            lastScoreRequest = null;
+          }
         }
         const payload = {
           score_request: lastScoreRequest,

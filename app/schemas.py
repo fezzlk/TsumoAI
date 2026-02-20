@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, conint, confloat
@@ -189,8 +189,8 @@ class ResultGetResponse(BaseModel):
 
 
 class ScoreFeedbackRequest(BaseModel):
-    score_request: ScoreRequest
-    score_response: ScoreResponse
+    score_request: dict[str, Any] | None = None
+    score_response: dict[str, Any] | None = None
     comment: str
 
 

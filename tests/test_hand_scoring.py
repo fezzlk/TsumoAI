@@ -38,15 +38,24 @@ def base_context(**kwargs) -> ContextInput:
 
 def test_score_hand_shape_ron_non_dealer():
     result = score_hand_shape(base_hand(), base_context(), RuleSet())
-    assert result.han == 4
+    assert result.han == 5
     assert result.fu == 30
-    assert result.point_label == "通常"
-    assert result.points.ron == 7700
-    assert result.payments.total_received == 7700
+    assert result.point_label == "満貫"
+    assert result.points.ron == 8000
+    assert result.payments.total_received == 8000
+    assert any(y.name == "場風 東" for y in result.yaku)
 
 
 def test_score_hand_shape_tsumo_dealer():
-    context = base_context(win_type="tsumo", is_dealer=True, riichi=False, aka_dora_count=0, dora_indicators=[])
+    context = base_context(
+        win_type="tsumo",
+        is_dealer=True,
+        round_wind="W",
+        seat_wind="S",
+        riichi=False,
+        aka_dora_count=0,
+        dora_indicators=[],
+    )
     with pytest.raises(ValueError):
         score_hand_shape(base_hand(), context, RuleSet())
 
@@ -64,19 +73,50 @@ def test_score_hand_shape_limit_label_haneman():
         dora_indicators=["1m"],
     )
     result = score_hand_shape(base_hand(), context, RuleSet())
-    assert result.han == 7
-    assert result.point_label == "跳満"
-    assert result.points.ron == 12000
+    assert result.han == 8
+    assert result.point_label == "倍満"
+    assert result.points.ron == 16000
 
 
 def test_score_hand_shape_double_riichi():
     context = base_context(riichi=False, double_riichi=True, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(base_hand(), context, RuleSet())
-    assert result.han == 2
+    assert result.han == 3
     assert any(y.name == "ダブル立直" for y in result.yaku)
 
 
 def test_score_hand_shape_rejects_dora_only():
-    context = base_context(riichi=False, double_riichi=False, aka_dora_count=0, dora_indicators=["4m"])
+    context = base_context(
+        round_wind="W",
+        seat_wind="S",
+        riichi=False,
+        double_riichi=False,
+        aka_dora_count=0,
+        dora_indicators=["4m"],
+    )
     with pytest.raises(ValueError):
         score_hand_shape(base_hand(), context, RuleSet())
+
+
+def test_score_hand_shape_adds_seat_wind_yakuhai():
+    hand = base_hand().model_copy(update={"closed_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "S", "S", "S", "2p", "2p"]})
+    context = base_context(round_wind="E", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 1
+    assert any(y.name == "自風 南" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_double_wind_yakuhai():
+    context = base_context(round_wind="E", seat_wind="E", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.han == 2
+    assert any(y.name == "場風 東" for y in result.yaku)
+    assert any(y.name == "自風 東" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_dragon_yakuhai():
+    hand = base_hand().model_copy(update={"closed_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "P", "P", "P", "2p", "2p"]})
+    context = base_context(round_wind="E", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 1
+    assert any(y.name == "役牌 白" for y in result.yaku)
