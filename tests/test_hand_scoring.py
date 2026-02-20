@@ -181,3 +181,34 @@ def test_score_hand_shape_does_not_add_sanshoku_doukou_for_sequences():
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     with pytest.raises(ValueError):
         score_hand_shape(hand, context, RuleSet())
+
+
+def test_score_hand_shape_adds_chiitoitsu_and_honroutou():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "1m", "9m", "9m", "1p", "1p", "9p", "9p", "1s", "1s", "9s", "9s", "E", "E"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 4
+    assert any(y.name == "七対子" and y.han == 2 for y in result.yaku)
+    assert any(y.name == "混老頭" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_honroutou_with_toitoi():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "1m", "1m", "9m", "9m", "9m", "1p", "1p", "1p", "E", "E", "E", "9s", "9s"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "対々和" and y.han == 2 for y in result.yaku)
+    assert any(y.name == "混老頭" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_does_not_add_honroutou_when_middle_tile_exists():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "1m", "1m", "9m", "9m", "9m", "1p", "1p", "1p", "9s", "9s", "9s", "5s", "5s"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "対々和" and y.han == 2 for y in result.yaku)
+    assert all(y.name != "混老頭" for y in result.yaku)

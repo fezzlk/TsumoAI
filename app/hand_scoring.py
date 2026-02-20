@@ -166,6 +166,26 @@ def _has_sanshoku_doukou(hand: HandInput) -> bool:
     return False
 
 
+def _has_chiitoitsu(hand: HandInput) -> bool:
+    if hand.melds:
+        return False
+    counts = _closed_tile_counts(hand)
+    return sum(1 for c in counts if c == 2) == 7 and all(c in {0, 2} for c in counts)
+
+
+def _is_terminal_or_honor(tile: str) -> bool:
+    t = _normalize_tile(tile)
+    if len(t) == 1:
+        return True
+    if len(t) == 2 and t[0] in {"1", "9"} and t[1] in {"m", "p", "s"}:
+        return True
+    return False
+
+
+def _has_honroutou(hand: HandInput) -> bool:
+    return all(_is_terminal_or_honor(tile) for tile in _all_tiles(hand))
+
+
 def _point_label_from_han_fu(han: int, fu: int) -> str:
     if han >= 13:
         return "数え役満"
@@ -276,6 +296,12 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         yaku_han += 2
     if _has_sanshoku_doukou(hand):
         yaku.append(YakuItem(name="三色同刻", han=2))
+        yaku_han += 2
+    if _has_chiitoitsu(hand):
+        yaku.append(YakuItem(name="七対子", han=2))
+        yaku_han += 2
+    if _has_honroutou(hand):
+        yaku.append(YakuItem(name="混老頭", han=2))
         yaku_han += 2
 
     if yaku_han == 0:
