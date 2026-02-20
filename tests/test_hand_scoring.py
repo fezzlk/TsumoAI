@@ -39,13 +39,13 @@ def base_context(**kwargs) -> ContextInput:
 def test_score_hand_shape_ron_non_dealer():
     result = score_hand_shape(base_hand(), base_context(), RuleSet())
     assert result.han == 4
-    assert result.fu == 30
-    assert [item.model_dump() for item in result.fu_breakdown] == [{"name": "副底", "fu": 20}, {"name": "切り上げ", "fu": 10}]
-    assert result.point_label == "通常"
-    assert result.points.ron == 7700
-    assert result.payments.hand_points_received == 7700
-    assert result.payments.hand_points_with_honba == 7700
-    assert result.payments.total_received == 7700
+    assert result.fu == 40
+    assert [item.model_dump() for item in result.fu_breakdown] == [{"name": "副底", "fu": 20}, {"name": "門前ロン", "fu": 10}, {"name": "待ち", "fu": 2}, {"name": "面子", "fu": 8}]
+    assert result.point_label == "満貫"
+    assert result.points.ron == 8000
+    assert result.payments.hand_points_received == 8000
+    assert result.payments.hand_points_with_honba == 8000
+    assert result.payments.total_received == 8000
     assert any(y.name == "場風 東" for y in result.yaku)
 
 
@@ -89,11 +89,11 @@ def test_score_hand_shape_payments_breakdown_with_honba_kyotaku():
         kyotaku=1,
     )
     result = score_hand_shape(base_hand(), context, RuleSet())
-    assert result.payments.hand_points_received == 7700
+    assert result.payments.hand_points_received == 8000
     assert result.payments.honba_bonus == 600
-    assert result.payments.hand_points_with_honba == 8300
+    assert result.payments.hand_points_with_honba == 8600
     assert result.payments.kyotaku_bonus == 1000
-    assert result.payments.total_received == 9300
+    assert result.payments.total_received == 9600
 
 
 def test_score_hand_shape_limit_label_haneman():
