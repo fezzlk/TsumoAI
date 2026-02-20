@@ -170,6 +170,26 @@ def test_score_endpoint_adds_ittsuu():
     assert any(y["name"] == "一気通貫" and y["han"] == 2 for y in body["result"]["yaku"])
 
 
+def test_score_endpoint_adds_toitoi_and_sanshoku_doukou():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "1m", "1m", "1p", "1p", "1p", "1s", "1s", "1s", "9m", "9m", "9m", "5p", "5p"],
+        "melds": [],
+        "win_tile": "5p",
+    }
+    payload["context"]["round_wind"] = "W"
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["dora_indicators"] = []
+    payload["context"]["aka_dora_count"] = 0
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"]["han"] == 4
+    assert any(y["name"] == "対々和" and y["han"] == 2 for y in body["result"]["yaku"])
+    assert any(y["name"] == "三色同刻" and y["han"] == 2 for y in body["result"]["yaku"])
+
+
 def test_score_endpoint_rejects_dora_only_hand():
     payload = valid_payload()
     payload["context"]["round_wind"] = "W"

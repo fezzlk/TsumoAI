@@ -151,3 +151,33 @@ def test_score_hand_shape_does_not_add_ittsuu_for_near_shape():
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     with pytest.raises(ValueError):
         score_hand_shape(hand, context, RuleSet())
+
+
+def test_score_hand_shape_adds_toitoi():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "1m", "1m", "2m", "2m", "2m", "3p", "3p", "3p", "4s", "4s", "4s", "5s", "5s"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 2
+    assert any(y.name == "対々和" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_sanshoku_doukou():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "1m", "1m", "1p", "1p", "1p", "1s", "1s", "1s", "9m", "9m", "9m", "5p", "5p"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 4
+    assert any(y.name == "対々和" and y.han == 2 for y in result.yaku)
+    assert any(y.name == "三色同刻" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_does_not_add_sanshoku_doukou_for_sequences():
+    hand = base_hand().model_copy(
+        update={"closed_tiles": ["1m", "2m", "3m", "1p", "2p", "3p", "1s", "2s", "3s", "7m", "8m", "9m", "5p", "5p"]}
+    )
+    context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    with pytest.raises(ValueError):
+        score_hand_shape(hand, context, RuleSet())

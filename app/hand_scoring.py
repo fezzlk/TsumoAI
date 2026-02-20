@@ -57,6 +57,115 @@ def _has_ittsuu(hand: HandInput) -> bool:
     return False
 
 
+def _tile_to_index(tile: str) -> int:
+    t = _normalize_tile(tile)
+    if len(t) == 2 and t[0].isdigit():
+        num = int(t[0])
+        suit = t[1]
+        base = {"m": 0, "p": 9, "s": 18}[suit]
+        return base + (num - 1)
+    honor_map = {"E": 27, "S": 28, "W": 29, "N": 30, "P": 31, "F": 32, "C": 33}
+    return honor_map[t]
+
+
+def _index_to_tile(index: int) -> str:
+    if index < 27:
+        suit = ("m", "p", "s")[index // 9]
+        num = (index % 9) + 1
+        return f"{num}{suit}"
+    honor = {27: "E", 28: "S", 29: "W", 30: "N", 31: "P", 32: "F", 33: "C"}
+    return honor[index]
+
+
+def _closed_tile_counts(hand: HandInput) -> list[int]:
+    counts = [0] * 34
+    for tile in hand.closed_tiles:
+        counts[_tile_to_index(tile)] += 1
+    return counts
+
+
+def _collect_closed_meld_patterns(counts: list[int], needed_melds: int) -> list[list[tuple[str, str]]]:
+    patterns: list[list[tuple[str, str]]] = []
+
+    def dfs(work: list[int], remain: int, current: list[tuple[str, str]]) -> None:
+        if remain == 0:
+            if all(c == 0 for c in work):
+                patterns.append(current.copy())
+            return
+
+        first = next((i for i, c in enumerate(work) if c > 0), -1)
+        if first == -1:
+            return
+
+        if work[first] >= 3:
+            work[first] -= 3
+            current.append(("pon", _index_to_tile(first)))
+            dfs(work, remain - 1, current)
+            current.pop()
+            work[first] += 3
+
+        if first < 27 and first % 9 <= 6 and work[first + 1] > 0 and work[first + 2] > 0:
+            work[first] -= 1
+            work[first + 1] -= 1
+            work[first + 2] -= 1
+            current.append(("chi", _index_to_tile(first)))
+            dfs(work, remain - 1, current)
+            current.pop()
+            work[first] += 1
+            work[first + 1] += 1
+            work[first + 2] += 1
+
+    dfs(counts[:], needed_melds, [])
+    return patterns
+
+
+def _all_meld_patterns(hand: HandInput) -> list[list[tuple[str, str]]]:
+    open_melds: list[tuple[str, str]] = []
+    for meld in hand.melds:
+        tiles = [_normalize_tile(t) for t in meld.tiles]
+        if meld.type == "chi":
+            open_melds.append(("chi", min(tiles, key=_tile_to_index)))
+        else:
+            open_melds.append(("pon", tiles[0]))
+
+    needed_closed_melds = 4 - len(open_melds)
+    if needed_closed_melds < 0:
+        return []
+
+    counts = _closed_tile_counts(hand)
+    patterns: list[list[tuple[str, str]]] = []
+    for i, c in enumerate(counts):
+        if c < 2:
+            continue
+        work = counts[:]
+        work[i] -= 2
+        closed_patterns = _collect_closed_meld_patterns(work, needed_closed_melds)
+        for closed in closed_patterns:
+            patterns.append(open_melds + closed)
+    return patterns
+
+
+def _has_toitoi(hand: HandInput) -> bool:
+    for pattern in _all_meld_patterns(hand):
+        if all(kind == "pon" for kind, _ in pattern):
+            return True
+    return False
+
+
+def _has_sanshoku_doukou(hand: HandInput) -> bool:
+    for pattern in _all_meld_patterns(hand):
+        ranks_by_suit = {"m": set(), "p": set(), "s": set()}
+        for kind, tile in pattern:
+            if kind != "pon":
+                continue
+            t = _normalize_tile(tile)
+            if len(t) == 2 and t[0].isdigit() and t[1] in {"m", "p", "s"}:
+                ranks_by_suit[t[1]].add(int(t[0]))
+        if ranks_by_suit["m"] & ranks_by_suit["p"] & ranks_by_suit["s"]:
+            return True
+    return False
+
+
 def _point_label_from_han_fu(han: int, fu: int) -> str:
     if han >= 13:
         return "数え役満"
@@ -162,6 +271,12 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         ittsuu_han = 1 if is_open_hand else 2
         yaku.append(YakuItem(name="一気通貫", han=ittsuu_han))
         yaku_han += ittsuu_han
+    if _has_toitoi(hand):
+        yaku.append(YakuItem(name="対々和", han=2))
+        yaku_han += 2
+    if _has_sanshoku_doukou(hand):
+        yaku.append(YakuItem(name="三色同刻", han=2))
+        yaku_han += 2
 
     if yaku_han == 0:
         raise ValueError("No yaku: dora-only hands cannot win")
