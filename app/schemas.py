@@ -144,6 +144,8 @@ class Points(BaseModel):
 
 
 class Payments(BaseModel):
+    hand_points_received: int
+    hand_points_with_honba: int
     honba_bonus: int = 0
     kyotaku_bonus: int = 0
     total_received: int
