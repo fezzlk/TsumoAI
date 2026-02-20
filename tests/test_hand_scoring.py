@@ -64,6 +64,37 @@ def test_score_hand_shape_tsumo_dealer():
 
 
 
+
+
+def test_score_hand_shape_uses_seat_wind_for_dealer_ron():
+    context = base_context(
+        win_type="ron",
+        is_dealer=False,
+        seat_wind="E",
+        round_wind="S",
+        riichi=True,
+        aka_dora_count=2,
+        dora_indicators=["4m"],
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.points.ron == 12000
+
+
+def test_score_hand_shape_uses_seat_wind_for_dealer_tsumo():
+    context = base_context(
+        win_type="tsumo",
+        is_dealer=False,
+        seat_wind="E",
+        round_wind="S",
+        riichi=True,
+        aka_dora_count=2,
+        dora_indicators=["4m"],
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.points.tsumo_dealer_pay == 4000
+    assert result.points.tsumo_non_dealer_pay == 4000
+    assert result.payments.hand_points_received == 12000
+
 def test_score_hand_shape_includes_fu_breakdown_for_pinfu_tsumo():
     hand = HandInput(
         closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "3p", "4p", "5p", "6s", "7s", "8s", "5p", "5p"],

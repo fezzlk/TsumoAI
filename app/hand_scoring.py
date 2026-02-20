@@ -560,8 +560,9 @@ def _base_points(han: int, fu: int) -> int:
 
 def _calc_points(context: ContextInput, han: int, fu: int, base_override: int | None = None) -> tuple[Points, Payments]:
     base = base_override if base_override is not None else _base_points(han, fu)
+    is_dealer = context.seat_wind.value == "E"
     if context.win_type == "ron":
-        ron = base * (6 if context.is_dealer else 4)
+        ron = base * (6 if is_dealer else 4)
         rounded = ((ron + 99) // 100) * 100
         honba_bonus = context.honba * 300
         kyotaku_bonus = context.kyotaku * 1000
@@ -578,7 +579,7 @@ def _calc_points(context: ContextInput, han: int, fu: int, base_override: int | 
             ),
         )
 
-    if context.is_dealer:
+    if is_dealer:
         each = ((base * 2 + 99) // 100) * 100
         hand_points_received = each * 3
         honba_bonus = context.honba * 300
