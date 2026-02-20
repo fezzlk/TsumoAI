@@ -158,6 +158,32 @@ def test_score_endpoint_accepts_four_kans_hand():
     assert response.status_code == 200
 
 
+def test_score_endpoint_rejects_five_of_same_tile_including_red_five():
+    payload = valid_payload()
+    payload["hand"]["closed_tiles"] = [
+        "5m",
+        "5m",
+        "5m",
+        "5m",
+        "5mr",
+        "6m",
+        "7m",
+        "2p",
+        "2p",
+        "3p",
+        "3p",
+        "4p",
+        "4p",
+        "4p",
+    ]
+    payload["hand"]["win_tile"] = "4p"
+
+    response = client.post("/api/v1/score", json=payload)
+
+    assert response.status_code == 422
+    assert "Tile appears 5+ times in hand: 5m" in response.text
+
+
 def test_score_endpoint_rejects_non_winning_shape():
     payload = valid_payload()
     payload["hand"]["closed_tiles"] = ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "E", "5mr", "5pr"]
