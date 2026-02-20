@@ -564,32 +564,51 @@ def _calc_points(context: ContextInput, han: int, fu: int, base_override: int | 
         rounded = ((ron + 99) // 100) * 100
         honba_bonus = context.honba * 300
         kyotaku_bonus = context.kyotaku * 1000
-        total = rounded + honba_bonus + kyotaku_bonus
+        hand_points_with_honba = rounded + honba_bonus
+        total = hand_points_with_honba + kyotaku_bonus
         return (
             Points(ron=rounded),
-            Payments(honba_bonus=honba_bonus, kyotaku_bonus=kyotaku_bonus, total_received=total),
+            Payments(
+                hand_points_received=rounded,
+                hand_points_with_honba=hand_points_with_honba,
+                honba_bonus=honba_bonus,
+                kyotaku_bonus=kyotaku_bonus,
+                total_received=total,
+            ),
         )
 
     if context.is_dealer:
         each = ((base * 2 + 99) // 100) * 100
-        total = each * 3 + context.honba * 300 + context.kyotaku * 1000
+        hand_points_received = each * 3
+        honba_bonus = context.honba * 300
+        kyotaku_bonus = context.kyotaku * 1000
+        hand_points_with_honba = hand_points_received + honba_bonus
+        total = hand_points_with_honba + kyotaku_bonus
         return (
             Points(tsumo_dealer_pay=each, tsumo_non_dealer_pay=each),
             Payments(
-                honba_bonus=context.honba * 300,
-                kyotaku_bonus=context.kyotaku * 1000,
+                hand_points_received=hand_points_received,
+                hand_points_with_honba=hand_points_with_honba,
+                honba_bonus=honba_bonus,
+                kyotaku_bonus=kyotaku_bonus,
                 total_received=total,
             ),
         )
 
     pay_dealer = ((base * 2 + 99) // 100) * 100
     pay_non_dealer = ((base + 99) // 100) * 100
-    total = pay_dealer + pay_non_dealer * 2 + context.honba * 300 + context.kyotaku * 1000
+    hand_points_received = pay_dealer + pay_non_dealer * 2
+    honba_bonus = context.honba * 300
+    kyotaku_bonus = context.kyotaku * 1000
+    hand_points_with_honba = hand_points_received + honba_bonus
+    total = hand_points_with_honba + kyotaku_bonus
     return (
         Points(tsumo_dealer_pay=pay_dealer, tsumo_non_dealer_pay=pay_non_dealer),
         Payments(
-            honba_bonus=context.honba * 300,
-            kyotaku_bonus=context.kyotaku * 1000,
+            hand_points_received=hand_points_received,
+            hand_points_with_honba=hand_points_with_honba,
+            honba_bonus=honba_bonus,
+            kyotaku_bonus=kyotaku_bonus,
             total_received=total,
         ),
     )

@@ -1138,6 +1138,9 @@
           <div class="result-line">ロン: ${r.points.ron}</div>
           <div class="result-line">ツモ(親支払): ${r.points.tsumo_dealer_pay}</div>
           <div class="result-line">ツモ(子支払): ${r.points.tsumo_non_dealer_pay}</div>
+          <div class="result-line">受取(本場抜き): ${r.payments.hand_points_received}</div>
+          <div class="result-line">受取(本場込み): ${r.payments.hand_points_with_honba}</div>
+          <div class="result-line">内訳: 本場 ${r.payments.honba_bonus} / 供託 ${r.payments.kyotaku_bonus}</div>
           <div class="result-line">受取合計: ${r.payments.total_received}</div>
         `;
       }

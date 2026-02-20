@@ -42,6 +42,8 @@ def test_score_hand_shape_ron_non_dealer():
     assert result.fu == 30
     assert result.point_label == "通常"
     assert result.points.ron == 7700
+    assert result.payments.hand_points_received == 7700
+    assert result.payments.hand_points_with_honba == 7700
     assert result.payments.total_received == 7700
     assert any(y.name == "場風 東" for y in result.yaku)
 
@@ -58,6 +60,19 @@ def test_score_hand_shape_tsumo_dealer():
     )
     result = score_hand_shape(base_hand(), context, RuleSet())
     assert any(y.name == "門前清自摸和" for y in result.yaku)
+
+
+def test_score_hand_shape_payments_breakdown_with_honba_kyotaku():
+    context = base_context(
+        honba=2,
+        kyotaku=1,
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.payments.hand_points_received == 7700
+    assert result.payments.honba_bonus == 600
+    assert result.payments.hand_points_with_honba == 8300
+    assert result.payments.kyotaku_bonus == 1000
+    assert result.payments.total_received == 9300
 
 
 def test_score_hand_shape_limit_label_haneman():

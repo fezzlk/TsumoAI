@@ -70,6 +70,8 @@ def test_score_endpoint_success():
     assert body["status"] == "ok"
     assert body["result"]["han"] == 4
     assert body["result"]["points"]["ron"] == 7700
+    assert body["result"]["payments"]["hand_points_received"] == 7700
+    assert body["result"]["payments"]["hand_points_with_honba"] == 7700
 
 
 def test_score_endpoint_validation_error():
@@ -78,6 +80,20 @@ def test_score_endpoint_validation_error():
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 422
     assert "14 + number of kans" in response.text
+
+
+def test_score_endpoint_includes_payment_breakdown():
+    payload = valid_payload()
+    payload["context"]["honba"] = 2
+    payload["context"]["kyotaku"] = 1
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 200
+    payments = response.json()["result"]["payments"]
+    assert payments["hand_points_received"] == 7700
+    assert payments["honba_bonus"] == 600
+    assert payments["hand_points_with_honba"] == 8300
+    assert payments["kyotaku_bonus"] == 1000
+    assert payments["total_received"] == 9300
 
 
 def test_score_endpoint_accepts_kan_hand():
