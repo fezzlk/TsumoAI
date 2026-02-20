@@ -655,7 +655,7 @@
         return ["kan", "ankan", "kakan"].includes(type) ? 4 : 3;
       }
 
-      function renderDoraList(rootId, list, labelPrefix, fallbackTile) {
+      function renderDoraList(rootId, list, labelPrefix, fallbackTile, minItems = 1) {
         const root = document.getElementById(rootId);
         root.innerHTML = "";
         list.forEach((tile, idx) => {
@@ -678,10 +678,10 @@
           delBtn.type = "button";
           delBtn.className = "mini-btn";
           delBtn.textContent = "削除";
-          delBtn.disabled = list.length <= 1;
+          delBtn.disabled = list.length <= minItems;
           delBtn.addEventListener("click", () => {
             list.splice(idx, 1);
-            if (!list.length) list.push(fallbackTile);
+            while (list.length < minItems) list.push(fallbackTile);
             renderDoraInputs();
           });
           item.appendChild(delBtn);
@@ -697,10 +697,10 @@
       }
 
       function renderDoraInputs() {
-        renderDoraList("doraTileRow", uiState.doraTiles, "ドラ牌", "4m");
-        renderDoraList("uraDoraTileRow", uiState.uraDoraTiles, "裏ドラ牌", "4m");
-        renderDoraList("doraIndicatorRow", uiState.doraIndicators, "ドラ表示牌", "4m");
-        renderDoraList("uraDoraIndicatorRow", uiState.uraDoraIndicators, "裏ドラ表示牌", "4m");
+        renderDoraList("doraTileRow", uiState.doraTiles, "ドラ牌", "4m", 1);
+        renderDoraList("uraDoraTileRow", uiState.uraDoraTiles, "裏ドラ牌", "4m", 0);
+        renderDoraList("doraIndicatorRow", uiState.doraIndicators, "ドラ表示牌", "4m", 1);
+        renderDoraList("uraDoraIndicatorRow", uiState.uraDoraIndicators, "裏ドラ表示牌", "4m", 0);
         syncDoraModeFromUi();
       }
 
