@@ -341,6 +341,7 @@
       <div class="grid">
         <section class="card">
           <h2>入力</h2>
+          <button id="submitBtnTop" type="button">点数を算出</button>
 
           <label>和了形</label>
           <div id="tileInputArea">
@@ -472,7 +473,7 @@
           <div id="error" class="error"></div>
         </section>
 
-        <section class="card">
+        <section id="resultCard" class="card">
           <h2>結果</h2>
           <div id="summary"></div>
           <label>レスポンスJSON</label>
@@ -1076,16 +1077,19 @@
 
       function refreshSubmitAvailability() {
         const submitBtn = document.getElementById("submitBtn");
+        const submitBtnTop = document.getElementById("submitBtnTop");
         const error = document.getElementById("error");
         try {
           buildPayload();
           submitBtn.disabled = false;
+          submitBtnTop.disabled = false;
           if (error.dataset.validation === "1") {
             error.textContent = "";
             error.dataset.validation = "0";
           }
         } catch (e) {
           submitBtn.disabled = true;
+          submitBtnTop.disabled = true;
           error.textContent = e.message || "入力エラーがあります";
           error.dataset.validation = "1";
         }
@@ -1182,6 +1186,17 @@
         status.textContent = `送信完了: gs://${data.storage.bucket}/${data.storage.object_name}`;
       }
 
+      function scrollToResultCard() {
+        const resultCard = document.getElementById("resultCard");
+        if (!resultCard) return;
+        resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      async function submitScoreAndScroll() {
+        await submitScore();
+        scrollToResultCard();
+      }
+
       document.querySelectorAll('input[name="handPattern"]').forEach((el) => {
         el.addEventListener("change", () => switchPattern(el.value));
       });
@@ -1223,7 +1238,8 @@
         renderDoraInputs();
         refreshSubmitAvailability();
       });
-      document.getElementById("submitBtn").addEventListener("click", submitScore);
+      document.getElementById("submitBtn").addEventListener("click", submitScoreAndScroll);
+      document.getElementById("submitBtnTop").addEventListener("click", submitScoreAndScroll);
       document.getElementById("sendFeedbackBtn").addEventListener("click", sendFeedback);
       document.getElementById("toggleResponseJsonBtn").addEventListener("click", () => {
         responseJsonExpanded = !responseJsonExpanded;
