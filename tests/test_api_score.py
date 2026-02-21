@@ -84,6 +84,15 @@ def test_score_endpoint_validation_error():
     assert "14 + number of kans" in response.text
 
 
+def test_score_endpoint_rejects_chankan_on_tsumo():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "tsumo"
+    payload["context"]["chankan"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "chankan cannot be true on tsumo" in response.text
+
+
 def test_score_endpoint_includes_payment_breakdown():
     payload = valid_payload()
     payload["context"]["honba"] = 2
