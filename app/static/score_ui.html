@@ -489,10 +489,19 @@
     <div id="tilePickerModal" class="picker-modal">
       <div class="picker-panel">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <strong>牌を選択</strong>
-          <button id="closeTilePickerBtn" type="button" style="margin-top:0;background:#64748b;">中断</button>
+          <div id="tilePickerTarget" class="hint" style="margin:0;"></div>
+          <button id="closeTilePickerBtn" type="button" style="margin-top:0;background:#64748b;">閉じる</button>
         </div>
-        <div id="tilePickerTarget" class="hint" style="margin:6px 0 10px;"></div>
+        <div class="option-group" style="margin-bottom:10px;">
+          <label class="option-item">
+            <input id="tilePickerApplyAllSame" type="checkbox" />
+            同じ牌をまとめて入力
+          </label>
+          <label class="option-item">
+            <input id="tilePickerApplyShuntsu" type="checkbox" />
+            順子で入力
+          </label>
+        </div>
         <div id="tilePickerGrid" class="picker-grid"></div>
       </div>
     </div>
@@ -529,11 +538,19 @@
           this.grid = document.getElementById(gridId);
           this.target = document.getElementById(targetId);
           this.closeBtn = document.getElementById(closeBtnId);
+          this.applyAllSame = document.getElementById("tilePickerApplyAllSame");
+          this.applyShuntsu = document.getElementById("tilePickerApplyShuntsu");
           this.selectHandler = null;
           this._renderGrid();
           this.closeBtn.addEventListener("click", () => this.close());
           this.modal.addEventListener("click", (e) => {
             if (e.target === this.modal) this.close();
+          });
+          this.applyAllSame.addEventListener("change", () => {
+            if (this.applyAllSame.checked) this.applyShuntsu.checked = false;
+          });
+          this.applyShuntsu.addEventListener("change", () => {
+            if (this.applyShuntsu.checked) this.applyAllSame.checked = false;
           });
         }
 
@@ -554,7 +571,12 @@
               btn.textContent = tile;
             }
             btn.addEventListener("click", () => {
-              if (this.selectHandler) this.selectHandler(tile);
+              if (this.selectHandler) {
+                this.selectHandler(tile, {
+                  applyAllSame: this.applyAllSame.checked,
+                  applyShuntsu: this.applyShuntsu.checked
+                });
+              }
               this.close();
             });
             this.grid.appendChild(btn);
@@ -562,13 +584,17 @@
         }
 
         open(targetText, onSelect) {
-          this.target.textContent = targetText;
+          this.target.textContent = targetText ? `${targetText}を入力` : "";
           this.selectHandler = onSelect;
+          this.applyAllSame.checked = false;
+          this.applyShuntsu.checked = false;
           this.modal.classList.add("open");
         }
 
         close() {
           this.selectHandler = null;
+          this.applyAllSame.checked = false;
+          this.applyShuntsu.checked = false;
           this.modal.classList.remove("open");
         }
       }
@@ -592,18 +618,11 @@
             { type: "concealed", tiles: ["7s", "8s", "9s", null] },
             { type: "concealed", tiles: ["E", "E", "E", null] }
           ],
-          pair: "2p"
+          pair: ["2p", "2p"]
         },
         chiitoi: { pairs: Array.from({ length: 7 }, () => null) },
         kokushi: { pair: null }
       };
-
-      function openPickerForPair(targetKey, label) {
-        picker.open(label, (tile) => {
-          targetKey.setter(tile);
-          renderAllPatternInputs();
-        });
-      }
 
       function setSlotButtonContent(btn, tile) {
         btn.classList.toggle("empty", !tile);
@@ -648,6 +667,15 @@
 
       function requiredMeldLen(type) {
         return ["kan", "ankan", "kakan"].includes(type) ? 4 : 3;
+      }
+
+      function buildShuntsuTiles(tile) {
+        const t = (tile || "").replace(/r$/, "");
+        if (!/^[1-9][mps]$/.test(t)) return null;
+        const suit = t[1];
+        let start = Number.parseInt(t[0], 10);
+        if (start >= 8) start = 7;
+        return [`${start}${suit}`, `${start + 1}${suit}`, `${start + 2}${suit}`];
       }
 
       function renderDoraList(rootId, list, labelPrefix, fallbackTile, minItems = 1) {
@@ -799,8 +827,21 @@
             if (i >= needed) b.classList.add("hidden");
             setSlotButtonContent(b, m.tiles[i]);
             b.addEventListener("click", () => {
-              picker.open(`面子${idx + 1} 牌${i + 1}`, (tile) => {
-                m.tiles[i] = tile;
+              picker.open(`面子${idx + 1} 牌${i + 1}`, (tile, options = {}) => {
+                if (options.applyShuntsu && needed === 3) {
+                  const shuntsu = buildShuntsuTiles(tile);
+                  if (shuntsu) {
+                    m.tiles[0] = shuntsu[0];
+                    m.tiles[1] = shuntsu[1];
+                    m.tiles[2] = shuntsu[2];
+                  } else {
+                    m.tiles[i] = tile;
+                  }
+                } else if (options.applyAllSame) {
+                  for (let j = 0; j < needed; j += 1) m.tiles[j] = tile;
+                } else {
+                  m.tiles[i] = tile;
+                }
                 renderAllPatternInputs();
               });
             });
@@ -817,25 +858,37 @@
         pairBlock.appendChild(pairTitle);
         const pairRow = document.createElement("div");
         pairRow.className = "slot-row";
-        const pairBtn = document.createElement("button");
-        pairBtn.type = "button";
-        pairBtn.className = "tile-slot-btn";
-        setPairButtonContent(pairBtn, uiState.standard.pair);
-        pairBtn.addEventListener("click", () => {
-          picker.open("4面子1雀頭 雀頭", (tile) => {
-            uiState.standard.pair = tile;
-            renderAllPatternInputs();
+        for (let i = 0; i < 2; i += 1) {
+          const pairBtn = document.createElement("button");
+          pairBtn.type = "button";
+          pairBtn.className = "tile-slot-btn";
+          setSlotButtonContent(pairBtn, uiState.standard.pair[i]);
+          pairBtn.addEventListener("click", () => {
+            picker.open(`4面子1雀頭 雀頭${i + 1}`, (tile, options = {}) => {
+              if (options.applyAllSame) {
+                uiState.standard.pair[0] = tile;
+                uiState.standard.pair[1] = tile;
+              } else {
+                uiState.standard.pair[i] = tile;
+              }
+              renderAllPatternInputs();
+            });
           });
-        });
-        pairRow.appendChild(pairBtn);
+          pairRow.appendChild(pairBtn);
+        }
         pairBlock.appendChild(pairRow);
         root.appendChild(pairBlock);
       }
 
-      function renderPairButton(id, tile, label, setter) {
+      function renderPairSlotButton(id, tile, label, setter) {
         const btn = document.getElementById(id);
-        setPairButtonContent(btn, tile);
-        btn.onclick = () => openPickerForPair({ setter }, label);
+        setSlotButtonContent(btn, tile);
+        btn.onclick = () => {
+          picker.open(label, (selected, options = {}) => {
+            setter(selected, options);
+            renderAllPatternInputs();
+          });
+        };
       }
 
       function buildChiitoiInputs() {
@@ -868,7 +921,7 @@
       function renderAllPatternInputs() {
         buildStandardMeldInputs();
         buildChiitoiInputs();
-        renderPairButton("kokushiPairBtn", uiState.kokushi.pair, "国士無双 対子", (tile) => {
+        renderPairSlotButton("kokushiPairBtn", uiState.kokushi.pair, "国士無双 対子", (tile) => {
           uiState.kokushi.pair = tile;
         });
         syncHandJsonFromState();
@@ -893,8 +946,11 @@
 
       function buildHandByPatternState() {
         if (uiState.pattern === "standard") {
-          if (!uiState.standard.pair) throw new Error("対子を入力してください");
-          const closedTiles = [uiState.standard.pair, uiState.standard.pair];
+          const pairA = uiState.standard.pair[0];
+          const pairB = uiState.standard.pair[1];
+          if (!pairA || !pairB) throw new Error("対子を2枚入力してください");
+          if (pairA !== pairB) throw new Error("雀頭は同じ牌を2枚入力してください");
+          const closedTiles = [pairA, pairB];
           const melds = [];
           for (const meld of uiState.standard.melds) {
             const need = requiredMeldLen(meld.type);
@@ -938,9 +994,8 @@
         if (uiState.pattern === "standard") {
           const closedTiles = [];
           const melds = [];
-          if (uiState.standard.pair) {
-            closedTiles.push(uiState.standard.pair, uiState.standard.pair);
-          }
+          if (uiState.standard.pair[0]) closedTiles.push(uiState.standard.pair[0]);
+          if (uiState.standard.pair[1]) closedTiles.push(uiState.standard.pair[1]);
           for (const meld of uiState.standard.melds) {
             const need = requiredMeldLen(meld.type);
             const tiles = meld.tiles.slice(0, need).filter(Boolean);
