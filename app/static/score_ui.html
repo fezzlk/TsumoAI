@@ -332,6 +332,18 @@
         background: #64748b;
         font-size: 0.8rem;
       }
+      .inline-label-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .json-help-list {
+        margin: 8px 0 0;
+        padding-left: 18px;
+      }
+      .json-help-list li {
+        margin: 4px 0;
+      }
     </style>
   </head>
   <body>
@@ -379,7 +391,10 @@
             <input type="checkbox" id="jsonDirectSwitch" />
             JSON直接入力
           </label>
-          <label for="handJsonInput">手牌JSON（closed_tiles / melds / win_tile）</label>
+          <div class="inline-label-row">
+            <label for="handJsonInput" style="margin:0;">手牌JSON（closed_tiles / melds / win_tile）</label>
+            <button id="openJsonHelpBtn" type="button" class="mini-btn">ヘルプ</button>
+          </div>
           <textarea id="handJsonInput" disabled></textarea>
           <p class="hint">JSON直接入力ONで編集可能。OFF時は牌入力フォーム状態で自動上書きされます。</p>
 
@@ -503,6 +518,31 @@
           </label>
         </div>
         <div id="tilePickerGrid" class="picker-grid"></div>
+      </div>
+    </div>
+
+    <div id="jsonHelpModal" class="picker-modal">
+      <div class="picker-panel" style="width:min(760px,100%);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <strong>JSONフォーマットヘルプ</strong>
+          <button id="closeJsonHelpBtn" type="button" style="margin-top:0;background:#64748b;">閉じる</button>
+        </div>
+        <p class="hint">牌の表記は以下を使用します。</p>
+        <ul class="json-help-list">
+          <li>萬子: <code>1m</code>〜<code>9m</code></li>
+          <li>筒子: <code>1p</code>〜<code>9p</code></li>
+          <li>索子: <code>1s</code>〜<code>9s</code></li>
+          <li>赤5: <code>5mr</code> / <code>5pr</code> / <code>5sr</code></li>
+          <li>字牌: 東 <code>E</code> / 南 <code>S</code> / 西 <code>W</code> / 北 <code>N</code> / 白 <code>P</code> / 發 <code>F</code> / 中 <code>C</code></li>
+        </ul>
+        <p class="hint" style="margin-top:10px;">JSON例</p>
+        <pre>{
+  "closed_tiles": ["2p","2p","1m","2m","3m","4p","5p","6p"],
+  "melds": [
+    {"type":"pon","tiles":["E","E","E"],"open":true}
+  ],
+  "win_tile": "E"
+}</pre>
       </div>
     </div>
 
@@ -1241,6 +1281,18 @@
         resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
       }
 
+      function setupJsonHelpModal() {
+        const modal = document.getElementById("jsonHelpModal");
+        const openBtn = document.getElementById("openJsonHelpBtn");
+        const closeBtn = document.getElementById("closeJsonHelpBtn");
+        if (!modal || !openBtn || !closeBtn) return;
+        openBtn.addEventListener("click", () => modal.classList.add("open"));
+        closeBtn.addEventListener("click", () => modal.classList.remove("open"));
+        modal.addEventListener("click", (e) => {
+          if (e.target === modal) modal.classList.remove("open");
+        });
+      }
+
       async function submitScoreAndScroll() {
         await submitScore();
         scrollToResultCard();
@@ -1296,6 +1348,7 @@
         document.getElementById("toggleResponseJsonBtn").textContent = responseJsonExpanded ? "閉じる" : "開く";
       });
 
+      setupJsonHelpModal();
       switchPattern("standard");
       renderDoraInputs();
       syncHandJsonFromState();
