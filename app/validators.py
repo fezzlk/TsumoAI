@@ -113,6 +113,8 @@ def _is_valid_winning_shape(req: ScoreRequest) -> bool:
 
 
 def validate_score_request(req: ScoreRequest) -> None:
+    req.context.is_dealer = req.context.seat_wind == "E"
+
     all_tiles = list(req.hand.closed_tiles)
     for meld in req.hand.melds:
         all_tiles.extend(meld.tiles)

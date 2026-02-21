@@ -389,12 +389,6 @@
             <label class="option-item"><input type="radio" name="winType" value="tsumo" /> ツモ</label>
           </div>
 
-          <label>親子</label>
-          <div class="option-group">
-            <label class="option-item"><input type="radio" name="isDealer" value="false" checked /> 子</label>
-            <label class="option-item"><input type="radio" name="isDealer" value="true" /> 親</label>
-          </div>
-
           <label>場風</label>
           <div class="option-group">
             <label class="option-item"><input type="radio" name="roundWind" value="E" checked /> 東</label>
@@ -1047,7 +1041,7 @@
           hand,
           context: {
             win_type: radioValue("winType"),
-            is_dealer: radioValue("isDealer") === "true",
+            is_dealer: radioValue("seatWind") === "E",
             round_wind: radioValue("roundWind"),
             seat_wind: radioValue("seatWind"),
             riichi: riichiState === "riichi",
