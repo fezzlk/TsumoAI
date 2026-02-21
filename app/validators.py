@@ -154,6 +154,8 @@ def validate_score_request(req: ScoreRequest) -> None:
         raise HTTPException(status_code=422, detail="ippatsu cannot be true when riichi/double_riichi is false")
     if req.context.win_type == "ron" and req.context.haitei:
         raise HTTPException(status_code=422, detail="haitei cannot be true on ron")
+    if req.context.win_type == "ron" and req.context.rinshan:
+        raise HTTPException(status_code=422, detail="rinshan cannot be true on ron")
     if req.context.win_type == "tsumo" and req.context.houtei:
         raise HTTPException(status_code=422, detail="houtei cannot be true on tsumo")
     if req.context.win_type == "tsumo" and req.context.chankan:

@@ -93,6 +93,15 @@ def test_score_endpoint_rejects_chankan_on_tsumo():
     assert "chankan cannot be true on tsumo" in response.text
 
 
+def test_score_endpoint_rejects_rinshan_on_ron():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "ron"
+    payload["context"]["rinshan"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "rinshan cannot be true on ron" in response.text
+
+
 def test_score_endpoint_includes_payment_breakdown():
     payload = valid_payload()
     payload["context"]["honba"] = 2
