@@ -12,7 +12,7 @@ from PIL import Image
 
 from app.config import settings
 from app.gcs_feedback_store import GCSFeedbackStore
-from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate
+from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
 from app.hand_scoring import score_hand_shape
 from app.repository import InMemoryRepository
 from app.schemas import (
@@ -126,13 +126,19 @@ async def recognize_and_score(
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Invalid JSON payload: {exc}") from exc
 
+    try:
+        hand_input, conversion_warnings = hand_shape_from_estimate_with_warnings(recognized.hand_estimate.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     score_req = ScoreRequest(
         recognition_id=recognized.recognition_id,
-        hand=hand_shape_from_estimate(recognized.hand_estimate.model_dump()),
+        hand=hand_input,
         context=context,
         rules=rules,
     )
     scored = score(score_req)
+    scored.warnings = recognized.warnings + conversion_warnings
     return RecognizeAndScoreResponse(recognition=recognized, score=scored)
 
 

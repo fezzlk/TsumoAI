@@ -1,5 +1,9 @@
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
+from app import main as main_module
 from app.main import app, gcs_feedback_store
 
 
@@ -41,6 +45,10 @@ def valid_payload() -> dict:
             "renpu_fu": 4,
         },
     }
+
+
+def sample_image_bytes() -> bytes:
+    return (Path(__file__).resolve().parents[1] / "app" / "static" / "tiles" / "Mpu1m.png").read_bytes()
 
 
 def test_score_ui_available():
@@ -547,3 +555,36 @@ def test_score_feedback_accepts_error_response_payload(monkeypatch):
         },
     )
     assert feedback_res.status_code == 200
+
+
+def test_recognize_and_score_adjusts_from_candidates(monkeypatch):
+    payload = valid_payload()
+    winning_tiles = payload["hand"]["closed_tiles"]
+    top_tiles = winning_tiles[:-2] + ["5mr", "5pr"]
+
+    slots = []
+    for idx, tile in enumerate(top_tiles):
+        candidates = [{"tile": tile, "confidence": 0.90}]
+        if idx in {12, 13}:
+            candidates.append({"tile": "2p", "confidence": 0.89})
+        slots.append({"index": idx, "top": tile, "candidates": candidates, "ambiguous": idx in {12, 13}})
+
+    def fake_extract(_image_bytes):
+        return {"tiles_count": 14, "slots": slots, "warnings": ["recognizer warning"]}
+
+    monkeypatch.setattr(main_module, "extract_hand_from_image", fake_extract)
+
+    response = client.post(
+        "/api/v1/recognize-and-score",
+        files={"image": ("hand.png", sample_image_bytes(), "image/png")},
+        data={
+            "context_json": json.dumps(payload["context"]),
+            "rules_json": json.dumps(payload["rules"]),
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["score"]["status"] == "ok"
+    assert body["score"]["result"]["points"]["ron"] == 8000
+    assert "recognizer warning" in body["score"]["warnings"]
+    assert any("adjusted from top-1" in w for w in body["score"]["warnings"])

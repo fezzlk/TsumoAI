@@ -3,7 +3,7 @@ from functools import lru_cache
 
 from fastapi import HTTPException
 
-from app.schemas import ScoreRequest
+from app.schemas import HandInput, ScoreRequest
 
 TILE_RE = re.compile(r"^(?:[1-9][mps]|5[smpr]r|[ESWNPFC])$")
 TERMINAL_HONOR_INDICES = {
@@ -106,6 +106,18 @@ def _is_valid_winning_shape(req: ScoreRequest) -> bool:
         closed_counts[_tile_to_index(tile)] += 1
 
     open_melds = len(req.hand.melds)
+    if open_melds == 0:
+        if _is_chiitoi(closed_counts) or _is_kokushi(closed_counts):
+            return True
+    return _is_standard_win(closed_counts, open_melds)
+
+
+def is_valid_winning_shape_hand(hand: HandInput) -> bool:
+    closed_counts = [0] * 34
+    for tile in hand.closed_tiles:
+        closed_counts[_tile_to_index(tile)] += 1
+
+    open_melds = len(hand.melds)
     if open_melds == 0:
         if _is_chiitoi(closed_counts) or _is_kokushi(closed_counts):
             return True
