@@ -1497,12 +1497,24 @@ function drawChart(rounds, gs) {
 
 function downloadChart() {
   const canvas = document.getElementById('chartCanvas');
-  // Create a download link
-  const link = document.createElement('a');
-  link.download = `mahjong_score_${roomCode || 'game'}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
-  toast('画像を保存しました');
+  const filename = `mahjong_score_${roomCode || 'game'}.png`;
+  canvas.toBlob(blob => {
+    if (!blob) { toast('画像の生成に失敗しました', true); return; }
+    // Try Web Share API (mobile: saves to photos/shares directly)
+    if (navigator.canShare && navigator.canShare({files: [new File([blob], filename, {type: 'image/png'})]})) {
+      const file = new File([blob], filename, {type: 'image/png'});
+      navigator.share({files: [file], title: '点数推移グラフ'}).catch(() => {});
+      return;
+    }
+    // Fallback: blob URL download
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('画像を保存しました');
+  }, 'image/png');
 }
 
 function closeModal(id) {
