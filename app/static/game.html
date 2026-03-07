@@ -194,6 +194,7 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
     <button class="btn btn-small" style="background:#555" onclick="showHistory()">履歴</button>
     <button class="btn btn-small" style="background:#8e44ad" onclick="showSwapModal()">席替</button>
     <button class="btn btn-small" style="background:#16a085" onclick="showQR()">QR</button>
+    <button class="btn btn-small" id="diffToggleBtn" style="background:#2c3e50" onclick="toggleDiffMode()">点差</button>
   </div>
 
   <div id="actionPanel" style="display:none"></div>
@@ -248,6 +249,7 @@ let lastDeltas = {};
 let keepAliveTimer = null;
 let riichiSeats = new Set();
 let tenpaiSeats = new Set();
+let showDiffMode = false;
 
 // Common point values for one-tap selection
 const POINT_TABLE_RON = [
@@ -562,10 +564,34 @@ function renderGame() {
     const disabledCls = canControl ? '' : ' disabled';
     const riichiOnclick = canControl ? `onclick="toggleRiichi(${p.seat})"` : '';
     const tenpaiOnclick = canControl ? `onclick="toggleTenpai(${p.seat})"` : '';
+    // Diff mode: show point difference from reference player
+    let pointsDisplay;
+    const isRef = showDiffMode && diffRefSeat === p.seat;
+    if (showDiffMode && diffRefSeat !== null && p.seat !== diffRefSeat) {
+      const refPlayer = gs.players.find(pl => pl.seat === diffRefSeat);
+      const diff = p.points - refPlayer.points;
+      const diffSign = diff > 0 ? '+' : '';
+      pointsDisplay = `<div class="points${diff < 0 ? ' negative' : ''}${isRiichi ? ' riichi-active' : ''}" style="font-size:0.95em">${diffSign}${diff.toLocaleString()}</div>`;
+    } else {
+      pointsDisplay = `<div class="points${p.points < 0 ? ' negative' : ''}${isRiichi ? ' riichi-active' : ''}">${p.points.toLocaleString()}</div>`;
+    }
+    if (isRef) {
+      card.style.outline = '2px solid #e94560';
+      card.style.outlineOffset = '-2px';
+    }
+    if (showDiffMode) {
+      card.style.cursor = 'pointer';
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.riichi-btn, .tenpai-btn')) return;
+        diffRefSeat = p.seat;
+        renderGame();
+      });
+    }
+
     card.innerHTML = `
       <div class="wind">${WIND_NAMES[seatWinds[p.seat]] || ''}</div>
       <div class="name">${escHtml(p.name)}</div>
-      <div class="points${p.points < 0 ? ' negative' : ''}${isRiichi ? ' riichi-active' : ''}">${p.points.toLocaleString()}</div>
+      ${pointsDisplay}
       ${deltaHtml}
       <div class="toggle-row">
         <button class="riichi-btn${isRiichi ? ' active' : ''}${disabledCls}" ${riichiOnclick}>立直</button>
@@ -870,6 +896,20 @@ function showAgariEffect(type) {
   }
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 1800);
+}
+
+// --- Diff mode (点差表示) ---
+let diffRefSeat = null;
+
+function toggleDiffMode() {
+  showDiffMode = !showDiffMode;
+  if (showDiffMode) {
+    // Use mySeat if seated, otherwise default to seat 0
+    diffRefSeat = mySeat !== null ? mySeat : 0;
+  }
+  const btn = document.getElementById('diffToggleBtn');
+  btn.style.background = showDiffMode ? '#e94560' : '#2c3e50';
+  renderGame();
 }
 
 function toggleRiichi(seat) {
