@@ -47,8 +47,8 @@ class GameSnapshot:
 class GameOptions:
     """Configurable game rules."""
     hakoire_end: bool = True     # 箱割れ即終了 (end game when a player goes below 0)
-    shanyu: bool = False         # シャーニュウ (100点単位で順位点計算)
-    peinyu: bool = False         # ペーニュウ (百入: 持ち点の百の位を考慮して精算)
+    shanyu: bool = False         # 西入あり (半荘戦で全員30000点未満なら西場へ延長)
+    peinyu: bool = False         # 北入あり (西場でも全員30000点未満なら北場へ延長)
 
 
 @dataclass
@@ -386,14 +386,44 @@ def _check_hakoire(session: GameSession) -> bool:
     return any(p.points < 0 for p in session.players)
 
 
+def _get_base_max_rounds(session: GameSession) -> int:
+    """Get the base number of rounds (before extensions)."""
+    return 4 if session.game_type == "east_only" else 8
+
+
+def _is_in_extension(session: GameSession) -> bool:
+    """Check if we are currently in an extended round (南入/西入/北入)."""
+    return session.current_round >= _get_base_max_rounds(session)
+
+
+def _anyone_above_target(session: GameSession, target: int = 30000) -> bool:
+    """Check if any player has >= target points."""
+    return any(p.points >= target for p in session.players)
+
+
+def _all_below_target(session: GameSession, target: int = 30000) -> bool:
+    """Check if all players are below target points."""
+    return all(p.points < target for p in session.players)
+
+
 def advance_round(session: GameSession, dealer_won: bool) -> None:
     """Advance to next round after a result.
 
     If dealer won (or tenpai in draw), dealer stays and honba increments.
     Otherwise, dealer rotates and honba resets (for wins) or increments (for draws).
+
+    Extension rules:
+    - 東風戦: ends after East 4. If all < 30000 → 南入. 南入 ends when someone ≥ 30000.
+    - 半荘戦: ends after South 4. If shanyu and all < 30000 → 西入. 西入 ends when someone ≥ 30000.
+    - If peinyu and still all < 30000 after West 4 → 北入. 北入 ends when someone ≥ 30000.
     """
     # Check hakoire (bust) - if enabled and a player went below 0, end game
     if _check_hakoire(session):
+        session.status = "finished"
+        return
+
+    # If we are in an extension round, check if someone reached 30000
+    if _is_in_extension(session) and _anyone_above_target(session):
         session.status = "finished"
         return
 
@@ -411,7 +441,41 @@ def advance_round(session: GameSession, dealer_won: bool) -> None:
         else:
             session.current_honba = 0
 
-        # Check game end
-        max_rounds = 4 if session.game_type == "east_only" else 8
-        if session.current_round >= max_rounds:
-            session.status = "finished"
+        # Check game end at round boundaries (every 4 rounds)
+        if session.current_round % 4 == 0:
+            base_max = _get_base_max_rounds(session)
+            if session.current_round < base_max:
+                # Still within base rounds, continue
+                pass
+            elif session.current_round == base_max:
+                # End of base game - check extension
+                # 東風戦: 南入 always allowed; 半荘戦: 西入 requires shanyu
+                if session.game_type == "east_only":
+                    can_extend = True
+                else:
+                    can_extend = session.options.shanyu
+                if can_extend and _all_below_target(session):
+                    pass  # extend
+                else:
+                    session.status = "finished"
+            elif session.current_round == base_max + 4:
+                # End of first extension - check further extension
+                # 東風戦: 西入 requires shanyu; 半荘戦: 北入 requires peinyu
+                if session.game_type == "east_only":
+                    can_extend = session.options.shanyu
+                else:
+                    can_extend = session.options.peinyu
+                if can_extend and _all_below_target(session):
+                    pass  # extend
+                else:
+                    session.status = "finished"
+            elif session.current_round == base_max + 8:
+                # End of second extension
+                # 東風戦: 北入 requires peinyu
+                if session.game_type == "east_only" and session.options.peinyu and _all_below_target(session):
+                    pass  # extend
+                else:
+                    session.status = "finished"
+            else:
+                # Beyond all possible extensions
+                session.status = "finished"
