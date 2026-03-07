@@ -13,6 +13,7 @@ from PIL import Image
 from app.config import settings
 from app.room_manager import RoomManager
 from app.game_session import (
+    GameOptions,
     GameSession,
     apply_draw,
     apply_ron,
@@ -35,6 +36,7 @@ from app.schemas import (
     DatasetUploadRequest,
     DatasetUploadResponse,
     DrawRequest,
+    GameOptionsResponse,
     GameRoundResponse,
     GameStateResponse,
     PlayerStateResponse,
@@ -377,6 +379,11 @@ def _game_state_response(session: GameSession) -> GameStateResponse:
         current_kyotaku=session.current_kyotaku,
         rounds_played=len(session.rounds),
         created_at=session.created_at,
+        options=GameOptionsResponse(
+            hakoire_end=session.options.hakoire_end,
+            shanyu=session.options.shanyu,
+            peinyu=session.options.peinyu,
+        ),
     )
 
 
@@ -396,7 +403,12 @@ def _round_result_response(session: GameSession, record) -> RoundResultResponse:
 
 @app.post("/api/v1/games", response_model=GameRoundResponse, status_code=201)
 def create_game_endpoint(req: CreateGameRequest) -> dict:
-    session = create_game(req.player_names, req.starting_points, req.game_type)
+    options = GameOptions(
+        hakoire_end=req.options.hakoire_end,
+        shanyu=req.options.shanyu,
+        peinyu=req.options.peinyu,
+    )
+    session = create_game(req.player_names, req.starting_points, req.game_type, options)
     _game_sessions[session.game_id] = session
     _room_code_to_game[session.room_code] = session.game_id
     room_manager.register_room(session.room_code, session.game_id)

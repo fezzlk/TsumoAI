@@ -144,6 +144,18 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
         </select>
         <input id="startPts" type="number" value="25000" style="flex:1" placeholder="初期持ち点">
       </div>
+      <div style="margin-top:10px;padding:10px;background:#1a1a2e;border-radius:8px;border:1px solid #333">
+        <div style="font-size:0.85em;color:#aaa;margin-bottom:6px">ルールオプション</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;cursor:pointer;margin-bottom:4px">
+          <input type="checkbox" id="optHakoire" checked> 箱割れ即終了 (飛び)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;cursor:pointer;margin-bottom:4px">
+          <input type="checkbox" id="optShanyu"> シャーニュウ (百の位で順位点精算)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;cursor:pointer">
+          <input type="checkbox" id="optPeinyu"> ペーニュウ (百入: 持ち点の百の位を考慮)
+        </label>
+      </div>
       <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="createRoom()">ルーム作成</button>
     </div>
     <div style="border-top:1px solid #333;padding-top:12px">
@@ -186,6 +198,7 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 
   <div id="actionPanel" style="display:none"></div>
 
+  <div id="optionsDisplay" style="display:none;text-align:center;font-size:0.75em;color:#888;margin:4px 0"></div>
   <div class="room-code-display" id="roomCodeDisplay" style="font-size:1em;padding:8px;margin:8px 0;letter-spacing:4px;cursor:pointer" onclick="copyRoomCode()"></div>
 </div>
 
@@ -315,12 +328,17 @@ function copyRoomCode() {
 async function createRoom() {
   const gameType = document.getElementById('gameType').value;
   const startPts = parseInt(document.getElementById('startPts').value) || 25000;
+  const options = {
+    hakoire_end: document.getElementById('optHakoire').checked,
+    shanyu: document.getElementById('optShanyu').checked,
+    peinyu: document.getElementById('optPeinyu').checked,
+  };
 
   try {
     const res = await fetch('/api/v1/games', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({starting_points: startPts, game_type: gameType}),
+      body: JSON.stringify({starting_points: startPts, game_type: gameType, options}),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'エラー');
@@ -510,6 +528,22 @@ function renderGame() {
   document.getElementById('riHonba').textContent = `${gs.current_honba}本場`;
   document.getElementById('riKyotaku').textContent = `供託${gs.current_kyotaku}`;
 
+  // Show active options
+  const optDisp = document.getElementById('optionsDisplay');
+  if (gs.options) {
+    const tags = [];
+    if (gs.options.hakoire_end) tags.push('飛びあり');
+    else tags.push('飛びなし');
+    if (gs.options.shanyu) tags.push('シャーニュウ');
+    if (gs.options.peinyu) tags.push('ペーニュウ');
+    if (tags.length) {
+      optDisp.textContent = tags.join(' / ');
+      optDisp.style.display = '';
+    } else {
+      optDisp.style.display = 'none';
+    }
+  }
+
   const sb = document.getElementById('scoreboard');
   sb.innerHTML = '';
   const seatWinds = computeSeatWinds(gs);
@@ -541,7 +575,25 @@ function renderGame() {
     sb.appendChild(card);
   }
 
-  document.getElementById('actionPanel').style.display = 'none';
+  // Show/hide action buttons based on game status
+  if (gs.status === 'finished') {
+    document.querySelector('.actions').style.display = 'none';
+    document.getElementById('actionPanel').style.display = 'none';
+    // Show finished banner if not already shown
+    if (!document.getElementById('finishedBanner')) {
+      const banner = document.createElement('div');
+      banner.id = 'finishedBanner';
+      banner.style.cssText = 'text-align:center;padding:16px;background:linear-gradient(135deg,#e94560,#0f3460);border-radius:12px;margin:12px 0;font-size:1.2em;font-weight:bold';
+      const hasBust = gs.players.some(p => p.points < 0);
+      banner.textContent = hasBust ? '箱割れ — 対局終了' : '対局終了';
+      document.getElementById('scoreboard').after(banner);
+    }
+  } else {
+    document.querySelector('.actions').style.display = '';
+    document.getElementById('actionPanel').style.display = 'none';
+    const existing = document.getElementById('finishedBanner');
+    if (existing) existing.remove();
+  }
 }
 
 function computeSeatWinds(gs) {

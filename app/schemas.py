@@ -248,6 +248,12 @@ class DatasetUploadResponse(BaseModel):
 # --- Game session schemas ---
 
 
+class GameOptionsRequest(BaseModel):
+    hakoire_end: bool = True     # 箱割れ即終了
+    shanyu: bool = False         # シャーニュウ
+    peinyu: bool = False         # ペーニュウ
+
+
 class CreateGameRequest(BaseModel):
     player_names: list[str] = Field(
         default=["プレイヤー1", "プレイヤー2", "プレイヤー3", "プレイヤー4"],
@@ -256,6 +262,7 @@ class CreateGameRequest(BaseModel):
     )
     starting_points: int = 25000
     game_type: Literal["east_only", "east_south"] = "east_only"
+    options: GameOptionsRequest = Field(default_factory=GameOptionsRequest)
 
 
 class ClaimSeatRequest(BaseModel):
@@ -273,6 +280,12 @@ class PlayerStateResponse(BaseModel):
     points: int
 
 
+class GameOptionsResponse(BaseModel):
+    hakoire_end: bool
+    shanyu: bool
+    peinyu: bool
+
+
 class GameStateResponse(BaseModel):
     game_id: UUID
     status: Literal["active", "finished"]
@@ -284,6 +297,7 @@ class GameStateResponse(BaseModel):
     current_kyotaku: int
     rounds_played: int
     created_at: datetime
+    options: GameOptionsResponse | None = None
 
 
 class RonRequest(BaseModel):

@@ -44,6 +44,14 @@ class GameSnapshot:
 
 
 @dataclass
+class GameOptions:
+    """Configurable game rules."""
+    hakoire_end: bool = True     # 箱割れ即終了 (end game when a player goes below 0)
+    shanyu: bool = False         # シャーニュウ (100点単位で順位点計算)
+    peinyu: bool = False         # ペーニュウ (百入: 持ち点の百の位を考慮して精算)
+
+
+@dataclass
 class GameSession:
     game_id: UUID
     players: list[PlayerState]
@@ -55,6 +63,7 @@ class GameSession:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     game_type: Literal["east_only", "east_south"] = "east_only"
     room_code: str = ""
+    options: GameOptions = field(default_factory=GameOptions)
     _snapshots: list[GameSnapshot] = field(default_factory=list, repr=False)
 
 
@@ -92,7 +101,8 @@ def undo_last(session: GameSession) -> RoundRecord | None:
 
 
 def create_game(player_names: list[str], starting_points: int = 25000,
-                game_type: Literal["east_only", "east_south"] = "east_only") -> GameSession:
+                game_type: Literal["east_only", "east_south"] = "east_only",
+                options: GameOptions | None = None) -> GameSession:
     """Create a new 4-player mahjong game session."""
     if len(player_names) != 4:
         raise ValueError("Exactly 4 player names are required")
@@ -103,6 +113,7 @@ def create_game(player_names: list[str], starting_points: int = 25000,
         players=players,
         game_type=game_type,
         room_code=_generate_room_code(),
+        options=options or GameOptions(),
     )
 
 
@@ -366,12 +377,26 @@ def apply_draw(session: GameSession, tenpai_seats: list[int] | None = None,
     return round_record
 
 
+def _check_hakoire(session: GameSession) -> bool:
+    """Check if any player has gone below 0 points (箱割れ).
+    Returns True if hakoire detected and game should end.
+    """
+    if not session.options.hakoire_end:
+        return False
+    return any(p.points < 0 for p in session.players)
+
+
 def advance_round(session: GameSession, dealer_won: bool) -> None:
     """Advance to next round after a result.
 
     If dealer won (or tenpai in draw), dealer stays and honba increments.
     Otherwise, dealer rotates and honba resets (for wins) or increments (for draws).
     """
+    # Check hakoire (bust) - if enabled and a player went below 0, end game
+    if _check_hakoire(session):
+        session.status = "finished"
+        return
+
     if dealer_won:
         # Dealer retains, honba increments
         session.current_honba += 1
