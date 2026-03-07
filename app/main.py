@@ -5,8 +5,8 @@ from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
@@ -29,6 +29,7 @@ from app.recognition_job_manager import RecognitionJobManager
 from app.hand_scoring import score_hand_shape
 from app.repository import InMemoryRepository
 from app.schemas import (
+    ClaimSeatRequest,
     ContextInput,
     CreateGameRequest,
     DatasetUploadRequest,
@@ -51,6 +52,7 @@ from app.schemas import (
     ScoreFeedbackResponse,
     ScoreRequest,
     ScoreResponse,
+    SwapSeatsRequest,
     TsumoRequest,
 )
 from app.validators import validate_score_request, validate_tile
@@ -533,6 +535,60 @@ async def undo_round(game_id: UUID) -> dict:
         "undone_round": removed.round_number,
         "game_state": state.model_dump(mode="json"),
     }
+
+
+@app.post("/api/v1/games/{game_id}/seats/{seat}/claim")
+async def claim_seat(game_id: UUID, seat: int, req: ClaimSeatRequest) -> dict:
+    session = _game_sessions.get(game_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="game not found")
+    if seat < 0 or seat > 3:
+        raise HTTPException(status_code=422, detail="seat must be 0-3")
+    session.players[seat].name = req.name
+    state = _game_state_response(session)
+    await room_manager.broadcast_game_update(session.room_code, "seat_claimed", {
+        "seat": seat,
+        "name": req.name,
+        "game_state": state.model_dump(mode="json"),
+    })
+    return {"status": "ok", "game_state": state.model_dump(mode="json")}
+
+
+@app.post("/api/v1/games/{game_id}/seats/swap")
+async def swap_seats(game_id: UUID, req: SwapSeatsRequest) -> dict:
+    session = _game_sessions.get(game_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="game not found")
+    if req.seat_a == req.seat_b:
+        raise HTTPException(status_code=422, detail="seats must be different")
+    a, b = session.players[req.seat_a], session.players[req.seat_b]
+    a.name, b.name = b.name, a.name
+    a.points, b.points = b.points, a.points
+    state = _game_state_response(session)
+    await room_manager.broadcast_game_update(session.room_code, "seats_swapped", {
+        "seat_a": req.seat_a,
+        "seat_b": req.seat_b,
+        "game_state": state.model_dump(mode="json"),
+    })
+    return {"status": "ok", "game_state": state.model_dump(mode="json")}
+
+
+@app.get("/api/v1/games/{game_id}/qr")
+def game_qr(game_id: UUID, request: Request) -> Response:
+    session = _game_sessions.get(game_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="game not found")
+    import qrcode
+    import qrcode.constants
+    base_url = str(request.base_url).rstrip("/")
+    join_url = f"{base_url}/game?room={session.room_code}"
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
+    qr.add_data(join_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
 
 
 @app.delete("/api/v1/games/{game_id}")

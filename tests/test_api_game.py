@@ -325,3 +325,76 @@ class TestFullGameFlow:
         # History should have 4 rounds
         history = client.get(f"/api/v1/games/{game_id}/history").json()
         assert len(history["rounds"]) == 4
+
+
+class TestCreateGameDefaults:
+    """Creating a game without player_names uses defaults."""
+
+    def test_create_game_no_names(self, client: TestClient):
+        resp = client.post("/api/v1/games", json={})
+        assert resp.status_code == 201
+        data = resp.json()
+        names = [p["name"] for p in data["game_state"]["players"]]
+        assert names == ["プレイヤー1", "プレイヤー2", "プレイヤー3", "プレイヤー4"]
+
+
+class TestSeatClaim:
+    """Claiming a seat sets the player name."""
+
+    def test_claim_seat(self, client: TestClient, game_id: str):
+        resp = client.post(f"/api/v1/games/{game_id}/seats/0/claim", json={"name": "太郎"})
+        assert resp.status_code == 200
+        state = resp.json()["game_state"]
+        assert state["players"][0]["name"] == "太郎"
+
+    def test_claim_seat_not_found(self, client: TestClient):
+        fake_id = str(uuid.uuid4())
+        resp = client.post(f"/api/v1/games/{fake_id}/seats/0/claim", json={"name": "太郎"})
+        assert resp.status_code == 404
+
+    def test_claim_seat_invalid_seat(self, client: TestClient, game_id: str):
+        resp = client.post(f"/api/v1/games/{game_id}/seats/5/claim", json={"name": "太郎"})
+        assert resp.status_code == 422
+
+    def test_claim_seat_empty_name(self, client: TestClient, game_id: str):
+        resp = client.post(f"/api/v1/games/{game_id}/seats/0/claim", json={"name": ""})
+        assert resp.status_code == 422
+
+
+class TestSeatSwap:
+    """Swapping seats exchanges names and points."""
+
+    def test_swap_seats(self, client: TestClient, game_id: str):
+        # First set names
+        client.post(f"/api/v1/games/{game_id}/seats/0/claim", json={"name": "太郎"})
+        client.post(f"/api/v1/games/{game_id}/seats/1/claim", json={"name": "花子"})
+
+        resp = client.post(f"/api/v1/games/{game_id}/seats/swap", json={"seat_a": 0, "seat_b": 1})
+        assert resp.status_code == 200
+        state = resp.json()["game_state"]
+        assert state["players"][0]["name"] == "花子"
+        assert state["players"][1]["name"] == "太郎"
+
+    def test_swap_same_seat(self, client: TestClient, game_id: str):
+        resp = client.post(f"/api/v1/games/{game_id}/seats/swap", json={"seat_a": 0, "seat_b": 0})
+        assert resp.status_code == 422
+
+    def test_swap_not_found(self, client: TestClient):
+        fake_id = str(uuid.uuid4())
+        resp = client.post(f"/api/v1/games/{fake_id}/seats/swap", json={"seat_a": 0, "seat_b": 1})
+        assert resp.status_code == 404
+
+
+class TestQRCode:
+    """QR code endpoint returns a PNG image."""
+
+    def test_qr_code(self, client: TestClient, game_id: str):
+        resp = client.get(f"/api/v1/games/{game_id}/qr")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/png"
+        assert len(resp.content) > 100  # should be a real image
+
+    def test_qr_not_found(self, client: TestClient):
+        fake_id = str(uuid.uuid4())
+        resp = client.get(f"/api/v1/games/{fake_id}/qr")
+        assert resp.status_code == 404

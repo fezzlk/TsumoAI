@@ -25,8 +25,17 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 /* Lobby */
 .lobby-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
 .room-code-display { text-align: center; font-size: 2.5em; font-weight: bold; letter-spacing: 8px; color: #e94560; background: #16213e; padding: 16px; border-radius: 12px; margin: 16px 0; }
-.player-list { list-style: none; margin: 12px 0; }
-.player-list li { padding: 8px 12px; background: #16213e; margin-bottom: 4px; border-radius: 6px; display: flex; justify-content: space-between; }
+
+/* Seat selection grid */
+.seat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+.seat-card { background: #16213e; border: 2px solid #333; border-radius: 12px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.15s; }
+.seat-card:active { transform: scale(0.97); }
+.seat-card.taken { border-color: #2ecc71; cursor: default; }
+.seat-card.mine { border-color: #e94560; }
+.seat-card .seat-wind { font-size: 1.2em; font-weight: bold; color: #e94560; }
+.seat-card .seat-name { margin-top: 8px; font-size: 0.9em; color: #aaa; }
+.seat-card.taken .seat-name { color: #2ecc71; }
+.seat-card.mine .seat-name { color: #e94560; }
 
 /* Score board */
 .scoreboard { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
@@ -46,7 +55,7 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 
 /* Action buttons */
 .actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; justify-content: center; }
-.actions .btn { flex: 1; min-width: 80px; text-align: center; }
+.actions .btn { flex: 1; min-width: 60px; text-align: center; }
 
 /* Point selection grid */
 .point-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 12px 0; }
@@ -85,6 +94,15 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
 .modal.active { display: flex; }
 .modal-content { background: #1a1a2e; border: 2px solid #0f3460; border-radius: 12px; padding: 20px; width: 90%; max-width: 400px; max-height: 80vh; overflow-y: auto; }
+
+/* QR */
+.qr-container { text-align: center; margin: 16px 0; }
+.qr-container img { border-radius: 8px; background: #fff; padding: 8px; max-width: 220px; }
+
+/* Swap selection */
+.swap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+.swap-card { background: #16213e; border: 2px solid #333; border-radius: 8px; padding: 12px; text-align: center; cursor: pointer; }
+.swap-card.selected { border-color: #e94560; background: #2a1a3e; }
 </style>
 </head>
 <body>
@@ -98,10 +116,6 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
   <div class="lobby-actions">
     <div>
       <label>ルーム作成</label>
-      <input id="p1" placeholder="プレイヤー1 (東)" value="">
-      <input id="p2" placeholder="プレイヤー2 (南)" value="">
-      <input id="p3" placeholder="プレイヤー3 (西)" value="">
-      <input id="p4" placeholder="プレイヤー4 (北)" value="">
       <div style="display:flex;gap:8px;margin-top:8px">
         <select id="gameType" style="flex:1">
           <option value="east_only">東風戦</option>
@@ -120,7 +134,16 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
   </div>
 </div>
 
-<!-- Screen 2: Game -->
+<!-- Screen 2: Seat Selection -->
+<div class="screen" id="seatScreen">
+  <h1>席を選んでください</h1>
+  <div class="room-code-display" id="seatRoomCode" style="font-size:1.2em;padding:8px;letter-spacing:4px;cursor:pointer" onclick="copyRoomCode()"></div>
+  <input id="seatName" placeholder="あなたの名前" style="text-align:center;font-size:1.1em">
+  <div class="seat-grid" id="seatGrid"></div>
+  <button class="btn btn-secondary btn-small" style="width:100%;margin-top:8px" onclick="skipSeatSelection()">席を選ばずに観戦する</button>
+</div>
+
+<!-- Screen 3: Game -->
 <div class="screen" id="gameScreen">
   <div class="round-info" id="roundInfo">
     <span id="riWind">東1局</span>
@@ -136,6 +159,8 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
     <button class="btn btn-secondary" onclick="showAction('draw')">流局</button>
     <button class="btn btn-danger btn-small" onclick="doUndo()">取消</button>
     <button class="btn btn-small" style="background:#555" onclick="showHistory()">履歴</button>
+    <button class="btn btn-small" style="background:#8e44ad" onclick="showSwapModal()">席替</button>
+    <button class="btn btn-small" style="background:#16a085" onclick="showQR()">QR</button>
   </div>
 
   <div id="actionPanel" style="display:none"></div>
@@ -152,16 +177,41 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
   </div>
 </div>
 
+<!-- Modal for QR code -->
+<div class="modal" id="qrModal">
+  <div class="modal-content">
+    <h2>ルーム参加用QR</h2>
+    <div class="qr-container" id="qrContainer"></div>
+    <p style="text-align:center;color:#aaa;font-size:0.85em;margin:8px 0">スマホのカメラでスキャンして参加</p>
+    <div class="room-code-display" style="font-size:1.2em;padding:8px;letter-spacing:4px;cursor:pointer" id="qrRoomCode" onclick="copyRoomCode()"></div>
+    <button class="btn btn-secondary" style="width:100%;margin-top:12px" onclick="closeModal('qrModal')">閉じる</button>
+  </div>
+</div>
+
+<!-- Modal for seat swap -->
+<div class="modal" id="swapModal">
+  <div class="modal-content">
+    <h2>席替え</h2>
+    <p style="text-align:center;color:#aaa;font-size:0.85em;margin-bottom:12px">入れ替える2人を選んでください</p>
+    <div class="swap-grid" id="swapGrid"></div>
+    <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitSwap()" id="swapBtn" disabled>席を入れ替える</button>
+    <button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="closeModal('swapModal')">キャンセル</button>
+  </div>
+</div>
+
 <script>
 const WIND_NAMES = {E:'東',S:'南',W:'西',N:'北'};
 const WIND_ORDER = ['E','S','W','N'];
+const SEAT_WINDS = ['東','南','西','北'];
 
 let gameState = null;
 let gameId = null;
 let roomCode = null;
 let myName = null;
+let mySeat = null;
 let ws = null;
 let lastDeltas = {};
+let keepAliveTimer = null;
 
 // Common point values for one-tap selection
 const POINT_TABLE_RON = [
@@ -238,13 +288,8 @@ function copyRoomCode() {
   }
 }
 
+// --- Room Creation (no player names) ---
 async function createRoom() {
-  const names = [
-    document.getElementById('p1').value.trim() || 'プレイヤー1',
-    document.getElementById('p2').value.trim() || 'プレイヤー2',
-    document.getElementById('p3').value.trim() || 'プレイヤー3',
-    document.getElementById('p4').value.trim() || 'プレイヤー4',
-  ];
   const gameType = document.getElementById('gameType').value;
   const startPts = parseInt(document.getElementById('startPts').value) || 25000;
 
@@ -252,24 +297,24 @@ async function createRoom() {
     const res = await fetch('/api/v1/games', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({player_names: names, starting_points: startPts, game_type: gameType}),
+      body: JSON.stringify({starting_points: startPts, game_type: gameType}),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'エラー');
     gameId = data.game_id;
     roomCode = data.room_code;
     gameState = data.game_state;
-    myName = names[0];
-    showGameScreen();
+    showSeatSelection();
     connectWS();
   } catch (e) {
     toast(e.message, true);
   }
 }
 
+// --- Room Join ---
 async function joinRoom() {
   const code = document.getElementById('joinCode').value.trim().toUpperCase();
-  const name = document.getElementById('joinName').value.trim() || 'ゲスト';
+  const name = document.getElementById('joinName').value.trim() || '';
   if (code.length < 4) { toast('コードを入力してください', true); return; }
 
   try {
@@ -280,50 +325,113 @@ async function joinRoom() {
     roomCode = code;
     gameState = data.game_state;
     myName = name;
-    showGameScreen();
+    if (myName) {
+      document.getElementById('seatName').value = myName;
+    }
+    showSeatSelection();
     connectWS();
   } catch (e) {
     toast(e.message, true);
   }
 }
 
-let keepAliveTimer = null;
+// --- Seat Selection Screen ---
+function showSeatSelection() {
+  document.getElementById('lobbyScreen').classList.remove('active');
+  document.getElementById('gameScreen').classList.remove('active');
+  document.getElementById('seatScreen').classList.add('active');
+  document.getElementById('seatRoomCode').textContent = `ROOM: ${roomCode}`;
+  renderSeatGrid();
+}
 
+function renderSeatGrid() {
+  const grid = document.getElementById('seatGrid');
+  grid.innerHTML = '';
+  const defaultNames = ['プレイヤー1','プレイヤー2','プレイヤー3','プレイヤー4'];
+  for (let i = 0; i < 4; i++) {
+    const card = document.createElement('div');
+    const player = gameState.players[i];
+    const isTaken = !defaultNames.includes(player.name);
+    const isMine = mySeat === i;
+    card.className = 'seat-card' + (isMine ? ' mine' : isTaken ? ' taken' : '');
+    card.innerHTML = `
+      <div class="seat-wind">${SEAT_WINDS[i]}</div>
+      <div class="seat-name">${isTaken ? escHtml(player.name) : '空席'}</div>
+    `;
+    if (!isTaken || isMine) {
+      card.onclick = () => claimSeat(i);
+    }
+    grid.appendChild(card);
+  }
+}
+
+async function claimSeat(seat) {
+  const name = document.getElementById('seatName').value.trim();
+  if (!name) { toast('名前を入力してください', true); return; }
+  myName = name;
+
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/seats/${seat}/claim`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: myName}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    mySeat = seat;
+    gameState = data.game_state;
+    showGameScreen();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function skipSeatSelection() {
+  myName = myName || 'ゲスト';
+  showGameScreen();
+}
+
+// --- WebSocket ---
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/ws/rooms/${roomCode}?player_name=${encodeURIComponent(myName)}`;
+  const url = `${proto}//${location.host}/ws/rooms/${roomCode}?player_name=${encodeURIComponent(myName || '')}`;
   ws = new WebSocket(url);
   ws.onopen = () => {
     document.getElementById('connStatus').classList.add('connected');
-    // Clear any previous keep-alive timer before creating a new one
     if (keepAliveTimer) clearInterval(keepAliveTimer);
     keepAliveTimer = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({type:'ping'})); }, 25000);
   };
   ws.onclose = () => {
     document.getElementById('connStatus').classList.remove('connected');
     if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
-    // Auto-reconnect
     setTimeout(connectWS, 2000);
   };
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'pong') return;
     if (msg.game_state) {
-      const prev = gameState;
       gameState = msg.game_state;
       if (msg.round_result) {
         computeDeltas(msg.round_result.point_changes);
       }
       renderGame();
+      // Also update seat grid if visible
+      if (document.getElementById('seatScreen').classList.contains('active')) {
+        renderSeatGrid();
+      }
       if (msg.type === 'undo') toast('取り消しされました');
+      if (msg.type === 'seat_claimed') toast(`${msg.name} が ${SEAT_WINDS[msg.seat]} に着席`);
+      if (msg.type === 'seats_swapped') toast('席替えが行われました');
     }
     if (msg.type === 'player_joined') toast(`${msg.player_name} が参加`);
     if (msg.type === 'player_left') toast(`${msg.player_name} が退出`);
   };
 }
 
+// --- Game Screen ---
 function showGameScreen() {
   document.getElementById('lobbyScreen').classList.remove('active');
+  document.getElementById('seatScreen').classList.remove('active');
   document.getElementById('gameScreen').classList.add('active');
   document.getElementById('roomCodeDisplay').textContent = `ROOM: ${roomCode}`;
   renderGame();
@@ -342,14 +450,12 @@ function renderGame() {
   if (!gameState) return;
   const gs = gameState;
 
-  // Round info
   const windName = WIND_NAMES[gs.current_round_wind] || '東';
   const dealerNum = (gs.current_dealer % 4) + 1;
   document.getElementById('riWind').textContent = `${windName}${dealerNum}局`;
   document.getElementById('riHonba').textContent = `${gs.current_honba}本場`;
   document.getElementById('riKyotaku').textContent = `供託${gs.current_kyotaku}`;
 
-  // Scoreboard
   const sb = document.getElementById('scoreboard');
   sb.innerHTML = '';
   const seatWinds = computeSeatWinds(gs);
@@ -371,12 +477,10 @@ function renderGame() {
     sb.appendChild(card);
   }
 
-  // Hide action panel when game updates (new round)
   document.getElementById('actionPanel').style.display = 'none';
 }
 
 function computeSeatWinds(gs) {
-  // current_dealer is the dealer seat; dealer is always 東 in current round
   const winds = {};
   for (let i = 0; i < 4; i++) {
     const offset = (i - gs.current_dealer + 4) % 4;
@@ -389,6 +493,78 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// --- QR Code ---
+function showQR() {
+  const container = document.getElementById('qrContainer');
+  container.innerHTML = '<p style="color:#aaa">読み込み中...</p>';
+  document.getElementById('qrRoomCode').textContent = `ROOM: ${roomCode}`;
+  document.getElementById('qrModal').classList.add('active');
+
+  const img = new Image();
+  img.src = `/api/v1/games/${gameId}/qr`;
+  img.alt = 'QR Code';
+  img.onload = () => { container.innerHTML = ''; container.appendChild(img); };
+  img.onerror = () => {
+    // Fallback: show URL text
+    const joinUrl = `${location.origin}/game?room=${roomCode}`;
+    container.innerHTML = `<p style="color:#aaa;word-break:break-all;font-size:0.85em">${escHtml(joinUrl)}</p>`;
+  };
+}
+
+// --- Seat Swap ---
+let swapSelected = [];
+
+function showSwapModal() {
+  swapSelected = [];
+  const grid = document.getElementById('swapGrid');
+  grid.innerHTML = '';
+  gameState.players.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'swap-card';
+    card.dataset.seat = p.seat;
+    card.innerHTML = `<div style="font-weight:bold">${SEAT_WINDS[p.seat]}</div><div style="margin-top:4px">${escHtml(p.name)}</div>`;
+    card.onclick = () => toggleSwapSelect(card, p.seat);
+    grid.appendChild(card);
+  });
+  document.getElementById('swapBtn').disabled = true;
+  document.getElementById('swapModal').classList.add('active');
+}
+
+function toggleSwapSelect(card, seat) {
+  const idx = swapSelected.indexOf(seat);
+  if (idx >= 0) {
+    swapSelected.splice(idx, 1);
+    card.classList.remove('selected');
+  } else if (swapSelected.length < 2) {
+    swapSelected.push(seat);
+    card.classList.add('selected');
+  }
+  document.getElementById('swapBtn').disabled = swapSelected.length !== 2;
+}
+
+async function submitSwap() {
+  if (swapSelected.length !== 2) return;
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/seats/swap`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({seat_a: swapSelected[0], seat_b: swapSelected[1]}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    gameState = data.game_state;
+    // Update mySeat if I was swapped
+    if (mySeat === swapSelected[0]) mySeat = swapSelected[1];
+    else if (mySeat === swapSelected[1]) mySeat = swapSelected[0];
+    renderGame();
+    closeModal('swapModal');
+    toast('席替え完了');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+// --- Action Panels ---
 function showAction(type) {
   const panel = document.getElementById('actionPanel');
   panel.style.display = 'block';
@@ -400,26 +576,20 @@ function showAction(type) {
 
 function renderRonPanel(panel) {
   const gs = gameState;
-  const isDealer = {};
-  gs.players.forEach(p => { isDealer[p.seat] = p.seat === gs.current_dealer; });
-
   let html = '<h2>ロン</h2>';
 
-  // Winner selection
   html += '<label>和了者</label><div class="player-chips" id="ronWinner">';
   gs.players.forEach(p => {
     html += `<div class="chip" data-seat="${p.seat}" onclick="selectChip(this,'ronWinner')">${escHtml(p.name)}</div>`;
   });
   html += '</div>';
 
-  // Loser selection
   html += '<label>放銃者</label><div class="player-chips" id="ronLoser">';
   gs.players.forEach(p => {
     html += `<div class="chip" data-seat="${p.seat}" onclick="selectChip(this,'ronLoser')">${escHtml(p.name)}</div>`;
   });
   html += '</div>';
 
-  // Point selection - show both tables, JS will filter based on winner being dealer
   html += '<label>点数 (子)</label>';
   html += '<div class="point-grid" id="ronPointsNon">';
   POINT_TABLE_RON.forEach(p => {
@@ -436,11 +606,9 @@ function renderRonPanel(panel) {
   });
   html += '</div>';
 
-  // Custom point input
   html += '<label>またはカスタム点数</label>';
   html += '<input type="number" id="ronCustomPts" placeholder="例: 5200" step="100">';
 
-  // Riichi
   html += '<label>リーチ宣言</label><div class="riichi-row" id="ronRiichi">';
   gs.players.forEach(p => {
     html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
@@ -449,23 +617,19 @@ function renderRonPanel(panel) {
 
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitRon()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
-
   panel.innerHTML = html;
 }
 
 function renderTsumoPanel(panel) {
   const gs = gameState;
-
   let html = '<h2>ツモ</h2>';
 
-  // Winner selection
   html += '<label>和了者</label><div class="player-chips" id="tsumoWinner">';
   gs.players.forEach(p => {
     html += `<div class="chip" data-seat="${p.seat}" onclick="selectChipTsumo(this)">${escHtml(p.name)}</div>`;
   });
   html += '</div>';
 
-  // Point grids - non-dealer tsumo
   html += '<label>点数 (子ツモ)</label>';
   html += '<div class="point-grid" id="tsumoPointsNon">';
   POINT_TABLE_TSUMO.forEach((p, i) => {
@@ -474,7 +638,6 @@ function renderTsumoPanel(panel) {
   });
   html += '</div>';
 
-  // Dealer tsumo
   html += '<label>点数 (親ツモ)</label>';
   html += '<div class="point-grid" id="tsumoPointsDealer" style="display:none">';
   POINT_TABLE_TSUMO_DEALER.forEach((p, i) => {
@@ -483,14 +646,12 @@ function renderTsumoPanel(panel) {
   });
   html += '</div>';
 
-  // Custom
   html += '<label>またはカスタム (翻/符)</label>';
   html += '<div style="display:flex;gap:8px">';
   html += '<input type="number" id="tsumoHan" placeholder="翻" min="1" style="flex:1">';
   html += '<input type="number" id="tsumoFu" placeholder="符" min="20" step="10" value="30" style="flex:1">';
   html += '</div>';
 
-  // Riichi
   html += '<label>リーチ宣言</label><div class="riichi-row" id="tsumoRiichi">';
   gs.players.forEach(p => {
     html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
@@ -499,13 +660,11 @@ function renderTsumoPanel(panel) {
 
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitTsumo()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
-
   panel.innerHTML = html;
 }
 
 function renderDrawPanel(panel) {
   const gs = gameState;
-
   let html = '<h2>流局</h2>';
 
   html += '<label>テンパイ者 (複数選択可)</label><div class="player-chips" id="drawTenpai">';
@@ -522,7 +681,6 @@ function renderDrawPanel(panel) {
 
   html += `<button class="btn btn-secondary" style="width:100%;margin-top:12px" onclick="submitDraw()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
-
   panel.innerHTML = html;
 }
 
@@ -530,7 +688,6 @@ function selectChip(el, groupId) {
   document.querySelectorAll(`#${groupId} .chip`).forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
 
-  // For ron: show appropriate point table based on winner being dealer
   if (groupId === 'ronWinner') {
     const seat = parseInt(el.dataset.seat);
     const isDealer = seat === gameState.current_dealer;
@@ -576,9 +733,7 @@ function getRiichiSeats(groupId) {
     .map(cb => parseInt(cb.value));
 }
 
-// Reverse-calculate han/fu from a ron point value for the API
 function ronPointsToHanFu(pts, isDealer) {
-  // Standard point table reverse lookup
   const table = isDealer ? [
     [1500,1,30],[2000,1,40],[2400,1,50],[2900,2,30],[3900,2,40],[4800,2,50],
     [5800,3,30],[7700,3,40],[12000,4,30],[18000,6,30],[24000,8,30],[36000,11,30],[48000,13,30],
@@ -590,10 +745,9 @@ function ronPointsToHanFu(pts, isDealer) {
   for (const [p, h, f] of table) {
     if (p === pts) return {han: h, fu: f, yakuman: 0};
   }
-  // For unknown pts, try to work backwards or default to mangan
   if (pts >= 48000 && isDealer) return {han: 13, fu: 30, yakuman: 1};
   if (pts >= 32000 && !isDealer) return {han: 13, fu: 30, yakuman: 1};
-  return {han: 5, fu: 30, yakuman: 0}; // fallback mangan
+  return {han: 5, fu: 30, yakuman: 0};
 }
 
 function tsumoIdxToHanFu(idx, isDealer) {
@@ -617,7 +771,6 @@ async function submitRon() {
   const riichi = getRiichiSeats('ronRiichi');
   const isDealer = winner === gameState.current_dealer;
 
-  // Check custom pts first
   const customPts = parseInt(document.getElementById('ronCustomPts').value);
   let han, fu, yakuman;
   if (customPts > 0) {
@@ -656,7 +809,6 @@ async function submitTsumo() {
   const riichi = getRiichiSeats('tsumoRiichi');
   const isDealer = winner === gameState.current_dealer;
 
-  // Check custom han/fu first
   const customHan = parseInt(document.getElementById('tsumoHan').value);
   const customFu = parseInt(document.getElementById('tsumoFu').value);
   let han, fu, yakuman;
@@ -756,6 +908,17 @@ async function showHistory() {
 function closeModal(id) {
   document.getElementById(id).classList.remove('active');
 }
+
+// --- Auto-join from URL query params ---
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  const room = params.get('room');
+  if (room) {
+    document.getElementById('joinCode').value = room.toUpperCase();
+    // Focus on the name input for quick join
+    setTimeout(() => document.getElementById('joinName').focus(), 100);
+  }
+})();
 </script>
 </body>
 </html>
