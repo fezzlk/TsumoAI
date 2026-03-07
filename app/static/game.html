@@ -71,7 +71,7 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 .chip:active { transform: scale(0.95); }
 
 /* Riichi/Tenpai toggle on player card */
-.riichi-btn, .tenpai-btn { margin-top: 4px; padding: 3px 10px; border: 1px solid #555; border-radius: 12px; background: transparent; color: #888; font-size: 0.65em; cursor: pointer; transition: all 0.15s; display: inline-block; }
+.riichi-btn, .tenpai-btn { margin-top: 4px; padding: 5px 14px; border: 1px solid #555; border-radius: 12px; background: transparent; color: #888; font-size: 0.78em; cursor: pointer; transition: all 0.15s; display: inline-block; }
 .riichi-btn.active { background: #f39c12; border-color: #f39c12; color: #fff; font-weight: bold; }
 .tenpai-btn.active { background: #3498db; border-color: #3498db; color: #fff; font-weight: bold; }
 .riichi-btn:active, .tenpai-btn:active { transform: scale(0.93); }
@@ -194,11 +194,11 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
     <button class="btn btn-secondary" onclick="showAction('draw')">流局</button>
     <button class="btn btn-danger btn-small" onclick="doUndo()">取消</button>
     <button class="btn btn-small" style="background:#555" onclick="showHistory()">履歴</button>
-    <button class="btn btn-small" style="background:#8e44ad" onclick="showSwapModal()">席替</button>
-    <button class="btn btn-small" style="background:#16a085" onclick="showQR()">QR</button>
-    <button class="btn btn-small" id="diffToggleBtn" style="background:#2c3e50" onclick="toggleDiffMode()">点差</button>
-    <button class="btn btn-small" style="background:#d35400" onclick="showChart()">グラフ</button>
-    <button class="btn btn-small" style="background:#2980b9" onclick="syncGameState()">同期</button>
+    <button class="btn btn-small" style="background:#555" onclick="showSwapModal()">席替</button>
+    <button class="btn btn-small" style="background:#555" onclick="showQR()">QR</button>
+    <button class="btn btn-small" id="diffToggleBtn" style="background:#555" onclick="toggleDiffMode()">点差</button>
+    <button class="btn btn-small" style="background:#555" onclick="showChart()">グラフ</button>
+    <button class="btn btn-small" style="background:#555" onclick="syncGameState()">同期</button>
   </div>
 
   <div id="actionPanel" style="display:none"></div>
@@ -948,7 +948,7 @@ function toggleDiffMode() {
     diffRefSeat = mySeat !== null ? mySeat : 0;
   }
   const btn = document.getElementById('diffToggleBtn');
-  btn.style.background = showDiffMode ? '#e94560' : '#2c3e50';
+  btn.style.background = showDiffMode ? '#e94560' : '#555';
   renderGame();
 }
 
