@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>麻雀 点数算出 PoC</title>
+    <title>点数データセット生成</title>
     <style>
       :root {
         --bg: #f5f1e8;
@@ -29,19 +29,14 @@
         margin: 24px auto;
         padding: 0 16px 40px;
       }
-      h1 {
-        margin: 0 0 14px;
-        letter-spacing: 0.02em;
-      }
+      h1 { margin: 0 0 14px; letter-spacing: 0.02em; }
       .grid {
         display: grid;
         gap: 16px;
         grid-template-columns: 1fr;
       }
       @media (min-width: 980px) {
-        .grid {
-          grid-template-columns: 1.25fr 1fr;
-        }
+        .grid { grid-template-columns: 1.25fr 1fr; }
       }
       .card {
         background: var(--card);
@@ -50,10 +45,7 @@
         padding: 16px;
         box-shadow: 0 8px 20px rgba(28, 28, 30, 0.04);
       }
-      .card h2 {
-        margin-top: 0;
-        font-size: 1.08rem;
-      }
+      .card h2 { margin-top: 0; font-size: 1.08rem; }
       label { display: block; margin: 10px 0 4px; font-weight: 600; }
       input[type="text"], input[type="number"], select, textarea {
         width: 100%;
@@ -100,91 +92,8 @@
       }
       .hint { color: #5f5849; font-size: 0.9rem; }
       .error { color: var(--error); font-weight: 700; }
-      .result-line { margin: 6px 0; }
-      .badge-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin: 8px 0;
-      }
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        border-radius: 999px;
-        border: 1px solid #cbd5e1;
-        background: #f8fafc;
-        font-size: 0.82rem;
-      }
-      .badge-empty {
-        color: #64748b;
-        border-style: dashed;
-      }
-      .tile-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        padding: 8px;
-        border: 1px solid #e6e8ef;
-        border-radius: 10px;
-        background: #fafbfd;
-        min-height: 72px;
-      }
-      .tile-row img {
-        width: 44px;
-        height: auto;
-        border-radius: 4px;
-        border: 1px solid #d7dce8;
-        background: #fff;
-      }
-      .tile-fallback {
-        width: 44px;
-        height: 62px;
-        border: 1px solid #cbd5e1;
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.75rem;
-        background: #fff;
-      }
-      .feedback-card {
-        margin-top: 14px;
-        padding: 12px;
-        border: 1px solid #d5dbe7;
-        border-radius: 10px;
-        background: #fbfcff;
-      }
-      .feedback-title {
-        margin: 0 0 8px;
-        font-size: 0.98rem;
-      }
-      .feedback-status {
-        margin-top: 8px;
-        font-size: 0.88rem;
-        color: #0b5f58;
-      }
-      .small {
-        font-size: 0.84rem;
-      }
-      .pattern-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin: 8px 0 12px;
-      }
-      .pattern-item {
-        border: 1px solid #d8dfeb;
-        border-radius: 10px;
-        padding: 8px 10px;
-        background: #fff;
-      }
       .hidden { display: none !important; }
-      .disabled-block {
-        opacity: 0.45;
-        pointer-events: none;
-      }
+      .disabled-block { opacity: 0.45; pointer-events: none; }
       .section-block {
         border: 1px solid #d8dfeb;
         border-radius: 10px;
@@ -197,12 +106,7 @@
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
         gap: 8px;
       }
-      .slot-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 8px;
-      }
+      .slot-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
       .tile-slot-btn {
         margin-top: 0;
         background: #334155;
@@ -214,10 +118,7 @@
         align-items: center;
         justify-content: center;
       }
-      .tile-slot-btn img {
-        width: 36px;
-        height: auto;
-      }
+      .tile-slot-btn img { width: 36px; height: auto; }
       .winning-tile-row {
         display: flex;
         flex-wrap: wrap;
@@ -245,28 +146,26 @@
         border-color: #0f766e;
         box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.2);
       }
-      .winning-tile-btn img {
-        width: 34px;
-        height: auto;
-      }
+      .winning-tile-btn img { width: 34px; height: auto; }
       .pair-tiles {
         display: flex;
         align-items: center;
         justify-content: center;
         gap: 2px;
       }
-      .pair-tiles img {
-        width: 24px;
-        height: auto;
-      }
-      .tile-slot-btn.empty {
-        color: #d1d5db;
-        font-size: 0.72rem;
-      }
+      .pair-tiles img { width: 24px; height: auto; }
+      .tile-slot-btn.empty { color: #d1d5db; font-size: 0.72rem; }
       .pair-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
         gap: 8px;
+      }
+      .pattern-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 12px; }
+      .pattern-item {
+        border: 1px solid #d8dfeb;
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
       }
       .picker-modal {
         position: fixed;
@@ -306,11 +205,7 @@
         min-height: 54px;
       }
       .picker-btn img { width: 32px; }
-      .option-group {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
+      .option-group { display: flex; flex-wrap: wrap; gap: 8px; }
       .option-item {
         border: 1px solid var(--line);
         border-radius: 10px;
@@ -320,11 +215,7 @@
         align-items: center;
         gap: 6px;
       }
-      .dora-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
+      .dora-item { display: flex; align-items: center; gap: 6px; }
       .mini-btn {
         margin-top: 0;
         padding: 6px 8px;
@@ -332,67 +223,74 @@
         background: #64748b;
         font-size: 0.8rem;
       }
-      .inline-label-row {
+      .inline-label-row { display: flex; align-items: center; gap: 8px; }
+      .dataset-json {
+        min-height: 200px;
+        font-family: monospace;
+        font-size: 0.88rem;
+        white-space: pre-wrap;
+        background: #1e293b;
+        color: #e2e8f0;
+        border-radius: 10px;
+        padding: 14px;
+        border: 1px solid #334155;
+      }
+      .copy-btn {
+        background: #475569;
+        margin-top: 8px;
+      }
+      .copy-btn.copied {
+        background: #16a34a;
+      }
+      .dataset-list {
+        margin-top: 14px;
         display: flex;
-        align-items: center;
+        flex-direction: column;
         gap: 8px;
       }
-      .json-help-list {
-        margin: 8px 0 0;
-        padding-left: 18px;
-      }
-      .json-help-list li {
-        margin: 4px 0;
-      }
-      .recognition-panel {
-        margin-top: 10px;
-        padding: 10px;
+      .dataset-entry {
         border: 1px solid #d8dfeb;
         border-radius: 10px;
+        padding: 10px;
         background: #fff;
+        font-size: 0.85rem;
       }
-      .loading-inline {
+      .dataset-entry-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+      .dataset-entry-header strong {
+        font-size: 0.9rem;
+      }
+      .remove-entry-btn {
+        margin-top: 0;
+        padding: 4px 8px;
+        background: #b91c1c;
+        font-size: 0.75rem;
+        border-radius: 6px;
+      }
+      .badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+      .badge {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-      }
-      .loading-dot {
-        width: 10px;
-        height: 10px;
+        gap: 4px;
+        padding: 4px 8px;
         border-radius: 999px;
-        background: #0f766e;
-        animation: pulse 1s ease-in-out infinite;
-      }
-      @keyframes pulse {
-        0% { opacity: 0.25; transform: scale(0.9); }
-        50% { opacity: 1; transform: scale(1); }
-        100% { opacity: 0.25; transform: scale(0.9); }
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        font-size: 0.82rem;
       }
     </style>
   </head>
   <body>
     <main class="wrap">
-      <h1>麻雀 点数算出モジュール</h1>
-      <p class="hint">手入力は <code>/api/v1/score</code>、画像入力は <code>/api/v1/recognize-and-score</code> を呼び出します。</p>
+      <h1>点数データセット生成</h1>
+      <p class="hint">牌姿と条件を入力し、点数計算結果と合わせてJSON形式のデータセットを生成します。</p>
       <div class="grid">
         <section class="card">
           <h2>入力</h2>
-          <label>入力モード</label>
-          <div class="option-group">
-            <label class="option-item"><input type="radio" name="inputMode" value="manual" checked /> 手牌を手入力</label>
-            <label class="option-item"><input type="radio" name="inputMode" value="image" /> 画像から認識</label>
-          </div>
-          <div id="imageInputBlock" class="section-block hidden">
-            <label for="handImageFile">手牌画像</label>
-            <input id="handImageFile" type="file" accept="image/*" />
-            <label for="imageGameId">ゲームID（任意）</label>
-            <input id="imageGameId" type="text" placeholder="game-001" />
-            <button id="recognizeOnlyBtn" type="button" class="mini-btn">画像を識別（点数計算なし）</button>
-            <button id="recognizeOnlyCancelBtn" type="button" class="mini-btn hidden" style="background:#b91c1c;">キャンセル</button>
-            <div id="recognizeOnlyStatus" class="hint"></div>
-            <p class="hint">画像認識結果を和了形に変換し、点数算出します。</p>
-          </div>
-          <button id="submitBtnTop" type="button">点数を算出</button>
 
           <label>和了形</label>
           <div id="tileInputArea">
@@ -423,7 +321,7 @@
           <div id="winningTileBlock">
             <label for="winningTileRow">入力牌（クリックで上がり牌を選択）</label>
             <div id="winningTileRow" class="winning-tile-row"></div>
-            <p class="hint">牌入力で組んだ14〜18枚から上がり牌を選択します。選択中の牌は枠で表示されます。</p>
+            <p class="hint">牌入力で組んだ14〜18枚から上がり牌を選択します。</p>
           </div>
 
           <label class="pattern-item" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;">
@@ -432,7 +330,6 @@
           </label>
           <div class="inline-label-row">
             <label for="handJsonInput" style="margin:0;">手牌JSON（closed_tiles / melds / win_tile）</label>
-            <button id="openJsonHelpBtn" type="button" class="mini-btn">ヘルプ</button>
           </div>
           <textarea id="handJsonInput" disabled></textarea>
           <p class="hint">JSON直接入力ONで編集可能。OFF時は牌入力フォーム状態で自動上書きされます。</p>
@@ -517,40 +414,20 @@
             <label class="check"><input id="tenhou" type="checkbox" /> 天和</label>
           </div>
 
-          <button id="submitBtn">点数を算出</button>
+          <button id="generateBtn">データセットに追加</button>
           <div id="error" class="error"></div>
         </section>
 
-        <section id="resultCard" class="card">
-          <h2>結果</h2>
-          <div id="summary"></div>
-          <div id="recognitionPanel" class="recognition-panel hidden">
-            <div id="recognitionMeta" class="result-line"></div>
-            <div id="recognitionWarnings" class="badge-row"></div>
-            <label>識別牌（top）</label>
-            <div id="recognitionTiles" class="tile-row"></div>
-            <div class="feedback-card" style="margin-top:10px;">
-              <p class="feedback-title">識別誤りフィードバック</p>
-              <label for="recognitionCorrectedTiles">正解14牌（カンマ区切り）</label>
-              <textarea id="recognitionCorrectedTiles" placeholder="例: 1m,2m,3m,4p,5p,6p,7s,8s,9s,E,E,E,2p,2p"></textarea>
-              <label for="recognitionFeedbackComment">コメント（任意）</label>
-              <textarea id="recognitionFeedbackComment" placeholder="例: 9p,9p を 7p,8p に誤認識"></textarea>
-              <button id="sendRecognitionFeedbackBtn" type="button">識別フィードバック送信</button>
-              <div id="recognitionFeedbackStatus" class="feedback-status"></div>
-            </div>
-          </div>
-          <label>レスポンスJSON</label>
-          <button id="toggleResponseJsonBtn" type="button" class="mini-btn">開く</button>
-          <pre id="responseJson" class="hidden"></pre>
+        <section class="card">
+          <h2>データセット出力</h2>
+          <p class="hint">追加されたデータセットエントリーが下に表示されます。全体JSONをコピーして利用できます。</p>
 
-          <div class="feedback-card">
-            <p class="feedback-title">誤り指摘（GCS保存）</p>
-            <p class="hint small">算出結果が誤っている場合、自然言語でコメントを入力して送信してください。</p>
-            <label for="feedbackComment">コメント</label>
-            <textarea id="feedbackComment" placeholder="例: 立直のみで一発は付かないはず"></textarea>
-            <button id="sendFeedbackBtn" type="button">コメントを送信</button>
-            <div id="feedbackStatus" class="feedback-status"></div>
-          </div>
+          <div class="dataset-list" id="datasetList"></div>
+
+          <label>全体JSON</label>
+          <pre class="dataset-json" id="datasetJson">[]</pre>
+          <button id="copyJsonBtn" class="copy-btn" type="button">JSONをコピー</button>
+          <button id="clearAllBtn" class="mini-btn" type="button" style="background:#b91c1c;margin-left:8px;">全てクリア</button>
         </section>
       </div>
     </main>
@@ -572,31 +449,6 @@
           </label>
         </div>
         <div id="tilePickerGrid" class="picker-grid"></div>
-      </div>
-    </div>
-
-    <div id="jsonHelpModal" class="picker-modal">
-      <div class="picker-panel" style="width:min(760px,100%);">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <strong>JSONフォーマットヘルプ</strong>
-          <button id="closeJsonHelpBtn" type="button" style="margin-top:0;background:#64748b;">閉じる</button>
-        </div>
-        <p class="hint">牌の表記は以下を使用します。</p>
-        <ul class="json-help-list">
-          <li>萬子: <code>1m</code>〜<code>9m</code></li>
-          <li>筒子: <code>1p</code>〜<code>9p</code></li>
-          <li>索子: <code>1s</code>〜<code>9s</code></li>
-          <li>赤5: <code>5mr</code> / <code>5pr</code> / <code>5sr</code></li>
-          <li>字牌: 東 <code>E</code> / 南 <code>S</code> / 西 <code>W</code> / 北 <code>N</code> / 白 <code>P</code> / 發 <code>F</code> / 中 <code>C</code></li>
-        </ul>
-        <p class="hint" style="margin-top:10px;">JSON例</p>
-        <pre>{
-  "closed_tiles": ["2p","2p","1m","2m","3m","4p","5p","6p"],
-  "melds": [
-    {"type":"pon","tiles":["E","E","E"],"open":true}
-  ],
-  "win_tile": "E"
-}</pre>
       </div>
     </div>
 
@@ -626,6 +478,7 @@
         return null;
       }
 
+      /* ── Tile Picker Modal ── */
       class TilePickerModalComponent {
         constructor(modalId, gridId, targetId, closeBtnId) {
           this.modal = document.getElementById(modalId);
@@ -647,7 +500,6 @@
             if (this.applyShuntsu.checked) this.applyAllSame.checked = false;
           });
         }
-
         _renderGrid() {
           this.grid.innerHTML = "";
           TILE_LIST.forEach((tile) => {
@@ -676,7 +528,6 @@
             this.grid.appendChild(btn);
           });
         }
-
         open(targetText, onSelect) {
           this.target.textContent = targetText ? `${targetText}を入力` : "";
           this.selectHandler = onSelect;
@@ -684,7 +535,6 @@
           this.applyShuntsu.checked = false;
           this.modal.classList.add("open");
         }
-
         close() {
           this.selectHandler = null;
           this.applyAllSame.checked = false;
@@ -695,9 +545,9 @@
 
       const picker = new TilePickerModalComponent("tilePickerModal", "tilePickerGrid", "tilePickerTarget", "closeTilePickerBtn");
 
+      /* ── UI State ── */
       const uiState = {
         pattern: "standard",
-        inputMode: "manual",
         jsonDirect: false,
         selectedWinTileIndex: null,
         doraMode: "dora",
@@ -719,18 +569,15 @@
         kokushi: { pair: null }
       };
 
+      const datasetEntries = [];
+
+      /* ── Slot/Pair rendering ── */
       function setSlotButtonContent(btn, tile) {
         btn.classList.toggle("empty", !tile);
         btn.innerHTML = "";
-        if (!tile) {
-          btn.textContent = "未選択";
-          return;
-        }
+        if (!tile) { btn.textContent = "未選択"; return; }
         const filename = tileToFilename(tile);
-        if (!filename) {
-          btn.textContent = tile;
-          return;
-        }
+        if (!filename) { btn.textContent = tile; return; }
         const img = document.createElement("img");
         img.src = `/static/tiles/${filename}`;
         img.alt = tile;
@@ -740,18 +587,12 @@
       function setPairButtonContent(btn, tile) {
         btn.classList.toggle("empty", !tile);
         btn.innerHTML = "";
-        if (!tile) {
-          btn.textContent = "未選択";
-          return;
-        }
+        if (!tile) { btn.textContent = "未選択"; return; }
         const filename = tileToFilename(tile);
-        if (!filename) {
-          btn.textContent = `${tile}${tile}`;
-          return;
-        }
+        if (!filename) { btn.textContent = `${tile}${tile}`; return; }
         const wrap = document.createElement("div");
         wrap.className = "pair-tiles";
-        for (let i = 0; i < 2; i += 1) {
+        for (let i = 0; i < 2; i++) {
           const img = document.createElement("img");
           img.src = `/static/tiles/${filename}`;
           img.alt = tile;
@@ -773,13 +614,13 @@
         return [`${start}${suit}`, `${start + 1}${suit}`, `${start + 2}${suit}`];
       }
 
+      /* ── Dora rendering ── */
       function renderDoraList(rootId, list, labelPrefix, fallbackTile, minItems = 1) {
         const root = document.getElementById(rootId);
         root.innerHTML = "";
         list.forEach((tile, idx) => {
           const item = document.createElement("div");
           item.className = "dora-item";
-
           const pickBtn = document.createElement("button");
           pickBtn.type = "button";
           pickBtn.className = "tile-slot-btn";
@@ -791,7 +632,6 @@
             });
           });
           item.appendChild(pickBtn);
-
           const delBtn = document.createElement("button");
           delBtn.type = "button";
           delBtn.className = "mini-btn";
@@ -803,7 +643,6 @@
             renderDoraInputs();
           });
           item.appendChild(delBtn);
-
           root.appendChild(item);
         });
       }
@@ -822,6 +661,7 @@
         syncDoraModeFromUi();
       }
 
+      /* ── Hand tile flattening ── */
       function flattenHandTiles(hand) {
         const out = [];
         (hand.closed_tiles || []).forEach((tile) => out.push(tile));
@@ -829,6 +669,7 @@
         return out;
       }
 
+      /* ── Winning tile selector ── */
       function renderWinningTileSelector() {
         const row = document.getElementById("winningTileRow");
         row.innerHTML = "";
@@ -874,28 +715,23 @@
           uiState.selectedWinTileIndex = null;
           return hand;
         }
-        if (
-          uiState.selectedWinTileIndex === null ||
-          uiState.selectedWinTileIndex < 0 ||
-          uiState.selectedWinTileIndex >= tiles.length
-        ) {
+        if (uiState.selectedWinTileIndex === null || uiState.selectedWinTileIndex < 0 || uiState.selectedWinTileIndex >= tiles.length) {
           uiState.selectedWinTileIndex = tiles.length - 1;
         }
         hand.win_tile = tiles[uiState.selectedWinTileIndex];
         return hand;
       }
 
+      /* ── Pattern inputs ── */
       function buildStandardMeldInputs() {
         const root = document.getElementById("standardMelds");
         root.innerHTML = "";
         uiState.standard.melds.forEach((m, idx) => {
           const block = document.createElement("div");
           block.className = "section-block";
-
           const title = document.createElement("label");
           title.textContent = `面子${idx + 1}`;
           block.appendChild(title);
-
           const sel = document.createElement("select");
           sel.innerHTML = `
             <option value="concealed">副露なし</option>
@@ -911,11 +747,10 @@
             renderAllPatternInputs();
           });
           block.appendChild(sel);
-
           const row = document.createElement("div");
           row.className = "slot-row";
           const needed = requiredMeldLen(m.type);
-          for (let i = 0; i < 4; i += 1) {
+          for (let i = 0; i < 4; i++) {
             const b = document.createElement("button");
             b.type = "button";
             b.className = "tile-slot-btn";
@@ -926,17 +761,11 @@
                 if (options.applyShuntsu && needed === 3) {
                   const shuntsu = buildShuntsuTiles(tile);
                   if (shuntsu) {
-                    m.tiles[0] = shuntsu[0];
-                    m.tiles[1] = shuntsu[1];
-                    m.tiles[2] = shuntsu[2];
-                  } else {
-                    m.tiles[i] = tile;
-                  }
+                    m.tiles[0] = shuntsu[0]; m.tiles[1] = shuntsu[1]; m.tiles[2] = shuntsu[2];
+                  } else { m.tiles[i] = tile; }
                 } else if (options.applyAllSame) {
-                  for (let j = 0; j < needed; j += 1) m.tiles[j] = tile;
-                } else {
-                  m.tiles[i] = tile;
-                }
+                  for (let j = 0; j < needed; j++) m.tiles[j] = tile;
+                } else { m.tiles[i] = tile; }
                 renderAllPatternInputs();
               });
             });
@@ -953,7 +782,7 @@
         pairBlock.appendChild(pairTitle);
         const pairRow = document.createElement("div");
         pairRow.className = "slot-row";
-        for (let i = 0; i < 2; i += 1) {
+        for (let i = 0; i < 2; i++) {
           const pairBtn = document.createElement("button");
           pairBtn.type = "button";
           pairBtn.className = "tile-slot-btn";
@@ -961,11 +790,8 @@
           pairBtn.addEventListener("click", () => {
             picker.open(`4面子1雀頭 雀頭${i + 1}`, (tile, options = {}) => {
               if (options.applyAllSame) {
-                uiState.standard.pair[0] = tile;
-                uiState.standard.pair[1] = tile;
-              } else {
-                uiState.standard.pair[i] = tile;
-              }
+                uiState.standard.pair[0] = tile; uiState.standard.pair[1] = tile;
+              } else { uiState.standard.pair[i] = tile; }
               renderAllPatternInputs();
             });
           });
@@ -1020,25 +846,20 @@
           uiState.kokushi.pair = tile;
         });
         syncHandJsonFromState();
-        refreshSubmitAvailability();
       }
 
       function setTileInputEnabled(enabled) {
         const root = document.getElementById("tileInputArea");
         root.classList.toggle("disabled-block", !enabled);
         const controls = root.querySelectorAll("button, select, input[type='radio']");
-        controls.forEach((el) => {
-          el.disabled = !enabled;
-        });
+        controls.forEach((el) => { el.disabled = !enabled; });
         const winningBlock = document.getElementById("winningTileBlock");
         winningBlock.classList.toggle("disabled-block", !enabled);
-        const winningControls = winningBlock.querySelectorAll("button");
-        winningControls.forEach((el) => {
-          el.disabled = !enabled;
-        });
+        winningBlock.querySelectorAll("button").forEach((el) => { el.disabled = !enabled; });
         if (!enabled) picker.close();
       }
 
+      /* ── Build hand from pattern state ── */
       function buildHandByPatternState() {
         if (uiState.pattern === "standard") {
           const pairA = uiState.standard.pair[0];
@@ -1060,28 +881,21 @@
           const kanCount = melds.filter((m) => ["kan", "ankan", "kakan"].includes(m.type)).length;
           const total = closedTiles.length + melds.reduce((n, m) => n + m.tiles.length, 0);
           const expectedTotal = 14 + kanCount;
-          if (total !== expectedTotal) {
-            throw new Error(`牌数が${expectedTotal}枚になっていません`);
-          }
+          if (total !== expectedTotal) throw new Error(`牌数が${expectedTotal}枚になっていません`);
           return applySelectedWinTile({ closed_tiles: closedTiles, melds, win_tile: "" });
         }
-
         if (uiState.pattern === "chiitoi") {
           if (uiState.chiitoi.pairs.some((p) => !p)) throw new Error("七対子の対子が不足しています");
           const closedTiles = [];
-          uiState.chiitoi.pairs.forEach((p) => {
-            closedTiles.push(p, p);
-          });
+          uiState.chiitoi.pairs.forEach((p) => { closedTiles.push(p, p); });
           return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
         }
-
         if (!uiState.kokushi.pair) throw new Error("国士無双の対子を入力してください");
         if (!KOKUSHI_TILES.includes(uiState.kokushi.pair.replace("r", ""))) {
           throw new Error("国士無双の対子は么九牌/字牌を選んでください");
         }
-        const pairTile = uiState.kokushi.pair;
         const base = [...KOKUSHI_TILES];
-        const closedTiles = [...base, pairTile];
+        const closedTiles = [...base, uiState.kokushi.pair];
         return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
       }
 
@@ -1094,61 +908,33 @@
           for (const meld of uiState.standard.melds) {
             const need = requiredMeldLen(meld.type);
             const tiles = meld.tiles.slice(0, need).filter(Boolean);
-            if (meld.type === "concealed") {
-              closedTiles.push(...tiles);
-            } else {
-              melds.push({ type: meld.type, tiles, open: meld.type !== "ankan" });
-            }
+            if (meld.type === "concealed") { closedTiles.push(...tiles); }
+            else { melds.push({ type: meld.type, tiles, open: meld.type !== "ankan" }); }
           }
-          return applySelectedWinTile({
-            closed_tiles: closedTiles,
-            melds,
-            win_tile: closedTiles[closedTiles.length - 1] || ""
-          });
+          return applySelectedWinTile({ closed_tiles: closedTiles, melds, win_tile: closedTiles[closedTiles.length - 1] || "" });
         }
-
         if (uiState.pattern === "chiitoi") {
           const closedTiles = [];
-          uiState.chiitoi.pairs.forEach((p) => {
-            if (p) closedTiles.push(p, p);
-          });
+          uiState.chiitoi.pairs.forEach((p) => { if (p) closedTiles.push(p, p); });
           return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
         }
-
         const closedTiles = [...KOKUSHI_TILES];
         if (uiState.kokushi.pair) closedTiles.push(uiState.kokushi.pair);
         return applySelectedWinTile({ closed_tiles: closedTiles, melds: [], win_tile: "" });
       }
 
       function syncHandJsonFromState() {
-        try {
-          uiState.handJsonFromTiles = buildHandByPatternState();
-        } catch {
-          uiState.handJsonFromTiles = buildHandDraftByPatternState();
-        }
+        try { uiState.handJsonFromTiles = buildHandByPatternState(); }
+        catch { uiState.handJsonFromTiles = buildHandDraftByPatternState(); }
         renderWinningTileSelector();
-
         if (uiState.jsonDirect) return;
-        const box = document.getElementById("handJsonInput");
-        box.value = JSON.stringify(uiState.handJsonFromTiles, null, 2);
-      }
-
-      function writeHandJsonFromStoredState() {
-        const box = document.getElementById("handJsonInput");
-        try {
-          box.value = JSON.stringify(uiState.handJsonFromTiles, null, 2);
-        } catch {
-          box.value = "";
-        }
+        document.getElementById("handJsonInput").value = JSON.stringify(uiState.handJsonFromTiles, null, 2);
       }
 
       function readHandFromJsonInput() {
         let parsed;
-        try {
-          parsed = JSON.parse(value("handJsonInput"));
-        } catch {
-          throw new Error("手牌JSONの形式が不正です");
-        }
+        try { parsed = JSON.parse(value("handJsonInput")); }
+        catch { throw new Error("手牌JSONの形式が不正です"); }
         if (!parsed || typeof parsed !== "object") throw new Error("手牌JSONはオブジェクトで入力してください");
         if (!Array.isArray(parsed.closed_tiles)) throw new Error("手牌JSON: closed_tiles は配列が必要です");
         if (!Array.isArray(parsed.melds)) throw new Error("手牌JSON: melds は配列が必要です");
@@ -1178,6 +964,7 @@
         return t;
       }
 
+      /* ── Build payload ── */
       function buildPayload() {
         const hand = buildHandByPattern();
         const activeDoraValues = (uiState.doraMode === "indicator" ? uiState.doraIndicators : uiState.doraTiles).filter(Boolean);
@@ -1219,170 +1006,59 @@
         };
       }
 
-      function syncInputModeFromUi() {
-        uiState.inputMode = radioValue("inputMode") || "manual";
-        const imageMode = uiState.inputMode === "image";
-        document.getElementById("imageInputBlock").classList.toggle("hidden", !imageMode);
-        document.getElementById("tileInputArea").classList.toggle("disabled-block", imageMode);
-        document.getElementById("winningTileBlock").classList.toggle("disabled-block", imageMode);
-        document.getElementById("handJsonInput").disabled = imageMode || !uiState.jsonDirect;
+      /* ── Dataset rendering ── */
+      function renderDatasetList() {
+        const listEl = document.getElementById("datasetList");
+        listEl.innerHTML = "";
+        datasetEntries.forEach((entry, idx) => {
+          const div = document.createElement("div");
+          div.className = "dataset-entry";
+          const header = document.createElement("div");
+          header.className = "dataset-entry-header";
+          const label = document.createElement("strong");
+          label.textContent = `#${idx + 1}: ${entry.answer.point_label}`;
+          header.appendChild(label);
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "remove-entry-btn";
+          removeBtn.textContent = "削除";
+          removeBtn.addEventListener("click", () => {
+            datasetEntries.splice(idx, 1);
+            renderDatasetList();
+          });
+          header.appendChild(removeBtn);
+          div.appendChild(header);
+
+          const yakuRow = document.createElement("div");
+          yakuRow.className = "badge-row";
+          (entry.answer.yaku || []).forEach((y) => {
+            const badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = `${y.name} ${y.han}翻`;
+            yakuRow.appendChild(badge);
+          });
+          (entry.answer.yakuman || []).forEach((name) => {
+            const badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = name;
+            yakuRow.appendChild(badge);
+          });
+          div.appendChild(yakuRow);
+
+          const info = document.createElement("div");
+          info.className = "hint";
+          info.textContent = `${entry.answer.han}翻 ${entry.answer.fu}符 / ロン:${entry.answer.points.ron} ツモ親:${entry.answer.points.tsumo_dealer_pay} ツモ子:${entry.answer.points.tsumo_non_dealer_pay}`;
+          div.appendChild(info);
+          listEl.appendChild(div);
+        });
+
+        document.getElementById("datasetJson").textContent = JSON.stringify(datasetEntries, null, 2);
       }
 
-      function refreshSubmitAvailability() {
-        const submitBtn = document.getElementById("submitBtn");
-        const submitBtnTop = document.getElementById("submitBtnTop");
-        const error = document.getElementById("error");
-        try {
-          if (uiState.inputMode === "image") {
-            const imageInput = document.getElementById("handImageFile");
-            if (!imageInput.files || imageInput.files.length === 0) {
-              throw new Error("画像入力モードでは手牌画像が必要です");
-            }
-          } else {
-            buildPayload();
-          }
-          submitBtn.disabled = false;
-          submitBtnTop.disabled = false;
-          setRecognizeOnlyUiState();
-          if (error.dataset.validation === "1") {
-            error.textContent = "";
-            error.dataset.validation = "0";
-          }
-        } catch (e) {
-          submitBtn.disabled = true;
-          submitBtnTop.disabled = true;
-          setRecognizeOnlyUiState();
-          error.textContent = e.message || "入力エラーがあります";
-          error.dataset.validation = "1";
-        }
-      }
-
-      let lastScoreRequest = null;
-      let lastScoreResponse = null;
-      let lastRecognitionResponse = null;
-      let responseJsonExpanded = false;
-      let recognizeOnlyRunning = false;
-      let recognizeOnlyJobId = null;
-
-      function tileHtml(tile) {
-        const filename = tileToFilename(tile);
-        if (!filename) return `<div class="tile-fallback">${tile}</div>`;
-        return `<img src="/static/tiles/${filename}" alt="${tile}" title="${tile}" />`;
-      }
-
-      function renderRecognition(recognitionEnvelope) {
-        const panel = document.getElementById("recognitionPanel");
-        if (!recognitionEnvelope) {
-          panel.classList.add("hidden");
-          document.getElementById("recognitionMeta").textContent = "";
-          document.getElementById("recognitionWarnings").innerHTML = "";
-          document.getElementById("recognitionTiles").innerHTML = "";
-          return;
-        }
-        panel.classList.remove("hidden");
-        const image = recognitionEnvelope.image || {};
-        document.getElementById("recognitionMeta").textContent =
-          `認識ID: ${recognitionEnvelope.recognition_id || "-"} / 画像: ${image.width || "-"}x${image.height || "-"}`;
-        const warnings = (recognitionEnvelope.warnings || []).map((w) => `<span class="badge">${w}</span>`).join("");
-        document.getElementById("recognitionWarnings").innerHTML = warnings;
-        const tiles = (recognitionEnvelope.hand_estimate?.slots || []).map((slot) => slot.top);
-        document.getElementById("recognitionTiles").innerHTML = tiles.map(tileHtml).join("");
-        document.getElementById("recognitionCorrectedTiles").value = tiles.join(",");
-        document.getElementById("recognitionFeedbackStatus").textContent = "";
-      }
-
-      function setRecognizeOnlyUiState() {
-        const btn = document.getElementById("recognizeOnlyBtn");
-        const cancelBtn = document.getElementById("recognizeOnlyCancelBtn");
-        const imageInput = document.getElementById("handImageFile");
-        const hasImage = !!(imageInput.files && imageInput.files.length > 0);
-        btn.disabled = recognizeOnlyRunning || !hasImage;
-        cancelBtn.classList.toggle("hidden", !recognizeOnlyRunning);
-        cancelBtn.disabled = !recognizeOnlyRunning;
-      }
-
-      function renderScoreSummary(scoreEnvelope, recognitionEnvelope = null) {
-        const r = scoreEnvelope.result;
-        const yakuBadges = (r.yaku || []).map((y) => `<span class="badge">${y.name} ${y.han}翻</span>`).join("");
-        const yakumanBadges = (r.yakuman || []).map((name) => `<span class="badge">${name}</span>`).join("");
-        const roleBadgeHtml =
-          yakuBadges || yakumanBadges
-            ? `<div class="badge-row">${yakuBadges}${yakumanBadges}</div>`
-            : `<div class="badge-row"><span class="badge badge-empty">役なし</span></div>`;
-        const fuBreakdownText = (r.fu_breakdown || []).length
-          ? r.fu_breakdown.map((item) => `${item.name} ${item.fu}`).join(" + ")
-          : "-";
-        const warnings = (scoreEnvelope.warnings || []).map((w) => `<span class="badge">${w}</span>`).join("");
-        const warningHtml = warnings ? `<div class="result-line">警告</div><div class="badge-row">${warnings}</div>` : "";
-        const recognitionHtml = recognitionEnvelope
-          ? `<div class="result-line">認識ID: ${recognitionEnvelope.recognition_id}</div>`
-          : "";
-        document.getElementById("summary").innerHTML = `
-          <div class="result-line"><strong>${r.point_label}</strong></div>
-          ${recognitionHtml}
-          ${roleBadgeHtml}
-          ${warningHtml}
-          <div class="result-line">翻: ${r.han} / 符: ${r.fu}</div>
-          <div class="result-line">符内訳: ${fuBreakdownText}</div>
-          <div class="result-line">ロン: ${r.points.ron}</div>
-          <div class="result-line">ツモ(親支払): ${r.points.tsumo_dealer_pay}</div>
-          <div class="result-line">ツモ(子支払): ${r.points.tsumo_non_dealer_pay}</div>
-          <div class="result-line">受取(本場抜き): ${r.payments.hand_points_received}</div>
-          <div class="result-line">受取(本場込み): ${r.payments.hand_points_with_honba}</div>
-          <div class="result-line">内訳: 本場 ${r.payments.honba_bonus} / 供託 ${r.payments.kyotaku_bonus}</div>
-          <div class="result-line">受取合計: ${r.payments.total_received}</div>
-        `;
-      }
-
-      async function submitScore() {
+      /* ── Generate dataset entry ── */
+      async function generateEntry() {
         const error = document.getElementById("error");
         error.textContent = "";
-        document.getElementById("summary").innerHTML = "";
-        renderRecognition(null);
-
-        if (uiState.inputMode === "image") {
-          let payload;
-          try {
-            payload = buildPayload();
-          } catch (e) {
-            error.textContent = e.message;
-            return;
-          }
-          const imageInput = document.getElementById("handImageFile");
-          const file = imageInput.files && imageInput.files[0];
-          if (!file) {
-            error.textContent = "手牌画像を選択してください";
-            return;
-          }
-
-          const formData = new FormData();
-          formData.append("image", file);
-          formData.append("context_json", JSON.stringify(payload.context));
-          formData.append("rules_json", JSON.stringify(payload.rules));
-
-          const res = await fetch("/api/v1/recognize-and-score", {
-            method: "POST",
-            body: formData
-          });
-          const data = await res.json();
-          document.getElementById("responseJson").textContent = JSON.stringify(data, null, 2);
-
-          if (!res.ok) {
-            error.textContent = data.detail || "画像認識+点数算出に失敗しました";
-            return;
-          }
-          lastScoreRequest = {
-            source: "recognize-and-score",
-            recognition: data.recognition,
-            context: payload.context,
-            rules: payload.rules
-          };
-          lastScoreResponse = data.score;
-          lastRecognitionResponse = data.recognition;
-          renderRecognition(data.recognition);
-          renderScoreSummary(data.score, data.recognition);
-          return;
-        }
 
         let payload;
         try {
@@ -1392,196 +1068,54 @@
           return;
         }
 
-        lastScoreRequest = payload;
-
         const res = await fetch("/api/v1/score", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-        document.getElementById("responseJson").textContent = JSON.stringify(data, null, 2);
-        lastScoreResponse = data;
-        lastRecognitionResponse = null;
-
         if (!res.ok) {
           error.textContent = data.detail || "API呼び出しに失敗しました";
           return;
         }
 
-        renderScoreSummary(data);
-      }
-
-      async function submitRecognizeOnly() {
-        const error = document.getElementById("error");
-        const status = document.getElementById("recognizeOnlyStatus");
-        if (recognizeOnlyRunning) return;
-        error.textContent = "";
-        status.textContent = "";
-        document.getElementById("summary").innerHTML = "";
-
-        const imageInput = document.getElementById("handImageFile");
-        const file = imageInput.files && imageInput.files[0];
-        if (!file) {
-          error.textContent = "手牌画像を選択してください";
-          return;
-        }
-
-        recognizeOnlyRunning = true;
-        recognizeOnlyJobId = null;
-        status.innerHTML = '<span class="loading-inline"><span class="loading-dot"></span>識別中...</span>';
-        setRecognizeOnlyUiState();
-
-        const formData = new FormData();
-        formData.append("image", file);
-        const gameId = value("imageGameId").trim();
-        if (gameId) formData.append("game_id", gameId);
-
-        try {
-          const createRes = await fetch("/api/v1/recognize-only/jobs", {
-            method: "POST",
-            body: formData
-          });
-          const createData = await createRes.json();
-          if (!createRes.ok) {
-            error.textContent = createData.detail || "識別ジョブの作成に失敗しました";
-            renderRecognition(null);
-            return;
+        const r = data.result;
+        const entry = {
+          hand: payload.hand,
+          context: payload.context,
+          rules: payload.rules,
+          answer: {
+            han: r.han,
+            fu: r.fu,
+            fu_breakdown: r.fu_breakdown,
+            yaku: r.yaku,
+            yakuman: r.yakuman,
+            dora: r.dora,
+            point_label: r.point_label,
+            points: r.points,
+            payments: r.payments
           }
-
-          recognizeOnlyJobId = createData.job_id;
-
-          while (recognizeOnlyRunning && recognizeOnlyJobId) {
-            const pollRes = await fetch(`/api/v1/recognize-only/jobs/${recognizeOnlyJobId}`);
-            const pollData = await pollRes.json();
-            document.getElementById("responseJson").textContent = JSON.stringify(pollData, null, 2);
-            if (!pollRes.ok) {
-              error.textContent = pollData.detail || "識別ジョブ取得に失敗しました";
-              renderRecognition(null);
-              break;
-            }
-
-            if (pollData.status === "completed") {
-              const data = pollData.result;
-              lastRecognitionResponse = data;
-              lastScoreRequest = { source: "recognize-only", recognition: data };
-              lastScoreResponse = data;
-              renderRecognition(data);
-              const count = data?.hand_estimate?.slots?.length || 0;
-              status.textContent = `識別完了: ${count}牌`;
-              scrollToResultCard();
-              break;
-            }
-            if (pollData.status === "canceled") {
-              status.textContent = "識別をキャンセルしました。";
-              renderRecognition(null);
-              break;
-            }
-            if (pollData.status === "failed") {
-              error.textContent = pollData.error || "画像識別に失敗しました";
-              renderRecognition(null);
-              break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-        } catch (_e) {
-          error.textContent = "識別通信に失敗しました";
-        } finally {
-          recognizeOnlyRunning = false;
-          recognizeOnlyJobId = null;
-          setRecognizeOnlyUiState();
-        }
-      }
-
-      async function sendFeedback() {
-        const status = document.getElementById("feedbackStatus");
-        status.textContent = "";
-        const comment = value("feedbackComment").trim();
-        if (!comment) {
-          status.textContent = "コメントを入力してください。";
-          return;
-        }
-        if (!lastScoreRequest) {
-          try {
-            lastScoreRequest = buildPayload();
-          } catch (_e) {
-            lastScoreRequest = null;
-          }
-        }
-        const payload = {
-          score_request: lastScoreRequest,
-          score_response: lastScoreResponse,
-          comment
         };
-        const res = await fetch("/api/v1/score/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          status.textContent = `送信失敗: ${data.detail || "unknown error"}`;
-          return;
-        }
-        status.textContent = `送信完了: gs://${data.storage.bucket}/${data.storage.object_name}`;
+
+        datasetEntries.push(entry);
+        renderDatasetList();
       }
 
-      async function sendRecognitionFeedback() {
-        const status = document.getElementById("recognitionFeedbackStatus");
-        status.textContent = "";
-        if (!lastRecognitionResponse) {
-          status.textContent = "先に識別結果を表示してください。";
-          return;
-        }
-        const corrected = value("recognitionCorrectedTiles")
-          .split(",")
-          .map((x) => x.trim())
-          .filter(Boolean);
-        if (corrected.length !== 14) {
-          status.textContent = "正解14牌を入力してください。";
-          return;
-        }
-        const payload = {
-          recognition_response: lastRecognitionResponse,
-          corrected_tiles: corrected,
-          comment: value("recognitionFeedbackComment").trim(),
-        };
-        const res = await fetch("/api/v1/recognition/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          status.textContent = `送信失敗: ${data.detail || "unknown error"}`;
-          return;
-        }
-        status.textContent = `送信完了: ${data.storage.path} (${data.storage.feedback_id})`;
-      }
-
-      function scrollToResultCard() {
-        const resultCard = document.getElementById("resultCard");
-        if (!resultCard) return;
-        resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-
-      function setupJsonHelpModal() {
-        const modal = document.getElementById("jsonHelpModal");
-        const openBtn = document.getElementById("openJsonHelpBtn");
-        const closeBtn = document.getElementById("closeJsonHelpBtn");
-        if (!modal || !openBtn || !closeBtn) return;
-        openBtn.addEventListener("click", () => modal.classList.add("open"));
-        closeBtn.addEventListener("click", () => modal.classList.remove("open"));
-        modal.addEventListener("click", (e) => {
-          if (e.target === modal) modal.classList.remove("open");
+      /* ── Copy JSON ── */
+      function copyJson() {
+        const text = document.getElementById("datasetJson").textContent;
+        navigator.clipboard.writeText(text).then(() => {
+          const btn = document.getElementById("copyJsonBtn");
+          btn.textContent = "コピーしました";
+          btn.classList.add("copied");
+          setTimeout(() => {
+            btn.textContent = "JSONをコピー";
+            btn.classList.remove("copied");
+          }, 2000);
         });
       }
 
-      async function submitScoreAndScroll() {
-        await submitScore();
-        scrollToResultCard();
-      }
-
+      /* ── Event listeners ── */
       document.querySelectorAll('input[name="handPattern"]').forEach((el) => {
         el.addEventListener("change", () => switchPattern(el.value));
       });
@@ -1590,76 +1124,40 @@
         uiState.jsonDirect = on;
         document.getElementById("handJsonInput").disabled = !on;
         setTileInputEnabled(!on);
-        if (!on) writeHandJsonFromStoredState();
-        refreshSubmitAvailability();
+        if (!on) {
+          try { document.getElementById("handJsonInput").value = JSON.stringify(uiState.handJsonFromTiles, null, 2); } catch {}
+        }
       });
-      document.getElementById("handJsonInput").addEventListener("input", refreshSubmitAvailability);
       document.querySelectorAll('input[name="doraMode"]').forEach((el) => {
-        el.addEventListener("change", () => {
-          syncDoraModeFromUi();
-          refreshSubmitAvailability();
-        });
-      });
-      document.querySelectorAll('input[name="riichiState"]').forEach((el) => {
-        el.addEventListener("change", refreshSubmitAvailability);
-      });
-      document.querySelectorAll('input[name="inputMode"]').forEach((el) => {
-        el.addEventListener("change", () => {
-          syncInputModeFromUi();
-          refreshSubmitAvailability();
-        });
-      });
-      document.getElementById("handImageFile").addEventListener("change", refreshSubmitAvailability);
-      document.getElementById("recognizeOnlyCancelBtn").addEventListener("click", () => {
-        const status = document.getElementById("recognizeOnlyStatus");
-        if (!recognizeOnlyJobId) return;
-        fetch(`/api/v1/recognize-only/jobs/${recognizeOnlyJobId}/cancel`, { method: "POST" })
-          .then(() => {
-            status.textContent = "キャンセル要求を送信しました...";
-          })
-          .catch(() => {
-            status.textContent = "キャンセル要求の送信に失敗しました。";
-          });
+        el.addEventListener("change", () => syncDoraModeFromUi());
       });
       document.getElementById("addDoraTileBtn").addEventListener("click", () => {
         uiState.doraTiles.push(null);
         renderDoraInputs();
-        refreshSubmitAvailability();
       });
       document.getElementById("addUraDoraTileBtn").addEventListener("click", () => {
         uiState.uraDoraTiles.push(null);
         renderDoraInputs();
-        refreshSubmitAvailability();
       });
       document.getElementById("addDoraIndicatorBtn").addEventListener("click", () => {
         uiState.doraIndicators.push(null);
         renderDoraInputs();
-        refreshSubmitAvailability();
       });
       document.getElementById("addUraDoraIndicatorBtn").addEventListener("click", () => {
         uiState.uraDoraIndicators.push(null);
         renderDoraInputs();
-        refreshSubmitAvailability();
       });
-      document.getElementById("submitBtn").addEventListener("click", submitScoreAndScroll);
-      document.getElementById("submitBtnTop").addEventListener("click", submitScoreAndScroll);
-      document.getElementById("recognizeOnlyBtn").addEventListener("click", submitRecognizeOnly);
-      document.getElementById("sendFeedbackBtn").addEventListener("click", sendFeedback);
-      document.getElementById("sendRecognitionFeedbackBtn").addEventListener("click", sendRecognitionFeedback);
-      document.getElementById("toggleResponseJsonBtn").addEventListener("click", () => {
-        responseJsonExpanded = !responseJsonExpanded;
-        document.getElementById("responseJson").classList.toggle("hidden", !responseJsonExpanded);
-        document.getElementById("toggleResponseJsonBtn").textContent = responseJsonExpanded ? "閉じる" : "開く";
+      document.getElementById("generateBtn").addEventListener("click", generateEntry);
+      document.getElementById("copyJsonBtn").addEventListener("click", copyJson);
+      document.getElementById("clearAllBtn").addEventListener("click", () => {
+        datasetEntries.length = 0;
+        renderDatasetList();
       });
 
-      setupJsonHelpModal();
+      /* ── Init ── */
       switchPattern("standard");
       renderDoraInputs();
-      syncInputModeFromUi();
       syncHandJsonFromState();
-      refreshSubmitAvailability();
-      setRecognizeOnlyUiState();
-      submitScore();
     </script>
   </body>
 </html>

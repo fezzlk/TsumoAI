@@ -78,6 +78,22 @@ class RecognizeResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class RecognizeJobCreateResponse(BaseModel):
+    job_id: UUID
+    status: Literal["pending", "running", "completed", "failed", "canceled"]
+    cancel_requested: bool = False
+
+
+class RecognizeJobStatusResponse(BaseModel):
+    job_id: UUID
+    status: Literal["pending", "running", "completed", "failed", "canceled"]
+    cancel_requested: bool = False
+    created_at: datetime
+    updated_at: datetime
+    result: RecognizeResponse | None = None
+    error: str | None = None
+
+
 class Meld(BaseModel):
     type: MeldType
     tiles: list[TileCode]
@@ -203,5 +219,16 @@ class ScoreFeedbackRequest(BaseModel):
 
 
 class ScoreFeedbackResponse(BaseModel):
+    status: Literal["ok"]
+    storage: dict
+
+
+class RecognitionFeedbackRequest(BaseModel):
+    recognition_response: dict[str, Any]
+    corrected_tiles: list[TileCode]
+    comment: str = ""
+
+
+class RecognitionFeedbackResponse(BaseModel):
     status: Literal["ok"]
     storage: dict

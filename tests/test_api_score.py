@@ -1,9 +1,11 @@
 import json
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app import main as main_module
+from app.hand_extraction import RecognitionCancelledError
 from app.main import app, gcs_feedback_store
 
 
@@ -70,6 +72,144 @@ def test_score_ui_has_feedback_controls():
     assert "和了形" in response.text
     assert "4面子1雀頭" in response.text
     assert "符内訳" in response.text
+
+
+def test_recognize_only_endpoint_success(monkeypatch):
+    slots = [
+        {"index": idx, "top": tile, "candidates": [{"tile": tile, "confidence": 0.9}], "ambiguous": False}
+        for idx, tile in enumerate(["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "E", "2p", "2p"])
+    ]
+
+    def fake_extract(_image_bytes):
+        return {"tiles_count": 14, "slots": slots, "warnings": ["recognizer warning"]}
+
+    monkeypatch.setattr(main_module, "extract_hand_from_image", fake_extract)
+
+    response = client.post(
+        "/api/v1/recognize-only",
+        files={"image": ("hand.png", sample_image_bytes(), "image/png")},
+        data={"game_id": "game-1"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["hand_estimate"]["tiles_count"] == 14
+    assert body["hand_estimate"]["slots"][0]["top"] == "1m"
+    assert "recognizer warning" in body["warnings"]
+
+
+def test_recognize_only_heic_returns_guidance_when_heif_not_enabled(monkeypatch):
+    monkeypatch.setattr(main_module, "HEIC_ENABLED", False)
+    response = client.post(
+        "/api/v1/recognize-only",
+        files={"image": ("hand.heic", b"not-a-real-heic", "image/heic")},
+    )
+    assert response.status_code == 400
+    assert "HEIC/HEIF is not enabled" in response.text
+
+
+def test_recognize_job_lifecycle_completed(monkeypatch):
+    slots = [
+        {"index": idx, "top": tile, "candidates": [{"tile": tile, "confidence": 0.9}], "ambiguous": False}
+        for idx, tile in enumerate(["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "E", "2p", "2p"])
+    ]
+
+    def fake_extract(_image_bytes, should_cancel=None):
+        if should_cancel and should_cancel():
+            raise RuntimeError("canceled")
+        return {"tiles_count": 14, "slots": slots, "warnings": []}
+
+    monkeypatch.setattr("app.recognition_job_manager.extract_hand_from_image", fake_extract)
+
+    create_res = client.post(
+        "/api/v1/recognize-only/jobs",
+        files={"image": ("hand.png", sample_image_bytes(), "image/png")},
+        data={"game_id": "job-game"},
+    )
+    assert create_res.status_code == 200
+    job_id = create_res.json()["job_id"]
+
+    final = None
+    for _ in range(20):
+        poll = client.get(f"/api/v1/recognize-only/jobs/{job_id}")
+        assert poll.status_code == 200
+        body = poll.json()
+        if body["status"] == "completed":
+            final = body
+            break
+        time.sleep(0.05)
+    assert final is not None
+    assert final["result"]["status"] == "ok"
+    assert final["result"]["hand_estimate"]["tiles_count"] == 14
+
+
+def test_recognize_job_can_be_canceled(monkeypatch):
+    slots = [
+        {"index": idx, "top": tile, "candidates": [{"tile": tile, "confidence": 0.9}], "ambiguous": False}
+        for idx, tile in enumerate(["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "E", "2p", "2p"])
+    ]
+
+    def fake_extract(_image_bytes, should_cancel=None):
+        for _ in range(30):
+            if should_cancel and should_cancel():
+                raise RecognitionCancelledError("canceled")
+            time.sleep(0.01)
+        return {"tiles_count": 14, "slots": slots, "warnings": []}
+
+    monkeypatch.setattr("app.recognition_job_manager.extract_hand_from_image", fake_extract)
+
+    create_res = client.post(
+        "/api/v1/recognize-only/jobs",
+        files={"image": ("hand.png", sample_image_bytes(), "image/png")},
+    )
+    assert create_res.status_code == 200
+    job_id = create_res.json()["job_id"]
+
+    cancel_res = client.post(f"/api/v1/recognize-only/jobs/{job_id}/cancel")
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["cancel_requested"] is True
+
+    final_status = None
+    for _ in range(30):
+        poll = client.get(f"/api/v1/recognize-only/jobs/{job_id}")
+        assert poll.status_code == 200
+        body = poll.json()
+        if body["status"] == "canceled":
+            final_status = body["status"]
+            break
+        time.sleep(0.05)
+    assert final_status == "canceled"
+
+
+def test_recognition_feedback_saved_locally(tmp_path, monkeypatch):
+    feedback_path = tmp_path / "recognition_feedback.jsonl"
+    monkeypatch.setattr(main_module.recognition_feedback_store, "path", feedback_path)
+
+    recognition_response = {
+        "recognition_id": "00000000-0000-0000-0000-000000000001",
+        "status": "ok",
+        "image": {"width": 800, "height": 600, "expires_at": "2099-01-01T00:00:00+00:00"},
+        "hand_estimate": {
+            "tiles_count": 14,
+            "slots": [
+                {"index": idx, "top": tile, "candidates": [{"tile": tile, "confidence": 0.9}], "ambiguous": False}
+                for idx, tile in enumerate(["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "E", "2p", "2p"])
+            ],
+        },
+        "model": {"name": "gpt-4o-mini", "version": "api-current"},
+        "warnings": [],
+    }
+
+    res = client.post(
+        "/api/v1/recognition/feedback",
+        json={
+            "recognition_response": recognition_response,
+            "corrected_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "E", "2p", "2p"],
+            "comment": "test",
+        },
+    )
+    assert res.status_code == 200
+    assert feedback_path.exists()
 
 
 def test_score_endpoint_success():

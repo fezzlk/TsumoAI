@@ -102,6 +102,11 @@ curl "${SERVICE_URL}/health"
 - `POST /api/v1/recognize`
   - `multipart/form-data`
   - fields: `image` (file), `game_id` (optional)
+- `POST /api/v1/recognize-only/jobs`
+  - `multipart/form-data`
+  - fields: `image` (file), `game_id` (optional)
+- `GET /api/v1/recognize-only/jobs/{job_id}`
+- `POST /api/v1/recognize-only/jobs/{job_id}/cancel`
 - `POST /api/v1/score`
   - `application/json`
 - `POST /api/v1/recognize-and-score`
@@ -111,15 +116,22 @@ curl "${SERVICE_URL}/health"
 - `POST /api/v1/score/feedback`
   - `application/json`
   - score-ui の誤り指摘フォームから送信される訂正内容を GCS に保存
+- `POST /api/v1/recognition/feedback`
+  - `application/json`
+  - 識別結果と正解14牌をローカルJSONLに保存（`RECOGNITION_FEEDBACK_PATH`）
 
 ## Notes
 
 - `OPENAI_API_KEY` 未設定時は、`/recognize` はフォールバックのダミー結果を返します。
+- `RECOGNIZE_ENSEMBLE_PASSES` で画像認識の多重推論回数（最大3）を調整できます（既定: `3`）。
 - 保存はメモリ実装（TTL 24時間）。再起動で消えます。
 - スコア計算はPoC簡易版です（現在は補完情報フラグ中心）。フル役判定は次フェーズで実装します。
 - モジュール責務は分離済みです。
   - `app/hand_extraction.py`: 画像を読み取り、牌姿候補を抽出
+  - `app/recognition_postprocess.py`: 識別後処理ポリシー（重み・ルール）を一元管理
+  - `app/tile_weighting.py`: 34牌テンプレ画像（上部オレンジ枠を除去）から重み・類似度を算出
   - `app/hand_scoring.py`: 牌姿（和了形）と補完情報から点数算出
+- 今後のカメラリアルタイム認識導入メモ: `docs/recognition_roadmap.md`
 - 牌画像は `scripts/download_tiles.sh` でネット上（Wikimedia Commons）から取得し、`app/static/tiles` に保存します。
 - 点数訂正フィードバックは GCS に保存されます。
   - `.env` に `GCS_BUCKET_NAME` を設定してください
@@ -140,3 +152,17 @@ pytest -q
 
 - `tests/test_hand_scoring.py`: 点数算出モジュール単体テスト
 - `tests/test_api_score.py`: `/score-ui` と `/api/v1/score` のAPIテスト
+
+## Recognition Analysis Scripts
+
+```bash
+python scripts/init_recognition_eval_set.py --images-dir data/eval_images --limit 20
+python scripts/recognition_confusion_matrix.py --input data/recognition_feedback.jsonl
+python scripts/tune_recognition_policy.py --input data/recognition_feedback.jsonl
+python scripts/evaluate_recognition_set.py --input data/recognition_eval_set.jsonl
+```
+
+- `init_recognition_eval_set.py`: 評価セットJSONLの初期化（先頭20件など）
+- `evaluate_recognition_set.py`: ラベル済み評価セットで tile精度/完全一致率を算出
+- `recognition_confusion_matrix.py`: 正解牌→誤認識牌の頻度を集計
+- `tune_recognition_policy.py`: `RecognitionPolicy` のグリッドサーチ土台（tile精度/完全一致率）
