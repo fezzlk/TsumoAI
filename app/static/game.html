@@ -102,6 +102,19 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 @keyframes dice-roll { 0% { transform: rotate(0deg) scale(1); } 25% { transform: rotate(90deg) scale(0.8); } 50% { transform: rotate(180deg) scale(1.1); } 75% { transform: rotate(270deg) scale(0.9); } 100% { transform: rotate(360deg) scale(1); } }
 .dice.rolling { animation: dice-roll 0.4s ease-in-out; }
 
+/* Tobi (bust) explosion effect */
+.tobi-explosion { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 10; border-radius: 12px; overflow: hidden; }
+.tobi-flash { position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 12px; animation: tobi-flash-anim 1.8s ease-out forwards; }
+@keyframes tobi-flash-anim { 0% { background: rgba(255,60,60,0.9); } 15% { background: rgba(255,120,0,0.7); } 40% { background: rgba(255,60,60,0.3); } 100% { background: transparent; } }
+.tobi-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 2.5em; font-weight: 900; color: #fff; text-shadow: 0 0 20px #ff0000, 0 0 40px #ff4500, 0 0 60px #ff0000; animation: tobi-text-anim 1.8s ease-out forwards; z-index: 2; }
+@keyframes tobi-text-anim { 0% { transform: translate(-50%,-50%) scale(0); opacity: 0; } 10% { transform: translate(-50%,-50%) scale(1.6); opacity: 1; } 25% { transform: translate(-50%,-50%) scale(1); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(1.3); } }
+.tobi-ring { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 3px solid rgba(255,100,0,0.9); border-radius: 50%; transform: translate(-50%,-50%); animation: tobi-ring-anim 1s ease-out forwards; }
+@keyframes tobi-ring-anim { 0% { width: 10px; height: 10px; opacity: 1; border-width: 3px; } 100% { width: 200px; height: 200px; opacity: 0; border-width: 1px; } }
+.tobi-particle { position: absolute; border-radius: 50%; animation: tobi-particle-anim 1.2s ease-out forwards; }
+@keyframes tobi-particle-anim { 0% { opacity: 1; transform: translate(0,0) scale(1); } 100% { opacity: 0; transform: translate(var(--tx), var(--ty)) scale(0); } }
+.tobi-shake { animation: tobi-shake-anim 0.5s ease-out; }
+@keyframes tobi-shake-anim { 0%,100% { transform: translateX(0); } 10% { transform: translateX(-6px); } 20% { transform: translateX(6px); } 30% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 50% { transform: translateX(-3px); } 60% { transform: translateX(3px); } 70% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
+
 /* Riichi flash overlay */
 .riichi-flash { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 900; pointer-events: none; display: flex; justify-content: center; align-items: center; animation: riichi-flash-anim 1s ease-out forwards; }
 @keyframes riichi-flash-anim { 0% { background: rgba(243,156,18,0.5); } 100% { background: transparent; } }
@@ -679,6 +692,12 @@ function renderGame() {
       banner.id = 'finishedBanner';
       banner.style.cssText = 'text-align:center;padding:16px;background:linear-gradient(135deg,#e94560,#0f3460);border-radius:12px;margin:12px 0;font-size:1.2em;font-weight:bold';
       const hasBust = gs.players.some(p => p.points < 0);
+      // Trigger tobi explosion on busted players
+      if (hasBust) {
+        gs.players.forEach((p, i) => {
+          if (p.points < 0) setTimeout(() => showTobiEffect(p.seat), 200);
+        });
+      }
       banner.innerHTML = `${hasBust ? '箱割れ — 対局終了' : '対局終了'}<br><button class="btn btn-small" style="background:#d35400;margin-top:8px" onclick="showChart()">点数推移グラフ</button>
         <button class="btn btn-small" style="background:#555;margin-top:8px;margin-left:4px" onclick="showHistory()">履歴</button>`;
       document.getElementById('scoreboard').after(banner);
@@ -973,6 +992,49 @@ function showAgariEffect(type) {
   }
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 1800);
+}
+
+// --- Tobi (bust) explosion effect ---
+function showTobiEffect(seat) {
+  const cards = document.querySelectorAll('.player-card');
+  const card = cards[seat];
+  if (!card) return;
+
+  // Shake the card
+  card.classList.add('tobi-shake');
+  setTimeout(() => card.classList.remove('tobi-shake'), 500);
+
+  // Create explosion overlay inside the card
+  const explosion = document.createElement('div');
+  explosion.className = 'tobi-explosion';
+
+  // Flash
+  explosion.innerHTML = '<div class="tobi-flash"></div><div class="tobi-text">飛</div>';
+
+  // Expanding ring
+  const ring = document.createElement('div');
+  ring.className = 'tobi-ring';
+  explosion.appendChild(ring);
+
+  // Particles
+  const colors = ['#ff0000', '#ff4500', '#ff6600', '#ffaa00', '#ffcc00', '#fff'];
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('div');
+    p.className = 'tobi-particle';
+    p.style.background = colors[Math.floor(Math.random() * colors.length)];
+    p.style.left = '50%';
+    p.style.top = '50%';
+    p.style.setProperty('--tx', (Math.random() - 0.5) * 160 + 'px');
+    p.style.setProperty('--ty', (Math.random() - 0.5) * 120 + 'px');
+    p.style.animationDelay = Math.random() * 0.2 + 's';
+    const size = (3 + Math.random() * 6) + 'px';
+    p.style.width = size;
+    p.style.height = size;
+    explosion.appendChild(p);
+  }
+
+  card.appendChild(explosion);
+  setTimeout(() => explosion.remove(), 2000);
 }
 
 // --- Diff mode (点差表示) ---
