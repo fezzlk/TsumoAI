@@ -77,8 +77,8 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 .riichi-btn:active, .tenpai-btn:active { transform: scale(0.93); }
 .riichi-btn.disabled, .tenpai-btn.disabled { opacity: 0.3; cursor: default; }
 .toggle-row { margin-top: 6px; display: flex; gap: 6px; justify-content: center; }
-@keyframes riichi-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-.points.riichi-active { color: #f39c12; animation: riichi-blink 1.2s ease-in-out infinite; }
+@keyframes riichi-blink { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 12px 4px #f39c12; } }
+.player-card.riichi-active { animation: riichi-blink 1.2s ease-in-out infinite; border-color: #f39c12; }
 
 /* Riichi flash overlay */
 .riichi-flash { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 900; pointer-events: none; display: flex; justify-content: center; align-items: center; animation: riichi-flash-anim 1s ease-out forwards; }
@@ -582,7 +582,6 @@ function renderGame() {
   const seatWinds = computeSeatWinds(gs);
   for (const p of gs.players) {
     const card = document.createElement('div');
-    card.className = 'player-card' + (p.seat === gs.current_dealer ? ' dealer' : '');
     const delta = lastDeltas[p.seat];
     let deltaHtml = '';
     if (delta && delta !== 0) {
@@ -590,6 +589,7 @@ function renderGame() {
       deltaHtml = `<div class="delta ${cls}">${delta > 0 ? '+' : ''}${delta.toLocaleString()}</div>`;
     }
     const isRiichi = riichiSeats.has(p.seat);
+    card.className = 'player-card' + (p.seat === gs.current_dealer ? ' dealer' : '') + (isRiichi ? ' riichi-active' : '');
     const isTenpai = tenpaiSeats.has(p.seat);
     const canControl = mySeat === null || mySeat === p.seat;
     const disabledCls = canControl ? '' : ' disabled';
@@ -602,9 +602,9 @@ function renderGame() {
       const refPlayer = gs.players.find(pl => pl.seat === diffRefSeat);
       const diff = p.points - refPlayer.points;
       const diffSign = diff > 0 ? '+' : '';
-      pointsDisplay = `<div class="points${diff < 0 ? ' negative' : ''}${isRiichi ? ' riichi-active' : ''}" style="font-size:0.95em">${diffSign}${diff.toLocaleString()}</div>`;
+      pointsDisplay = `<div class="points${diff < 0 ? ' negative' : ''}" style="font-size:0.95em">${diffSign}${diff.toLocaleString()}</div>`;
     } else {
-      pointsDisplay = `<div class="points${p.points < 0 ? ' negative' : ''}${isRiichi ? ' riichi-active' : ''}">${p.points.toLocaleString()}</div>`;
+      pointsDisplay = `<div class="points${p.points < 0 ? ' negative' : ''}">${p.points.toLocaleString()}</div>`;
     }
     if (isRef) {
       card.style.outline = '2px solid #e94560';
