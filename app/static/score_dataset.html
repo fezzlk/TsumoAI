@@ -1554,11 +1554,12 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ entries: datasetEntries })
           });
-          const data = await res.json();
           if (!res.ok) {
-            status.textContent = `失敗: ${data.detail || "unknown error"}`;
+            const text = await res.text();
+            try { status.textContent = `失敗: ${JSON.parse(text).detail}`; } catch { status.textContent = `失敗 (${res.status}): ${text}`; }
             return;
           }
+          const data = await res.json();
           status.textContent = `アップロード完了: gs://${data.storage.bucket}/${data.storage.object_name} (${data.count}件)`;
           refreshGcsList();
         } catch (e) {
@@ -1573,11 +1574,12 @@
         listEl.innerHTML = "";
         try {
           const res = await fetch("/api/v1/dataset/list");
-          const data = await res.json();
           if (!res.ok) {
-            status.textContent = `取得失敗: ${data.detail || "unknown error"}`;
+            const text = await res.text();
+            try { status.textContent = `取得失敗: ${JSON.parse(text).detail}`; } catch { status.textContent = `取得失敗 (${res.status}): ${text}`; }
             return;
           }
+          const data = await res.json();
           const files = data.files || [];
           if (!files.length) {
             status.textContent = "保存済みデータセットはありません。";
@@ -1650,11 +1652,12 @@
         const status = document.getElementById("gcsListStatus");
         try {
           const res = await fetch(`/api/v1/dataset/download?name=${encodeURIComponent(name)}`);
-          const data = await res.json();
           if (!res.ok) {
-            status.textContent = `読込失敗: ${data.detail || "unknown"}`;
+            const text = await res.text();
+            try { status.textContent = `読込失敗: ${JSON.parse(text).detail}`; } catch { status.textContent = `読込失敗 (${res.status}): ${text}`; }
             return;
           }
+          const data = await res.json();
           const entries = data.payload?.entries || data.entries || [];
           if (!entries.length) {
             status.textContent = "データセットが空です。";
