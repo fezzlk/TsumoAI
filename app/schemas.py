@@ -243,3 +243,71 @@ class DatasetUploadResponse(BaseModel):
     status: Literal["ok"]
     count: int
     storage: dict
+
+
+# --- Game session schemas ---
+
+
+class CreateGameRequest(BaseModel):
+    player_names: list[str] = Field(..., min_length=4, max_length=4)
+    starting_points: int = 25000
+    game_type: Literal["east_only", "east_south"] = "east_only"
+
+
+class PlayerStateResponse(BaseModel):
+    seat: int
+    name: str
+    points: int
+
+
+class GameStateResponse(BaseModel):
+    game_id: UUID
+    status: Literal["active", "finished"]
+    players: list[PlayerStateResponse]
+    current_round: int
+    current_dealer: int
+    current_round_wind: str
+    current_honba: int
+    current_kyotaku: int
+    rounds_played: int
+    created_at: datetime
+
+
+class RonRequest(BaseModel):
+    winner_seat: conint(ge=0, le=3)
+    loser_seat: conint(ge=0, le=3)
+    han: conint(ge=1)
+    fu: conint(ge=20) = 30
+    yakuman_multiplier: int = 0
+    riichi_seats: list[conint(ge=0, le=3)] = Field(default_factory=list)
+
+
+class TsumoRequest(BaseModel):
+    winner_seat: conint(ge=0, le=3)
+    han: conint(ge=1)
+    fu: conint(ge=20) = 30
+    yakuman_multiplier: int = 0
+    riichi_seats: list[conint(ge=0, le=3)] = Field(default_factory=list)
+
+
+class DrawRequest(BaseModel):
+    tenpai_seats: list[conint(ge=0, le=3)] = Field(default_factory=list)
+    riichi_seats: list[conint(ge=0, le=3)] = Field(default_factory=list)
+
+
+class RoundResultResponse(BaseModel):
+    round_number: int
+    round_wind: str
+    dealer_seat: int
+    honba: int
+    result_type: str
+    winner_seat: int | None = None
+    loser_seat: int | None = None
+    point_changes: dict[str, int]
+    player_points_after: dict[str, int]
+
+
+class GameRoundResponse(BaseModel):
+    game_id: UUID
+    round_result: RoundResultResponse
+    game_state: GameStateResponse
