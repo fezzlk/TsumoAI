@@ -496,8 +496,7 @@
             </div>
 
             <div style="display:flex;gap:8px;margin-top:10px;">
-              <button id="confirmEntryBtn" type="button">確定してデータセットに追加</button>
-              <button id="cancelEditBtn" type="button" class="mini-btn" style="background:#b91c1c;">キャンセル</button>
+              <button id="confirmEntryBtn" type="button">確定してアップロード</button>
             </div>
           </div>
           <div id="editPlaceholder" class="hint">左の入力欄で条件を設定し「点数計算して編集」を押すと、ここに編集フォームが表示されます。</div>
@@ -509,7 +508,6 @@
           <pre class="dataset-json" id="datasetJson">[]</pre>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             <button id="copyJsonBtn" class="copy-btn" type="button">JSONをコピー</button>
-            <button id="uploadGcsBtn" type="button">GCSにアップロード</button>
             <button id="clearAllBtn" class="mini-btn" type="button" style="background:#b91c1c;">全てクリア</button>
           </div>
           <div id="uploadStatus" class="hint" style="margin-top:6px;"></div>
@@ -1434,6 +1432,7 @@
         }
         renderDatasetList();
         closeEditForm();
+        uploadToGcs();
       }
 
       /* ── Dataset rendering ── */
@@ -1714,9 +1713,7 @@
       document.getElementById("editHan").addEventListener("input", recalcEditPoints);
       document.getElementById("editFu").addEventListener("input", recalcEditPoints);
       document.getElementById("confirmEntryBtn").addEventListener("click", confirmEntry);
-      document.getElementById("cancelEditBtn").addEventListener("click", closeEditForm);
       document.getElementById("copyJsonBtn").addEventListener("click", copyJson);
-      document.getElementById("uploadGcsBtn").addEventListener("click", uploadToGcs);
       document.getElementById("refreshGcsListBtn").addEventListener("click", refreshGcsList);
       document.getElementById("clearAllBtn").addEventListener("click", () => {
         datasetEntries.length = 0;
