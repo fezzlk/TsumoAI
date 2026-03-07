@@ -13,6 +13,7 @@ from app.game_session import (
     create_game,
     get_dealer_seat,
     get_round_wind,
+    undo_last,
     _base_points,
     _calc_base,
     _ceil100,
@@ -533,3 +534,85 @@ class TestPointConservation:
         # Now someone wins and collects kyotaku
         apply_ron(session, winner_seat=2, loser_seat=3, han=1, fu=30)
         assert _total_points(session) == 100000
+
+
+# ---------------------------------------------------------------------------
+# Undo
+# ---------------------------------------------------------------------------
+
+class TestUndo:
+    """Test undo functionality."""
+
+    def test_undo_ron_restores_points(self):
+        session = _new_session()
+        original_points = [p.points for p in session.players]
+        apply_ron(session, winner_seat=1, loser_seat=2, han=3, fu=30)
+        assert [p.points for p in session.players] != original_points
+        removed = undo_last(session)
+        assert removed is not None
+        assert removed.result_type == "ron"
+        assert [p.points for p in session.players] == original_points
+
+    def test_undo_tsumo_restores_points(self):
+        session = _new_session()
+        original_points = [p.points for p in session.players]
+        apply_tsumo(session, winner_seat=0, han=2, fu=30)
+        removed = undo_last(session)
+        assert removed is not None
+        assert [p.points for p in session.players] == original_points
+
+    def test_undo_draw_restores_points(self):
+        session = _new_session()
+        original_points = [p.points for p in session.players]
+        apply_draw(session, tenpai_seats=[0, 1])
+        removed = undo_last(session)
+        assert removed is not None
+        assert [p.points for p in session.players] == original_points
+
+    def test_undo_restores_round_number(self):
+        session = _new_session()
+        assert session.current_round == 0
+        apply_ron(session, winner_seat=1, loser_seat=0, han=1, fu=30)
+        assert session.current_round == 1
+        undo_last(session)
+        assert session.current_round == 0
+
+    def test_undo_restores_honba(self):
+        session = _new_session()
+        # Dealer win (seat 0) -> honba increments
+        apply_ron(session, winner_seat=0, loser_seat=1, han=1, fu=30)
+        assert session.current_honba == 1
+        undo_last(session)
+        assert session.current_honba == 0
+
+    def test_undo_restores_kyotaku(self):
+        session = _new_session()
+        apply_draw(session, tenpai_seats=[0], riichi_seats=[0, 1])
+        assert session.current_kyotaku == 2
+        undo_last(session)
+        assert session.current_kyotaku == 0
+
+    def test_undo_empty_returns_none(self):
+        session = _new_session()
+        assert undo_last(session) is None
+
+    def test_undo_restores_game_status(self):
+        session = _new_session()
+        # Play through all 4 rounds to finish
+        for i in range(4):
+            apply_ron(session, winner_seat=(i + 1) % 4, loser_seat=i, han=1, fu=30)
+        assert session.status == "finished"
+        undo_last(session)
+        assert session.status == "active"
+
+    def test_multiple_undo(self):
+        session = _new_session()
+        original = [p.points for p in session.players]
+        apply_ron(session, winner_seat=1, loser_seat=0, han=1, fu=30)
+        apply_ron(session, winner_seat=2, loser_seat=1, han=2, fu=30)
+        assert len(session.rounds) == 2
+        undo_last(session)
+        assert len(session.rounds) == 1
+        undo_last(session)
+        assert len(session.rounds) == 0
+        assert [p.points for p in session.players] == original

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import random
+import string
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
@@ -31,6 +34,16 @@ class RoundRecord:
 
 
 @dataclass
+class GameSnapshot:
+    """Snapshot for undo support."""
+    players_points: list[int]
+    current_round: int
+    current_honba: int
+    current_kyotaku: int
+    status: Literal["active", "finished"]
+
+
+@dataclass
 class GameSession:
     game_id: UUID
     players: list[PlayerState]
@@ -41,6 +54,41 @@ class GameSession:
     status: Literal["active", "finished"] = "active"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     game_type: Literal["east_only", "east_south"] = "east_only"
+    room_code: str = ""
+    _snapshots: list[GameSnapshot] = field(default_factory=list, repr=False)
+
+
+def _generate_room_code() -> str:
+    """Generate a 6-character alphanumeric room code."""
+    return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+
+def _take_snapshot(session: GameSession) -> None:
+    """Save current state before a mutation for undo support."""
+    snap = GameSnapshot(
+        players_points=[p.points for p in session.players],
+        current_round=session.current_round,
+        current_honba=session.current_honba,
+        current_kyotaku=session.current_kyotaku,
+        status=session.status,
+    )
+    session._snapshots.append(snap)
+
+
+def undo_last(session: GameSession) -> RoundRecord | None:
+    """Undo the last round. Returns the removed round record, or None if nothing to undo."""
+    if not session.rounds or not session._snapshots:
+        return None
+    snap = session._snapshots.pop()
+    removed = session.rounds.pop()
+    # Restore state
+    for i, p in enumerate(session.players):
+        p.points = snap.players_points[i]
+    session.current_round = snap.current_round
+    session.current_honba = snap.current_honba
+    session.current_kyotaku = snap.current_kyotaku
+    session.status = snap.status
+    return removed
 
 
 def create_game(player_names: list[str], starting_points: int = 25000,
@@ -54,6 +102,7 @@ def create_game(player_names: list[str], starting_points: int = 25000,
         game_id=uuid4(),
         players=players,
         game_type=game_type,
+        room_code=_generate_room_code(),
     )
 
 
@@ -137,6 +186,8 @@ def apply_ron(session: GameSession, winner_seat: int, loser_seat: int,
     if not (0 <= winner_seat <= 3 and 0 <= loser_seat <= 3):
         raise ValueError("Invalid seat number")
 
+    _take_snapshot(session)
+
     riichi_seats = riichi_seats or []
     point_changes: dict[int, int] = {i: 0 for i in range(4)}
 
@@ -196,6 +247,8 @@ def apply_tsumo(session: GameSession, winner_seat: int,
         raise ValueError("Game is not active")
     if not (0 <= winner_seat <= 3):
         raise ValueError("Invalid seat number")
+
+    _take_snapshot(session)
 
     riichi_seats = riichi_seats or []
     point_changes: dict[int, int] = {i: 0 for i in range(4)}
@@ -264,6 +317,8 @@ def apply_draw(session: GameSession, tenpai_seats: list[int] | None = None,
     """Apply a draw (流局) and record the round."""
     if session.status != "active":
         raise ValueError("Game is not active")
+
+    _take_snapshot(session)
 
     tenpai_seats = tenpai_seats or []
     riichi_seats = riichi_seats or []

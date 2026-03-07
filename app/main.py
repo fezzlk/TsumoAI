@@ -5,12 +5,13 @@ from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from app.config import settings
+from app.room_manager import RoomManager
 from app.game_session import (
     GameSession,
     apply_draw,
@@ -19,6 +20,7 @@ from app.game_session import (
     create_game,
     get_dealer_seat,
     get_round_wind,
+    undo_last,
 )
 from app.gcs_feedback_store import GCSFeedbackStore
 from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
@@ -352,6 +354,8 @@ def download_dataset(name: str = Query(...)) -> JSONResponse:
 # --- Game session endpoints ---
 
 _game_sessions: dict[UUID, GameSession] = {}
+_room_code_to_game: dict[str, UUID] = {}
+room_manager = RoomManager()
 
 
 def _game_state_response(session: GameSession) -> GameStateResponse:
@@ -392,8 +396,11 @@ def _round_result_response(session: GameSession, record) -> RoundResultResponse:
 def create_game_endpoint(req: CreateGameRequest) -> dict:
     session = create_game(req.player_names, req.starting_points, req.game_type)
     _game_sessions[session.game_id] = session
+    _room_code_to_game[session.room_code] = session.game_id
+    room_manager.register_room(session.room_code, session.game_id)
     return {
         "game_id": session.game_id,
+        "room_code": session.room_code,
         "round_result": RoundResultResponse(
             round_number=0,
             round_wind=get_round_wind(session),
@@ -416,7 +423,7 @@ def get_game(game_id: UUID) -> GameStateResponse:
 
 
 @app.post("/api/v1/games/{game_id}/ron", response_model=GameRoundResponse)
-def record_ron(game_id: UUID, req: RonRequest) -> dict:
+async def record_ron(game_id: UUID, req: RonRequest) -> dict:
     session = _game_sessions.get(game_id)
     if not session:
         raise HTTPException(status_code=404, detail="game not found")
@@ -427,15 +434,20 @@ def record_ron(game_id: UUID, req: RonRequest) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {
+    result = {
         "game_id": session.game_id,
         "round_result": _round_result_response(session, record),
         "game_state": _game_state_response(session),
     }
+    await room_manager.broadcast_game_update(session.room_code, "ron", {
+        "game_state": _game_state_response(session).model_dump(mode="json"),
+        "round_result": _round_result_response(session, record).model_dump(mode="json"),
+    })
+    return result
 
 
 @app.post("/api/v1/games/{game_id}/tsumo", response_model=GameRoundResponse)
-def record_tsumo(game_id: UUID, req: TsumoRequest) -> dict:
+async def record_tsumo(game_id: UUID, req: TsumoRequest) -> dict:
     session = _game_sessions.get(game_id)
     if not session:
         raise HTTPException(status_code=404, detail="game not found")
@@ -446,15 +458,20 @@ def record_tsumo(game_id: UUID, req: TsumoRequest) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {
+    result = {
         "game_id": session.game_id,
         "round_result": _round_result_response(session, record),
         "game_state": _game_state_response(session),
     }
+    await room_manager.broadcast_game_update(session.room_code, "tsumo", {
+        "game_state": _game_state_response(session).model_dump(mode="json"),
+        "round_result": _round_result_response(session, record).model_dump(mode="json"),
+    })
+    return result
 
 
 @app.post("/api/v1/games/{game_id}/draw", response_model=GameRoundResponse)
-def record_draw(game_id: UUID, req: DrawRequest) -> dict:
+async def record_draw(game_id: UUID, req: DrawRequest) -> dict:
     session = _game_sessions.get(game_id)
     if not session:
         raise HTTPException(status_code=404, detail="game not found")
@@ -462,11 +479,16 @@ def record_draw(game_id: UUID, req: DrawRequest) -> dict:
         record = apply_draw(session, req.tenpai_seats, req.riichi_seats)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {
+    result = {
         "game_id": session.game_id,
         "round_result": _round_result_response(session, record),
         "game_state": _game_state_response(session),
     }
+    await room_manager.broadcast_game_update(session.room_code, "draw", {
+        "game_state": _game_state_response(session).model_dump(mode="json"),
+        "round_result": _round_result_response(session, record).model_dump(mode="json"),
+    })
+    return result
 
 
 @app.get("/api/v1/games/{game_id}/history")
@@ -494,9 +516,72 @@ def get_game_history(game_id: UUID) -> dict:
     }
 
 
+@app.post("/api/v1/games/{game_id}/undo")
+async def undo_round(game_id: UUID) -> dict:
+    session = _game_sessions.get(game_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="game not found")
+    removed = undo_last(session)
+    if removed is None:
+        raise HTTPException(status_code=422, detail="nothing to undo")
+    state = _game_state_response(session)
+    await room_manager.broadcast_game_update(session.room_code, "undo", {
+        "game_state": state.model_dump(mode="json"),
+    })
+    return {
+        "status": "ok",
+        "undone_round": removed.round_number,
+        "game_state": state.model_dump(mode="json"),
+    }
+
+
 @app.delete("/api/v1/games/{game_id}")
 def delete_game(game_id: UUID) -> dict:
     session = _game_sessions.pop(game_id, None)
     if not session:
         raise HTTPException(status_code=404, detail="game not found")
+    _room_code_to_game.pop(session.room_code, None)
+    room_manager.remove_room(session.room_code)
     return {"status": "deleted", "game_id": str(game_id)}
+
+
+@app.get("/api/v1/rooms/{room_code}")
+def get_room(room_code: str) -> dict:
+    game_id = _room_code_to_game.get(room_code.upper())
+    if not game_id:
+        raise HTTPException(status_code=404, detail="room not found")
+    session = _game_sessions.get(game_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="game not found")
+    return {
+        "room_code": room_code.upper(),
+        "game_id": str(session.game_id),
+        "game_state": _game_state_response(session).model_dump(mode="json"),
+        "connected_players": room_manager.get_connected_players(room_code.upper()),
+    }
+
+
+@app.websocket("/ws/rooms/{room_code}")
+async def room_websocket(websocket: WebSocket, room_code: str, player_name: str = ""):
+    code = room_code.upper()
+    if not await room_manager.connect(code, websocket, player_name):
+        await websocket.close(code=4004, reason="room not found")
+        return
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Client can send ping/pong or action requests
+            msg = json.loads(data)
+            if msg.get("type") == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+    except WebSocketDisconnect:
+        room_manager.disconnect(code, websocket)
+        await room_manager.broadcast_game_update(code, "player_left", {
+            "player_name": player_name,
+            "connected_count": len(room_manager.get_connected_players(code)),
+        })
+
+
+@app.get("/game")
+def game_ui() -> FileResponse:
+    return FileResponse(STATIC_DIR / "game.html")
