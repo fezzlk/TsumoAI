@@ -197,6 +197,7 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
     <button class="btn btn-small" style="background:#8e44ad" onclick="showSwapModal()">席替</button>
     <button class="btn btn-small" style="background:#16a085" onclick="showQR()">QR</button>
     <button class="btn btn-small" id="diffToggleBtn" style="background:#2c3e50" onclick="toggleDiffMode()">点差</button>
+    <button class="btn btn-small" style="background:#d35400" onclick="showChart()">グラフ</button>
     <button class="btn btn-small" style="background:#2980b9" onclick="syncGameState()">同期</button>
   </div>
 
@@ -232,6 +233,17 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
     <div class="swap-grid" id="swapGrid"></div>
     <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitSwap()" id="swapBtn" disabled>席を入れ替える</button>
     <button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="closeModal('swapModal')">キャンセル</button>
+  </div>
+</div>
+
+<!-- Modal for chart -->
+<div class="modal" id="chartModal">
+  <div class="modal-content" style="max-width:500px">
+    <h2>点数推移</h2>
+    <canvas id="chartCanvas" width="460" height="300" style="width:100%;background:#16213e;border-radius:8px"></canvas>
+    <div id="chartLegend" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:8px;font-size:0.8em"></div>
+    <button class="btn btn-primary btn-small" style="width:100%;margin-top:12px" onclick="downloadChart()">画像を保存</button>
+    <button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="closeModal('chartModal')">閉じる</button>
   </div>
 </div>
 
@@ -630,8 +642,11 @@ function renderGame() {
       banner.id = 'finishedBanner';
       banner.style.cssText = 'text-align:center;padding:16px;background:linear-gradient(135deg,#e94560,#0f3460);border-radius:12px;margin:12px 0;font-size:1.2em;font-weight:bold';
       const hasBust = gs.players.some(p => p.points < 0);
-      banner.textContent = hasBust ? '箱割れ — 対局終了' : '対局終了';
+      banner.innerHTML = `${hasBust ? '箱割れ — 対局終了' : '対局終了'}<br><button class="btn btn-small" style="background:#d35400;margin-top:8px" onclick="showChart()">点数推移グラフ</button>
+        <button class="btn btn-small" style="background:#555;margin-top:8px;margin-left:4px" onclick="showHistory()">履歴</button>`;
       document.getElementById('scoreboard').after(banner);
+      // Auto-show chart on game end
+      setTimeout(() => showChart(), 500);
     }
   } else {
     document.querySelector('.actions').style.display = '';
@@ -1162,6 +1177,182 @@ async function showHistory() {
   } catch (e) {
     toast(e.message, true);
   }
+}
+
+// --- Chart ---
+const CHART_COLORS = ['#e94560', '#3498db', '#2ecc71', '#f39c12'];
+
+async function showChart() {
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/history`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    const rounds = data.rounds;
+    const gs = data.game_state;
+    if (rounds.length === 0) { toast('まだ記録がありません', true); return; }
+    drawChart(rounds, gs);
+    document.getElementById('chartModal').classList.add('active');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function drawChart(rounds, gs) {
+  const canvas = document.getElementById('chartCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  const displayW = canvas.clientWidth;
+  const displayH = 300;
+  canvas.width = displayW * dpr;
+  canvas.height = displayH * dpr;
+  canvas.style.height = displayH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const players = gs.players;
+  const startPts = {};
+  // Reconstruct starting points: current points minus all accumulated changes
+  for (const p of players) {
+    let total = 0;
+    for (const r of rounds) {
+      total += (r.point_changes[String(p.seat)] || 0);
+    }
+    startPts[p.seat] = p.points - total;
+  }
+
+  // Build data series: [round0=start, round1, round2, ...]
+  const series = {};
+  for (const p of players) {
+    series[p.seat] = [startPts[p.seat]];
+  }
+  for (const r of rounds) {
+    for (const p of players) {
+      const prev = series[p.seat][series[p.seat].length - 1];
+      series[p.seat].push(prev + (r.point_changes[String(p.seat)] || 0));
+    }
+  }
+
+  const numPoints = rounds.length + 1;
+  let minY = Infinity, maxY = -Infinity;
+  for (const p of players) {
+    for (const v of series[p.seat]) {
+      if (v < minY) minY = v;
+      if (v > maxY) maxY = v;
+    }
+  }
+  // Add padding
+  const yRange = maxY - minY || 1;
+  minY -= yRange * 0.1;
+  maxY += yRange * 0.1;
+
+  const pad = {top: 20, right: 15, bottom: 30, left: 50};
+  const w = displayW - pad.left - pad.right;
+  const h = displayH - pad.top - pad.bottom;
+
+  const xScale = (i) => pad.left + (i / (numPoints - 1 || 1)) * w;
+  const yScale = (v) => pad.top + h - ((v - minY) / (maxY - minY || 1)) * h;
+
+  // Clear
+  ctx.fillStyle = '#16213e';
+  ctx.fillRect(0, 0, displayW, displayH);
+
+  // Grid lines
+  ctx.strokeStyle = '#2a2a4e';
+  ctx.lineWidth = 0.5;
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = minY + (maxY - minY) * i / yTicks;
+    const y = yScale(v);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(pad.left + w, y);
+    ctx.stroke();
+    ctx.fillStyle = '#888';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(v).toLocaleString(), pad.left - 5, y + 3);
+  }
+
+  // 30000 line
+  if (minY < 30000 && maxY > 30000) {
+    const y30 = yScale(30000);
+    ctx.strokeStyle = '#e9456044';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y30);
+    ctx.lineTo(pad.left + w, y30);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#e9456088';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('30000', pad.left + 2, y30 - 3);
+  }
+
+  // X axis labels
+  ctx.fillStyle = '#888';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < numPoints; i++) {
+    const x = xScale(i);
+    if (i === 0) {
+      ctx.fillText('開始', x, displayH - 8);
+    } else {
+      const r = rounds[i - 1];
+      const windName = WIND_NAMES[r.round_wind] || '';
+      const dealerNum = (r.dealer_seat % 4) + 1;
+      // Show label every few rounds to avoid overlap
+      if (numPoints <= 12 || i % 2 === 0) {
+        ctx.fillText(`${windName}${dealerNum}`, x, displayH - 8);
+      }
+    }
+  }
+
+  // Draw lines
+  for (const p of players) {
+    const data = series[p.seat];
+    ctx.strokeStyle = CHART_COLORS[p.seat % CHART_COLORS.length];
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = xScale(i);
+      const y = yScale(data[i]);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // End point dot
+    const lastX = xScale(data.length - 1);
+    const lastY = yScale(data[data.length - 1]);
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = CHART_COLORS[p.seat % CHART_COLORS.length];
+    ctx.fill();
+  }
+
+  // Legend
+  const legend = document.getElementById('chartLegend');
+  legend.innerHTML = '';
+  for (const p of players) {
+    const color = CHART_COLORS[p.seat % CHART_COLORS.length];
+    const pts = series[p.seat][series[p.seat].length - 1];
+    const el = document.createElement('span');
+    el.style.cssText = `color:${color};font-weight:bold`;
+    el.textContent = `● ${p.name} (${pts.toLocaleString()})`;
+    legend.appendChild(el);
+  }
+}
+
+function downloadChart() {
+  const canvas = document.getElementById('chartCanvas');
+  // Create a download link
+  const link = document.createElement('a');
+  link.download = `mahjong_score_${roomCode || 'game'}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+  toast('画像を保存しました');
 }
 
 function closeModal(id) {
