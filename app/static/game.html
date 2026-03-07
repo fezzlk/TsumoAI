@@ -77,6 +77,8 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 .riichi-btn:active, .tenpai-btn:active { transform: scale(0.93); }
 .riichi-btn.disabled, .tenpai-btn.disabled { opacity: 0.3; cursor: default; }
 .toggle-row { margin-top: 6px; display: flex; gap: 6px; justify-content: center; }
+@keyframes riichi-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.points.riichi-active { color: #f39c12; animation: riichi-blink 1.2s ease-in-out infinite; }
 
 /* History */
 .history-list { max-height: 300px; overflow-y: auto; }
@@ -498,7 +500,7 @@ function renderGame() {
     card.innerHTML = `
       <div class="wind">${WIND_NAMES[seatWinds[p.seat]] || ''}</div>
       <div class="name">${escHtml(p.name)}</div>
-      <div class="points${p.points < 0 ? ' negative' : ''}">${p.points.toLocaleString()}</div>
+      <div class="points${p.points < 0 ? ' negative' : ''}${isRiichi ? ' riichi-active' : ''}">${p.points.toLocaleString()}</div>
       ${deltaHtml}
       <div class="toggle-row">
         <button class="riichi-btn${isRiichi ? ' active' : ''}${disabledCls}" ${riichiOnclick}>立直</button>
