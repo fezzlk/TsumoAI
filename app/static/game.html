@@ -149,11 +149,12 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
         <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;cursor:pointer;margin-bottom:4px">
           <input type="checkbox" id="optHakoire" checked> 箱割れ即終了 (飛び)
         </label>
+        <div id="extensionNote" style="font-size:0.8em;color:#888;margin:4px 0">※東風戦: 全員30000点未満で南入 (常時)</div>
         <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;cursor:pointer;margin-bottom:4px">
-          <input type="checkbox" id="optShanyu"> シャーニュウ (百の位で順位点精算)
+          <input type="checkbox" id="optShanyu"> <span id="shanyuLabel">西入あり</span>
         </label>
         <label style="display:flex;align-items:center;gap:8px;font-size:0.9em;cursor:pointer">
-          <input type="checkbox" id="optPeinyu"> ペーニュウ (百入: 持ち点の百の位を考慮)
+          <input type="checkbox" id="optPeinyu"> <span id="peinyuLabel">北入あり</span>
         </label>
       </div>
       <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="createRoom()">ルーム作成</button>
@@ -179,9 +180,10 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 <!-- Screen 3: Game -->
 <div class="screen" id="gameScreen">
   <div class="round-info" id="roundInfo">
-    <span id="riWind">東1局</span>
+    <div><span id="riWind">東1局</span>
     <span id="riHonba">0本場</span>
-    <span id="riKyotaku">供託0</span>
+    <span id="riKyotaku">供託0</span></div>
+    <div id="optionsDisplay" style="display:none;font-size:0.75em;color:#aaa;margin-top:4px"></div>
   </div>
 
   <div class="scoreboard" id="scoreboard"></div>
@@ -195,11 +197,10 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
     <button class="btn btn-small" style="background:#8e44ad" onclick="showSwapModal()">席替</button>
     <button class="btn btn-small" style="background:#16a085" onclick="showQR()">QR</button>
     <button class="btn btn-small" id="diffToggleBtn" style="background:#2c3e50" onclick="toggleDiffMode()">点差</button>
+    <button class="btn btn-small" style="background:#2980b9" onclick="syncGameState()">同期</button>
   </div>
 
   <div id="actionPanel" style="display:none"></div>
-
-  <div id="optionsDisplay" style="display:none;text-align:center;font-size:0.75em;color:#888;margin:4px 0"></div>
   <div class="room-code-display" id="roomCodeDisplay" style="font-size:1em;padding:8px;margin:8px 0;letter-spacing:4px;cursor:pointer" onclick="copyRoomCode()"></div>
 </div>
 
@@ -250,6 +251,24 @@ let keepAliveTimer = null;
 let riichiSeats = new Set();
 let tenpaiSeats = new Set();
 let showDiffMode = false;
+
+// Update extension option labels based on game type
+function updateExtensionLabels() {
+  const gt = document.getElementById('gameType').value;
+  const note = document.getElementById('extensionNote');
+  const shanyuLabel = document.getElementById('shanyuLabel');
+  const peinyuLabel = document.getElementById('peinyuLabel');
+  if (gt === 'east_only') {
+    note.textContent = '※東風戦: 全員30000点未満で南入 (常時)';
+    shanyuLabel.textContent = '西入あり';
+    peinyuLabel.textContent = '北入あり';
+  } else {
+    note.textContent = '※半荘戦: 南場は通常通り';
+    shanyuLabel.textContent = '西入あり';
+    peinyuLabel.textContent = '北入あり';
+  }
+}
+document.getElementById('gameType').addEventListener('change', updateExtensionLabels);
 
 // Common point values for one-tap selection
 const POINT_TABLE_RON = [
@@ -536,8 +555,8 @@ function renderGame() {
     const tags = [];
     if (gs.options.hakoire_end) tags.push('飛びあり');
     else tags.push('飛びなし');
-    if (gs.options.shanyu) tags.push('シャーニュウ');
-    if (gs.options.peinyu) tags.push('ペーニュウ');
+    if (gs.options.shanyu) tags.push('西入あり');
+    if (gs.options.peinyu) tags.push('北入あり');
     if (tags.length) {
       optDisp.textContent = tags.join(' / ');
       optDisp.style.display = '';
@@ -703,7 +722,13 @@ function toggleSwapSelect(card, seat) {
     swapSelected.push(seat);
     card.classList.add('selected');
   }
-  document.getElementById('swapBtn').disabled = swapSelected.length !== 2;
+  const btn = document.getElementById('swapBtn');
+  if (swapSelected.length === 2) {
+    btn.disabled = false;
+    btn.removeAttribute('disabled');
+  } else {
+    btn.disabled = true;
+  }
 }
 
 async function submitSwap() {
@@ -1088,6 +1113,23 @@ async function doUndo() {
     lastDeltas = {};
     renderGame();
     toast('取り消しました');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function syncGameState() {
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    gameState = data;
+    renderGame();
+    // Request full state sync via WebSocket
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({type: 'request_sync'}));
+    }
+    toast('同期しました');
   } catch (e) {
     toast(e.message, true);
   }

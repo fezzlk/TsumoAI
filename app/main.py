@@ -647,6 +647,14 @@ async def room_websocket(websocket: WebSocket, room_code: str, player_name: str 
                     "seat": msg.get("seat"),
                     "active": msg.get("active"),
                 })
+            elif msg.get("type") == "request_sync":
+                game_id = room_manager.get_game_id(code)
+                if game_id and game_id in _game_sessions:
+                    session = _game_sessions[game_id]
+                    state = _game_state_response(session)
+                    await room_manager.broadcast_game_update(code, "sync", {
+                        "game_state": state.model_dump(mode="json"),
+                    })
     except WebSocketDisconnect:
         room_manager.disconnect(code, websocket)
         await room_manager.broadcast_game_update(code, "player_left", {

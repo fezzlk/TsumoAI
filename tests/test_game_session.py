@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.game_session import (
+    GameOptions,
     GameSession,
     PlayerState,
     RoundRecord,
@@ -433,9 +434,9 @@ class TestAdvanceRound:
 # ---------------------------------------------------------------------------
 
 class TestGameEnd:
-    def test_east_only_ends_after_4_rounds(self):
-        session = _new_session(game_type="east_only")
-        # Play 4 rounds with non-dealer wins to rotate through all dealers
+    def test_east_only_ends_after_4_rounds_when_someone_above_30000(self):
+        # With 30000 starting points, someone is already >= 30000 so no extension
+        session = _new_session(game_type="east_only", starting_points=30000)
         for _ in range(4):
             dealer = get_dealer_seat(session)
             winner = (dealer + 1) % 4
@@ -443,7 +444,66 @@ class TestGameEnd:
             apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
         assert session.status == "finished"
 
-    def test_east_south_ends_after_8_rounds(self):
+    def test_east_only_extends_to_south_when_all_below_30000(self):
+        # 25000 start, 1 han 30 fu = 1000 pt swaps, nobody reaches 30000 → 南入
+        session = _new_session(game_type="east_only")
+        for _ in range(4):
+            dealer = get_dealer_seat(session)
+            winner = (dealer + 1) % 4
+            loser = (dealer + 2) % 4
+            apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
+        assert session.status == "active"
+        assert session.current_round == 4
+        assert get_round_wind(session) == "S"
+
+    def test_east_only_extension_ends_when_someone_reaches_30000(self):
+        session = _new_session(game_type="east_only")
+        # Play through East, all < 30000
+        for _ in range(4):
+            dealer = get_dealer_seat(session)
+            winner = (dealer + 1) % 4
+            loser = (dealer + 2) % 4
+            apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
+        assert session.status == "active"
+        # Now in 南入, give someone a big win to reach 30000
+        apply_ron(session, winner_seat=1, loser_seat=2, han=5, fu=30)  # mangan 8000
+        # Check if someone >= 30000
+        if any(p.points >= 30000 for p in session.players):
+            assert session.status == "finished"
+
+    def test_east_only_extension_ends_at_south4_without_shanyu(self):
+        session = _new_session(game_type="east_only")
+        # Play through 8 rounds (East + South), nobody reaches 30000
+        for _ in range(8):
+            dealer = get_dealer_seat(session)
+            winner = (dealer + 1) % 4
+            loser = (dealer + 2) % 4
+            apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
+        # Without shanyu, game ends at end of South
+        assert session.status == "finished"
+
+    def test_east_only_shanyu_extends_to_west(self):
+        opts = GameOptions(shanyu=True)
+        session = create_game(["A", "B", "C", "D"], starting_points=25000,
+                              game_type="east_only", options=opts)
+        for _ in range(8):
+            dealer = get_dealer_seat(session)
+            winner = (dealer + 1) % 4
+            loser = (dealer + 2) % 4
+            apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
+        assert session.status == "active"
+        assert get_round_wind(session) == "W"
+
+    def test_east_south_ends_after_8_rounds_when_someone_above_30000(self):
+        session = _new_session(game_type="east_south", starting_points=30000)
+        for _ in range(8):
+            dealer = get_dealer_seat(session)
+            winner = (dealer + 1) % 4
+            loser = (dealer + 2) % 4
+            apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
+        assert session.status == "finished"
+
+    def test_east_south_no_extension_without_shanyu(self):
         session = _new_session(game_type="east_south")
         for _ in range(8):
             dealer = get_dealer_seat(session)
@@ -452,8 +512,20 @@ class TestGameEnd:
             apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
         assert session.status == "finished"
 
+    def test_east_south_shanyu_extends_to_west(self):
+        opts = GameOptions(shanyu=True)
+        session = create_game(["A", "B", "C", "D"], starting_points=25000,
+                              game_type="east_south", options=opts)
+        for _ in range(8):
+            dealer = get_dealer_seat(session)
+            winner = (dealer + 1) % 4
+            loser = (dealer + 2) % 4
+            apply_ron(session, winner_seat=winner, loser_seat=loser, han=1, fu=30)
+        assert session.status == "active"
+        assert get_round_wind(session) == "W"
+
     def test_game_not_finished_before_all_rounds(self):
-        session = _new_session(game_type="east_only")
+        session = _new_session(game_type="east_only", starting_points=30000)
         for _ in range(3):
             dealer = get_dealer_seat(session)
             winner = (dealer + 1) % 4
@@ -597,8 +669,8 @@ class TestUndo:
         assert undo_last(session) is None
 
     def test_undo_restores_game_status(self):
-        session = _new_session()
-        # Play through all 4 rounds to finish
+        session = _new_session(starting_points=30000)
+        # Play through all 4 rounds to finish (30000 start = someone >= 30000)
         for i in range(4):
             apply_ron(session, winner_seat=(i + 1) % 4, loser_seat=i, han=1, fu=30)
         assert session.status == "finished"

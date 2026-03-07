@@ -62,6 +62,9 @@ class RoomManager:
         for item in dead:
             self._connections[room_code].remove(item)
 
+    def get_game_id(self, room_code: str) -> UUID | None:
+        return self._room_games.get(room_code)
+
     def get_connected_players(self, room_code: str) -> list[str]:
         if room_code not in self._connections:
             return []

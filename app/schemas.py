@@ -250,8 +250,8 @@ class DatasetUploadResponse(BaseModel):
 
 class GameOptionsRequest(BaseModel):
     hakoire_end: bool = True     # 箱割れ即終了
-    shanyu: bool = False         # シャーニュウ
-    peinyu: bool = False         # ペーニュウ
+    shanyu: bool = False         # 西入あり
+    peinyu: bool = False         # 北入あり
 
 
 class CreateGameRequest(BaseModel):

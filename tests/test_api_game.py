@@ -302,15 +302,20 @@ class TestValidation:
 # ---------------------------------------------------------------------------
 
 class TestFullGameFlow:
-    def test_full_east_only_game(self, client: TestClient, game_id: str):
-        """Play a complete east-only game with 4 rounds."""
+    def test_full_east_only_game(self, client: TestClient):
+        """Play a complete east-only game with 4 rounds.
+        Uses 30000 starting points so someone is >= 30000 and no 南入 occurs."""
+        resp = client.post("/api/v1/games", json={
+            "player_names": ["Alice", "Bob", "Carol", "Dave"],
+            "starting_points": 30000,
+        })
+        gid = resp.json()["game_id"]
         for _ in range(4):
-            # Get current state
-            state = client.get(f"/api/v1/games/{game_id}").json()
+            state = client.get(f"/api/v1/games/{gid}").json()
             dealer = state["current_dealer"]
             winner = (dealer + 1) % 4
             loser = (dealer + 2) % 4
-            resp = client.post(f"/api/v1/games/{game_id}/ron", json={
+            resp = client.post(f"/api/v1/games/{gid}/ron", json={
                 "winner_seat": winner,
                 "loser_seat": loser,
                 "han": 1,
@@ -319,11 +324,11 @@ class TestFullGameFlow:
             assert resp.status_code == 200
 
         # Game should be finished
-        state = client.get(f"/api/v1/games/{game_id}").json()
+        state = client.get(f"/api/v1/games/{gid}").json()
         assert state["status"] == "finished"
 
         # History should have 4 rounds
-        history = client.get(f"/api/v1/games/{game_id}/history").json()
+        history = client.get(f"/api/v1/games/{gid}/history").json()
         assert len(history["rounds"]) == 4
 
 
