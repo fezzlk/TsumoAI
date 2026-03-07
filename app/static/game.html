@@ -427,6 +427,8 @@ function connectWS() {
     if (msg.game_state) {
       gameState = msg.game_state;
       if (msg.round_result) {
+        riichiSeats.clear();
+        tenpaiSeats.clear();
         computeDeltas(msg.round_result.point_changes);
       }
       renderGame();
@@ -434,7 +436,11 @@ function connectWS() {
       if (document.getElementById('seatScreen').classList.contains('active')) {
         renderSeatGrid();
       }
-      if (msg.type === 'undo') toast('取り消しされました');
+      if (msg.type === 'undo') {
+        riichiSeats.clear();
+        tenpaiSeats.clear();
+        toast('取り消しされました');
+      }
       if (msg.type === 'seat_claimed') toast(`${msg.name} が ${SEAT_WINDS[msg.seat]} に着席`);
       if (msg.type === 'seats_swapped') toast('席替えが行われました');
     }
