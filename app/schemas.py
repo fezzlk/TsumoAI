@@ -236,6 +236,7 @@ class RecognitionFeedbackResponse(BaseModel):
 
 class DatasetUploadRequest(BaseModel):
     entries: list[dict[str, Any]]
+    contributor: str | None = None
 
 
 class DatasetUploadResponse(BaseModel):

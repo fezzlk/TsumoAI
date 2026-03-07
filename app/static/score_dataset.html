@@ -338,6 +338,10 @@
     <main class="wrap">
       <h1>点数データセット生成</h1>
       <p class="hint">牌姿と条件を入力し、点数計算結果と合わせてJSON形式のデータセットを生成します。</p>
+      <div style="max-width:400px;margin-bottom:12px;">
+        <label for="contributorName">送信者名</label>
+        <input type="text" id="contributorName" placeholder="未入力の場合はランダムIDが使われます" />
+      </div>
       <div class="grid">
         <section class="card">
           <h2>入力</h2>
@@ -632,6 +636,14 @@
       }
 
       const picker = new TilePickerModalComponent("tilePickerModal", "tilePickerGrid", "tilePickerTarget", "closeTilePickerBtn");
+
+      /* ── Session random ID ── */
+      const sessionId = crypto.randomUUID().slice(0, 8);
+
+      function getContributor() {
+        const name = (document.getElementById("contributorName").value || "").trim();
+        return name || sessionId;
+      }
 
       /* ── UI State ── */
       const uiState = {
@@ -1493,7 +1505,7 @@
           listEl.appendChild(div);
         });
 
-        document.getElementById("datasetJson").textContent = JSON.stringify(datasetEntries, null, 2);
+        document.getElementById("datasetJson").textContent = JSON.stringify({ contributor: getContributor(), entries: datasetEntries }, null, 2);
       }
 
       /* ── Generate dataset entry ── */
@@ -1551,7 +1563,7 @@
           const res = await fetch("/api/v1/dataset/upload", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ entries: datasetEntries })
+            body: JSON.stringify({ entries: datasetEntries, contributor: getContributor() })
           });
           if (!res.ok) {
             const text = await res.text();

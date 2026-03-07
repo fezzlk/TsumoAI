@@ -286,7 +286,10 @@ def upload_dataset(req: DatasetUploadRequest) -> DatasetUploadResponse:
     if not req.entries:
         raise HTTPException(status_code=422, detail="entries must not be empty")
     try:
-        storage_info = gcs_dataset_store.save({"entries": req.entries})
+        payload = {"entries": req.entries}
+        if req.contributor:
+            payload["contributor"] = req.contributor
+        storage_info = gcs_dataset_store.save(payload, contributor=req.contributor)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover

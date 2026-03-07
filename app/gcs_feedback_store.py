@@ -20,12 +20,13 @@ class GCSFeedbackStore:
             self._client = storage.Client(project=settings.gcp_project)
         return self._client
 
-    def save(self, payload: dict) -> dict:
+    def save(self, payload: dict, *, contributor: str | None = None) -> dict:
         if not self.bucket_name:
             raise ValueError("GCS bucket is not configured")
 
         now = datetime.now(timezone.utc)
-        object_name = f"{self.prefix}/{now.strftime('%Y/%m/%d')}/{uuid4()}.json"
+        name_part = contributor or str(uuid4())
+        object_name = f"{self.prefix}/{now.strftime('%Y/%m/%d')}/{name_part}_{uuid4().hex[:8]}.json"
         data = json.dumps(
             {
                 "saved_at": now.isoformat(),
