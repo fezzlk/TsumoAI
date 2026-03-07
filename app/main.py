@@ -16,6 +16,7 @@ from app.game_session import (
     GameOptions,
     GameSession,
     apply_draw,
+    apply_multi_ron,
     apply_ron,
     apply_tsumo,
     create_game,
@@ -47,6 +48,7 @@ from app.schemas import (
     RecognizeAndScoreResponse,
     RecognizeResponse,
     ResultGetResponse,
+    MultiRonRequest,
     RonRequest,
     RoundResultResponse,
     RuleSet,
@@ -446,6 +448,31 @@ async def record_ron(game_id: UUID, req: RonRequest) -> dict:
             session, req.winner_seat, req.loser_seat,
             req.han, req.fu, req.yakuman_multiplier, req.riichi_seats,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = {
+        "game_id": session.game_id,
+        "round_result": _round_result_response(session, record),
+        "game_state": _game_state_response(session),
+    }
+    await room_manager.broadcast_game_update(session.room_code, "ron", {
+        "game_state": _game_state_response(session).model_dump(mode="json"),
+        "round_result": _round_result_response(session, record).model_dump(mode="json"),
+    })
+    return result
+
+
+@app.post("/api/v1/games/{game_id}/multi-ron", response_model=GameRoundResponse)
+async def record_multi_ron(game_id: UUID, req: MultiRonRequest) -> dict:
+    session = _game_sessions.get(game_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="game not found")
+    try:
+        winners_dicts = [
+            {"seat": w.seat, "han": w.han, "fu": w.fu, "yakuman_multiplier": w.yakuman_multiplier}
+            for w in req.winners
+        ]
+        record = apply_multi_ron(session, req.loser_seat, winners_dicts, req.riichi_seats)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result = {

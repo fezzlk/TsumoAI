@@ -838,9 +838,9 @@ function renderRonPanel(panel) {
   const gs = gameState;
   let html = '<h2>ロン</h2>';
 
-  html += '<label>和了者</label><div class="player-chips" id="ronWinner">';
+  html += '<label>和了者（複数選択でダブロン・トリプルロン）</label><div class="player-chips" id="ronWinner">';
   gs.players.forEach(p => {
-    html += `<div class="chip" data-seat="${p.seat}" onclick="selectChip(this,'ronWinner')">${escHtml(p.name)}</div>`;
+    html += `<div class="chip" data-seat="${p.seat}" onclick="toggleRonWinner(this)">${escHtml(p.name)}</div>`;
   });
   html += '</div>';
 
@@ -850,28 +850,55 @@ function renderRonPanel(panel) {
   });
   html += '</div>';
 
-  html += '<label>点数 (子)</label>';
-  html += '<div class="point-grid" id="ronPointsNon">';
-  POINT_TABLE_RON.forEach(p => {
-    html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPointsNon')">
-      ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
-  });
-  html += '</div>';
-
-  html += '<label>点数 (親)</label>';
-  html += '<div class="point-grid" id="ronPointsDealer" style="display:none">';
-  POINT_TABLE_RON_DEALER.forEach(p => {
-    html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPointsDealer')">
-      ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
-  });
-  html += '</div>';
-
-  html += '<label>またはカスタム点数</label>';
-  html += '<input type="number" id="ronCustomPts" placeholder="例: 5200" step="100">';
+  html += '<div id="ronWinnerPoints"></div>';
 
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitRon()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
+}
+
+function toggleRonWinner(el) {
+  el.classList.toggle('selected');
+  renderRonWinnerPoints();
+}
+
+function renderRonWinnerPoints() {
+  const container = document.getElementById('ronWinnerPoints');
+  const selected = Array.from(document.querySelectorAll('#ronWinner .chip.selected'));
+  if (selected.length === 0) { container.innerHTML = ''; return; }
+
+  const gs = gameState;
+  let html = '';
+  selected.forEach((chip, idx) => {
+    const seat = parseInt(chip.dataset.seat);
+    const player = gs.players.find(p => p.seat === seat);
+    const isDealer = seat === gs.current_dealer;
+    const suffix = `_w${seat}`;
+
+    html += `<div style="border:1px solid #2a3a5c;border-radius:8px;padding:8px;margin:8px 0">`;
+    html += `<label style="color:#4fc3f7;font-weight:bold">${escHtml(player.name)} の点数${isDealer ? ' (親)' : ' (子)'}</label>`;
+
+    if (isDealer) {
+      html += `<div class="point-grid" id="ronPts${suffix}">`;
+      POINT_TABLE_RON_DEALER.forEach(p => {
+        html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPts${suffix}')">
+          ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
+      });
+      html += '</div>';
+    } else {
+      html += `<div class="point-grid" id="ronPts${suffix}">`;
+      POINT_TABLE_RON.forEach(p => {
+        html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPts${suffix}')">
+          ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
+      });
+      html += '</div>';
+    }
+
+    html += `<label>カスタム点数</label>`;
+    html += `<input type="number" id="ronCustomPts${suffix}" placeholder="例: 5200" step="100">`;
+    html += '</div>';
+  });
+  container.innerHTML = html;
 }
 
 function renderTsumoPanel(panel) {
@@ -923,12 +950,6 @@ function selectChip(el, groupId) {
   document.querySelectorAll(`#${groupId} .chip`).forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
 
-  if (groupId === 'ronWinner') {
-    const seat = parseInt(el.dataset.seat);
-    const isDealer = seat === gameState.current_dealer;
-    document.getElementById('ronPointsNon').style.display = isDealer ? 'none' : 'grid';
-    document.getElementById('ronPointsDealer').style.display = isDealer ? 'grid' : 'none';
-  }
 }
 
 function selectChipTsumo(el) {
@@ -1111,33 +1132,50 @@ function tsumoIdxToHanFu(idx, isDealer) {
 }
 
 async function submitRon() {
-  const winner = getSelectedSeat('ronWinner');
+  const winnerSeats = getSelectedSeats('ronWinner');
   const loser = getSelectedSeat('ronLoser');
-  if (winner === null || loser === null) { toast('和了者と放銃者を選択してください', true); return; }
-  if (winner === loser) { toast('和了者と放銃者は別のプレイヤーにしてください', true); return; }
+  if (winnerSeats.length === 0 || loser === null) { toast('和了者と放銃者を選択してください', true); return; }
+  if (winnerSeats.includes(loser)) { toast('和了者と放銃者は別のプレイヤーにしてください', true); return; }
 
   const riichi = getRiichiSeatsFromBoard();
-  const isDealer = winner === gameState.current_dealer;
 
-  const customPts = parseInt(document.getElementById('ronCustomPts').value);
-  let han, fu, yakuman;
-  if (customPts > 0) {
-    const calc = ronPointsToHanFu(customPts, isDealer);
-    han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
-  } else {
-    const gridId = isDealer ? 'ronPointsDealer' : 'ronPointsNon';
-    const sel = document.querySelector(`#${gridId} .point-btn.selected`);
-    if (!sel) { toast('点数を選択してください', true); return; }
-    const pts = parseInt(sel.dataset.pts);
-    const calc = ronPointsToHanFu(pts, isDealer);
-    han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+  // Build winners array with their han/fu
+  const winners = [];
+  for (const seat of winnerSeats) {
+    const isDealer = seat === gameState.current_dealer;
+    const suffix = `_w${seat}`;
+    const customPts = parseInt(document.getElementById(`ronCustomPts${suffix}`).value);
+    let han, fu, yakuman;
+    if (customPts > 0) {
+      const calc = ronPointsToHanFu(customPts, isDealer);
+      han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+    } else {
+      const sel = document.querySelector(`#ronPts${suffix} .point-btn.selected`);
+      if (!sel) {
+        const pname = gameState.players.find(p => p.seat === seat)?.name || seat;
+        toast(`${pname} の点数を選択してください`, true);
+        return;
+      }
+      const pts = parseInt(sel.dataset.pts);
+      const calc = ronPointsToHanFu(pts, isDealer);
+      han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+    }
+    winners.push({seat, han, fu, yakuman_multiplier: yakuman});
   }
 
   try {
-    const res = await fetch(`/api/v1/games/${gameId}/ron`, {
+    let url, body;
+    if (winners.length === 1) {
+      url = `/api/v1/games/${gameId}/ron`;
+      body = {winner_seat: winners[0].seat, loser_seat: loser, han: winners[0].han, fu: winners[0].fu, yakuman_multiplier: winners[0].yakuman_multiplier, riichi_seats: riichi};
+    } else {
+      url = `/api/v1/games/${gameId}/multi-ron`;
+      body = {loser_seat: loser, winners, riichi_seats: riichi};
+    }
+    const res = await fetch(url, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({winner_seat: winner, loser_seat: loser, han, fu, yakuman_multiplier: yakuman, riichi_seats: riichi}),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'エラー');
@@ -1147,7 +1185,8 @@ async function submitRon() {
     showAgariEffect('ron');
     computeDeltas(data.round_result.point_changes);
     renderGame();
-    toast('ロン確定');
+    const label = winners.length === 1 ? 'ロン' : winners.length === 2 ? 'ダブルロン' : 'トリプルロン';
+    toast(`${label}確定`);
   } catch (e) {
     toast(e.message, true);
   }
