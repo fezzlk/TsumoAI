@@ -102,6 +102,19 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 @keyframes dice-roll { 0% { transform: rotate(0deg) scale(1); } 25% { transform: rotate(90deg) scale(0.8); } 50% { transform: rotate(180deg) scale(1.1); } 75% { transform: rotate(270deg) scale(0.9); } 100% { transform: rotate(360deg) scale(1); } }
 .dice.rolling { animation: dice-roll 0.4s ease-in-out; }
 
+/* Tobi (bust) explosion effect */
+.tobi-explosion { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 10; border-radius: 12px; overflow: hidden; }
+.tobi-flash { position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 12px; animation: tobi-flash-anim 1.8s ease-out forwards; }
+@keyframes tobi-flash-anim { 0% { background: rgba(255,60,60,0.9); } 15% { background: rgba(255,120,0,0.7); } 40% { background: rgba(255,60,60,0.3); } 100% { background: transparent; } }
+.tobi-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 2.5em; font-weight: 900; color: #fff; text-shadow: 0 0 20px #ff0000, 0 0 40px #ff4500, 0 0 60px #ff0000; animation: tobi-text-anim 1.8s ease-out forwards; z-index: 2; }
+@keyframes tobi-text-anim { 0% { transform: translate(-50%,-50%) scale(0); opacity: 0; } 10% { transform: translate(-50%,-50%) scale(1.6); opacity: 1; } 25% { transform: translate(-50%,-50%) scale(1); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(1.3); } }
+.tobi-ring { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 3px solid rgba(255,100,0,0.9); border-radius: 50%; transform: translate(-50%,-50%); animation: tobi-ring-anim 1s ease-out forwards; }
+@keyframes tobi-ring-anim { 0% { width: 10px; height: 10px; opacity: 1; border-width: 3px; } 100% { width: 200px; height: 200px; opacity: 0; border-width: 1px; } }
+.tobi-particle { position: absolute; border-radius: 50%; animation: tobi-particle-anim 1.2s ease-out forwards; }
+@keyframes tobi-particle-anim { 0% { opacity: 1; transform: translate(0,0) scale(1); } 100% { opacity: 0; transform: translate(var(--tx), var(--ty)) scale(0); } }
+.tobi-shake { animation: tobi-shake-anim 0.5s ease-out; }
+@keyframes tobi-shake-anim { 0%,100% { transform: translateX(0); } 10% { transform: translateX(-6px); } 20% { transform: translateX(6px); } 30% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 50% { transform: translateX(-3px); } 60% { transform: translateX(3px); } 70% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
+
 /* Riichi flash overlay */
 .riichi-flash { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 900; pointer-events: none; display: flex; justify-content: center; align-items: center; animation: riichi-flash-anim 1s ease-out forwards; }
 @keyframes riichi-flash-anim { 0% { background: rgba(243,156,18,0.5); } 100% { background: transparent; } }
@@ -679,6 +692,12 @@ function renderGame() {
       banner.id = 'finishedBanner';
       banner.style.cssText = 'text-align:center;padding:16px;background:linear-gradient(135deg,#e94560,#0f3460);border-radius:12px;margin:12px 0;font-size:1.2em;font-weight:bold';
       const hasBust = gs.players.some(p => p.points < 0);
+      // Trigger tobi explosion on busted players
+      if (hasBust) {
+        gs.players.forEach((p, i) => {
+          if (p.points < 0) setTimeout(() => showTobiEffect(p.seat), 200);
+        });
+      }
       banner.innerHTML = `${hasBust ? '箱割れ — 対局終了' : '対局終了'}<br><button class="btn btn-small" style="background:#d35400;margin-top:8px" onclick="showChart()">点数推移グラフ</button>
         <button class="btn btn-small" style="background:#555;margin-top:8px;margin-left:4px" onclick="showHistory()">履歴</button>`;
       document.getElementById('scoreboard').after(banner);
@@ -819,9 +838,9 @@ function renderRonPanel(panel) {
   const gs = gameState;
   let html = '<h2>ロン</h2>';
 
-  html += '<label>和了者</label><div class="player-chips" id="ronWinner">';
+  html += '<label>和了者（複数選択でダブロン・トリプルロン）</label><div class="player-chips" id="ronWinner">';
   gs.players.forEach(p => {
-    html += `<div class="chip" data-seat="${p.seat}" onclick="selectChip(this,'ronWinner')">${escHtml(p.name)}</div>`;
+    html += `<div class="chip" data-seat="${p.seat}" onclick="toggleRonWinner(this)">${escHtml(p.name)}</div>`;
   });
   html += '</div>';
 
@@ -831,28 +850,55 @@ function renderRonPanel(panel) {
   });
   html += '</div>';
 
-  html += '<label>点数 (子)</label>';
-  html += '<div class="point-grid" id="ronPointsNon">';
-  POINT_TABLE_RON.forEach(p => {
-    html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPointsNon')">
-      ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
-  });
-  html += '</div>';
-
-  html += '<label>点数 (親)</label>';
-  html += '<div class="point-grid" id="ronPointsDealer" style="display:none">';
-  POINT_TABLE_RON_DEALER.forEach(p => {
-    html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPointsDealer')">
-      ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
-  });
-  html += '</div>';
-
-  html += '<label>またはカスタム点数</label>';
-  html += '<input type="number" id="ronCustomPts" placeholder="例: 5200" step="100">';
+  html += '<div id="ronWinnerPoints"></div>';
 
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitRon()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
+}
+
+function toggleRonWinner(el) {
+  el.classList.toggle('selected');
+  renderRonWinnerPoints();
+}
+
+function renderRonWinnerPoints() {
+  const container = document.getElementById('ronWinnerPoints');
+  const selected = Array.from(document.querySelectorAll('#ronWinner .chip.selected'));
+  if (selected.length === 0) { container.innerHTML = ''; return; }
+
+  const gs = gameState;
+  let html = '';
+  selected.forEach((chip, idx) => {
+    const seat = parseInt(chip.dataset.seat);
+    const player = gs.players.find(p => p.seat === seat);
+    const isDealer = seat === gs.current_dealer;
+    const suffix = `_w${seat}`;
+
+    html += `<div style="border:1px solid #2a3a5c;border-radius:8px;padding:8px;margin:8px 0">`;
+    html += `<label style="color:#4fc3f7;font-weight:bold">${escHtml(player.name)} の点数${isDealer ? ' (親)' : ' (子)'}</label>`;
+
+    if (isDealer) {
+      html += `<div class="point-grid" id="ronPts${suffix}">`;
+      POINT_TABLE_RON_DEALER.forEach(p => {
+        html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPts${suffix}')">
+          ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
+      });
+      html += '</div>';
+    } else {
+      html += `<div class="point-grid" id="ronPts${suffix}">`;
+      POINT_TABLE_RON.forEach(p => {
+        html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPts${suffix}')">
+          ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
+      });
+      html += '</div>';
+    }
+
+    html += `<label>カスタム点数</label>`;
+    html += `<input type="number" id="ronCustomPts${suffix}" placeholder="例: 5200" step="100">`;
+    html += '</div>';
+  });
+  container.innerHTML = html;
 }
 
 function renderTsumoPanel(panel) {
@@ -904,12 +950,6 @@ function selectChip(el, groupId) {
   document.querySelectorAll(`#${groupId} .chip`).forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
 
-  if (groupId === 'ronWinner') {
-    const seat = parseInt(el.dataset.seat);
-    const isDealer = seat === gameState.current_dealer;
-    document.getElementById('ronPointsNon').style.display = isDealer ? 'none' : 'grid';
-    document.getElementById('ronPointsDealer').style.display = isDealer ? 'grid' : 'none';
-  }
 }
 
 function selectChipTsumo(el) {
@@ -973,6 +1013,49 @@ function showAgariEffect(type) {
   }
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 1800);
+}
+
+// --- Tobi (bust) explosion effect ---
+function showTobiEffect(seat) {
+  const cards = document.querySelectorAll('.player-card');
+  const card = cards[seat];
+  if (!card) return;
+
+  // Shake the card
+  card.classList.add('tobi-shake');
+  setTimeout(() => card.classList.remove('tobi-shake'), 500);
+
+  // Create explosion overlay inside the card
+  const explosion = document.createElement('div');
+  explosion.className = 'tobi-explosion';
+
+  // Flash
+  explosion.innerHTML = '<div class="tobi-flash"></div><div class="tobi-text">飛</div>';
+
+  // Expanding ring
+  const ring = document.createElement('div');
+  ring.className = 'tobi-ring';
+  explosion.appendChild(ring);
+
+  // Particles
+  const colors = ['#ff0000', '#ff4500', '#ff6600', '#ffaa00', '#ffcc00', '#fff'];
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('div');
+    p.className = 'tobi-particle';
+    p.style.background = colors[Math.floor(Math.random() * colors.length)];
+    p.style.left = '50%';
+    p.style.top = '50%';
+    p.style.setProperty('--tx', (Math.random() - 0.5) * 160 + 'px');
+    p.style.setProperty('--ty', (Math.random() - 0.5) * 120 + 'px');
+    p.style.animationDelay = Math.random() * 0.2 + 's';
+    const size = (3 + Math.random() * 6) + 'px';
+    p.style.width = size;
+    p.style.height = size;
+    explosion.appendChild(p);
+  }
+
+  card.appendChild(explosion);
+  setTimeout(() => explosion.remove(), 2000);
 }
 
 // --- Diff mode (点差表示) ---
@@ -1049,33 +1132,50 @@ function tsumoIdxToHanFu(idx, isDealer) {
 }
 
 async function submitRon() {
-  const winner = getSelectedSeat('ronWinner');
+  const winnerSeats = getSelectedSeats('ronWinner');
   const loser = getSelectedSeat('ronLoser');
-  if (winner === null || loser === null) { toast('和了者と放銃者を選択してください', true); return; }
-  if (winner === loser) { toast('和了者と放銃者は別のプレイヤーにしてください', true); return; }
+  if (winnerSeats.length === 0 || loser === null) { toast('和了者と放銃者を選択してください', true); return; }
+  if (winnerSeats.includes(loser)) { toast('和了者と放銃者は別のプレイヤーにしてください', true); return; }
 
   const riichi = getRiichiSeatsFromBoard();
-  const isDealer = winner === gameState.current_dealer;
 
-  const customPts = parseInt(document.getElementById('ronCustomPts').value);
-  let han, fu, yakuman;
-  if (customPts > 0) {
-    const calc = ronPointsToHanFu(customPts, isDealer);
-    han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
-  } else {
-    const gridId = isDealer ? 'ronPointsDealer' : 'ronPointsNon';
-    const sel = document.querySelector(`#${gridId} .point-btn.selected`);
-    if (!sel) { toast('点数を選択してください', true); return; }
-    const pts = parseInt(sel.dataset.pts);
-    const calc = ronPointsToHanFu(pts, isDealer);
-    han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+  // Build winners array with their han/fu
+  const winners = [];
+  for (const seat of winnerSeats) {
+    const isDealer = seat === gameState.current_dealer;
+    const suffix = `_w${seat}`;
+    const customPts = parseInt(document.getElementById(`ronCustomPts${suffix}`).value);
+    let han, fu, yakuman;
+    if (customPts > 0) {
+      const calc = ronPointsToHanFu(customPts, isDealer);
+      han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+    } else {
+      const sel = document.querySelector(`#ronPts${suffix} .point-btn.selected`);
+      if (!sel) {
+        const pname = gameState.players.find(p => p.seat === seat)?.name || seat;
+        toast(`${pname} の点数を選択してください`, true);
+        return;
+      }
+      const pts = parseInt(sel.dataset.pts);
+      const calc = ronPointsToHanFu(pts, isDealer);
+      han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+    }
+    winners.push({seat, han, fu, yakuman_multiplier: yakuman});
   }
 
   try {
-    const res = await fetch(`/api/v1/games/${gameId}/ron`, {
+    let url, body;
+    if (winners.length === 1) {
+      url = `/api/v1/games/${gameId}/ron`;
+      body = {winner_seat: winners[0].seat, loser_seat: loser, han: winners[0].han, fu: winners[0].fu, yakuman_multiplier: winners[0].yakuman_multiplier, riichi_seats: riichi};
+    } else {
+      url = `/api/v1/games/${gameId}/multi-ron`;
+      body = {loser_seat: loser, winners, riichi_seats: riichi};
+    }
+    const res = await fetch(url, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({winner_seat: winner, loser_seat: loser, han, fu, yakuman_multiplier: yakuman, riichi_seats: riichi}),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'エラー');
@@ -1085,7 +1185,8 @@ async function submitRon() {
     showAgariEffect('ron');
     computeDeltas(data.round_result.point_changes);
     renderGame();
-    toast('ロン確定');
+    const label = winners.length === 1 ? 'ロン' : winners.length === 2 ? 'ダブルロン' : 'トリプルロン';
+    toast(`${label}確定`);
   } catch (e) {
     toast(e.message, true);
   }

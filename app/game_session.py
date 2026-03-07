@@ -31,6 +31,8 @@ class RoundRecord:
     score_result: dict | None = None
     point_changes: dict[int, int] = field(default_factory=dict)
     riichi_seats: list[int] = field(default_factory=list)
+    # For multi-ron (double/triple ron)
+    winners: list[dict] | None = None  # [{seat, han, fu, yakuman_multiplier, payment}]
 
 
 @dataclass
@@ -245,6 +247,97 @@ def apply_ron(session: GameSession, winner_seat: int, loser_seat: int,
 
     # Advance round
     dealer_won = winner_seat == dealer_seat
+    advance_round(session, dealer_won)
+
+    return round_record
+
+
+def apply_multi_ron(session: GameSession, loser_seat: int,
+                    winners: list[dict],
+                    riichi_seats: list[int] | None = None) -> RoundRecord:
+    """Apply a double or triple ron.
+
+    winners: list of {seat, han, fu, yakuman_multiplier} dicts.
+
+    Rules:
+    - Each winner gets paid independently by the loser.
+    - Honba bonus (300 × honba) goes to each winner.
+    - Kyotaku goes to the winner closest to loser in turn order (counter-clockwise).
+    - Dealer retains if dealer is among the winners.
+    """
+    if session.status != "active":
+        raise ValueError("Game is not active")
+    if len(winners) < 1 or len(winners) > 3:
+        raise ValueError("Number of winners must be 1-3")
+    winner_seats = [w["seat"] for w in winners]
+    if loser_seat in winner_seats:
+        raise ValueError("Winner and loser cannot be the same player")
+    if not all(0 <= s <= 3 for s in winner_seats + [loser_seat]):
+        raise ValueError("Invalid seat number")
+    if len(set(winner_seats)) != len(winner_seats):
+        raise ValueError("Duplicate winner seats")
+
+    _take_snapshot(session)
+
+    riichi_seats = riichi_seats or []
+    point_changes: dict[int, int] = {i: 0 for i in range(4)}
+
+    _apply_riichi(session, riichi_seats, point_changes)
+
+    dealer_seat = get_dealer_seat(session)
+    honba_bonus = session.current_honba * 300
+
+    # Find kyotaku recipient: winner closest to loser in turn order (counter-clockwise)
+    def turn_distance(from_seat: int, to_seat: int) -> int:
+        return (to_seat - from_seat) % 4
+
+    kyotaku_recipient = min(winner_seats, key=lambda s: turn_distance(loser_seat, s))
+
+    winners_info = []
+    for w in winners:
+        seat = w["seat"]
+        is_dealer = seat == dealer_seat
+        base = _calc_base(w["han"], w["fu"], w.get("yakuman_multiplier", 0))
+        payment = _calc_ron_payment(base, is_dealer)
+        total = payment + honba_bonus
+
+        point_changes[loser_seat] -= total
+        point_changes[seat] += total
+
+        winners_info.append({
+            "seat": seat,
+            "han": w["han"],
+            "fu": w["fu"],
+            "yakuman_multiplier": w.get("yakuman_multiplier", 0),
+            "payment": total,
+        })
+
+    # Kyotaku to closest winner
+    kyotaku_bonus = session.current_kyotaku * 1000
+    point_changes[kyotaku_recipient] += kyotaku_bonus
+
+    # Apply point changes
+    for seat, change in point_changes.items():
+        session.players[seat].points += change
+
+    round_record = RoundRecord(
+        round_number=session.current_round,
+        round_wind=get_round_wind(session),
+        dealer_seat=dealer_seat,
+        honba=session.current_honba,
+        result_type="ron",
+        winner_seat=winner_seats[0],  # primary winner for backward compat
+        loser_seat=loser_seat,
+        score_result={"multi_ron": True, "winners": winners_info},
+        point_changes=dict(point_changes),
+        riichi_seats=list(riichi_seats),
+        winners=winners_info,
+    )
+    session.rounds.append(round_record)
+
+    session.current_kyotaku = 0
+
+    dealer_won = dealer_seat in winner_seats
     advance_round(session, dealer_won)
 
     return round_record

@@ -309,6 +309,19 @@ class RonRequest(BaseModel):
     riichi_seats: list[conint(ge=0, le=3)] = Field(default_factory=list)
 
 
+class MultiRonWinner(BaseModel):
+    seat: conint(ge=0, le=3)
+    han: conint(ge=1)
+    fu: conint(ge=20) = 30
+    yakuman_multiplier: int = 0
+
+
+class MultiRonRequest(BaseModel):
+    loser_seat: conint(ge=0, le=3)
+    winners: list[MultiRonWinner] = Field(..., min_length=1, max_length=3)
+    riichi_seats: list[conint(ge=0, le=3)] = Field(default_factory=list)
+
+
 class TsumoRequest(BaseModel):
     winner_seat: conint(ge=0, le=3)
     han: conint(ge=1)
