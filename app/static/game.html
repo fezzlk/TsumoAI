@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>麻雀点数やり取り</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+.screen { display: none; padding: 16px; max-width: 480px; margin: 0 auto; }
+.screen.active { display: block; }
+h1 { font-size: 1.4em; text-align: center; margin-bottom: 16px; color: #e94560; }
+h2 { font-size: 1.1em; margin-bottom: 12px; color: #0f3460; background: #e94560; padding: 8px 12px; border-radius: 8px; text-align: center; }
+.btn { display: inline-block; padding: 12px 24px; border: none; border-radius: 8px; font-size: 1em; cursor: pointer; transition: transform 0.1s, opacity 0.2s; }
+.btn:active { transform: scale(0.95); }
+.btn-primary { background: #e94560; color: #fff; }
+.btn-secondary { background: #0f3460; color: #fff; }
+.btn-danger { background: #c0392b; color: #fff; }
+.btn-small { padding: 8px 16px; font-size: 0.85em; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+input, select { width: 100%; padding: 12px; border: 2px solid #333; border-radius: 8px; font-size: 1em; background: #16213e; color: #eee; margin-bottom: 8px; }
+input:focus, select:focus { border-color: #e94560; outline: none; }
+label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
+
+/* Lobby */
+.lobby-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+.room-code-display { text-align: center; font-size: 2.5em; font-weight: bold; letter-spacing: 8px; color: #e94560; background: #16213e; padding: 16px; border-radius: 12px; margin: 16px 0; }
+.player-list { list-style: none; margin: 12px 0; }
+.player-list li { padding: 8px 12px; background: #16213e; margin-bottom: 4px; border-radius: 6px; display: flex; justify-content: space-between; }
+
+/* Score board */
+.scoreboard { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.player-card { background: #16213e; border-radius: 12px; padding: 12px; text-align: center; position: relative; border: 2px solid transparent; }
+.player-card.dealer { border-color: #e94560; }
+.player-card .wind { font-size: 0.75em; color: #e94560; font-weight: bold; }
+.player-card .name { font-size: 0.9em; margin: 4px 0; }
+.player-card .points { font-size: 1.5em; font-weight: bold; }
+.player-card .points.negative { color: #c0392b; }
+.player-card .delta { font-size: 0.8em; margin-top: 2px; }
+.player-card .delta.plus { color: #2ecc71; }
+.player-card .delta.minus { color: #e74c3c; }
+
+/* Round info */
+.round-info { text-align: center; background: #0f3460; padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 0.9em; }
+.round-info span { margin: 0 8px; }
+
+/* Action buttons */
+.actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; justify-content: center; }
+.actions .btn { flex: 1; min-width: 80px; text-align: center; }
+
+/* Point selection grid */
+.point-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 12px 0; }
+.point-btn { padding: 10px 4px; border: 2px solid #333; border-radius: 8px; background: #16213e; color: #eee; font-size: 0.85em; cursor: pointer; text-align: center; transition: all 0.15s; }
+.point-btn:active, .point-btn.selected { background: #e94560; border-color: #e94560; }
+.point-btn .label { font-size: 0.7em; color: #aaa; display: block; }
+.point-btn.selected .label { color: #fff; }
+
+/* Player select chips */
+.player-chips { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.chip { padding: 8px 16px; border-radius: 20px; border: 2px solid #333; background: #16213e; color: #eee; cursor: pointer; font-size: 0.9em; }
+.chip.selected { background: #e94560; border-color: #e94560; }
+.chip:active { transform: scale(0.95); }
+
+/* Riichi checkboxes */
+.riichi-row { display: flex; gap: 8px; margin: 8px 0; align-items: center; flex-wrap: wrap; }
+.riichi-check { display: flex; align-items: center; gap: 4px; }
+.riichi-check input { width: auto; margin: 0; }
+
+/* History */
+.history-list { max-height: 300px; overflow-y: auto; }
+.history-item { background: #16213e; padding: 8px 12px; margin-bottom: 4px; border-radius: 6px; font-size: 0.85em; }
+.history-item .type { font-weight: bold; color: #e94560; }
+
+/* Toast */
+.toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #2ecc71; color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 1000; display: none; font-size: 0.9em; }
+.toast.error { background: #c0392b; }
+.toast.show { display: block; animation: fadeInOut 2s; }
+@keyframes fadeInOut { 0% { opacity: 0; } 10% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+
+/* Connection indicator */
+.conn-status { position: fixed; top: 8px; right: 8px; width: 12px; height: 12px; border-radius: 50%; background: #c0392b; }
+.conn-status.connected { background: #2ecc71; }
+
+/* Modal overlay */
+.modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
+.modal.active { display: flex; }
+.modal-content { background: #1a1a2e; border: 2px solid #0f3460; border-radius: 12px; padding: 20px; width: 90%; max-width: 400px; max-height: 80vh; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<div class="conn-status" id="connStatus"></div>
+<div class="toast" id="toast"></div>
+
+<!-- Screen 1: Lobby -->
+<div class="screen active" id="lobbyScreen">
+  <h1>麻雀点数やり取り</h1>
+  <div class="lobby-actions">
+    <div>
+      <label>ルーム作成</label>
+      <input id="p1" placeholder="プレイヤー1 (東)" value="">
+      <input id="p2" placeholder="プレイヤー2 (南)" value="">
+      <input id="p3" placeholder="プレイヤー3 (西)" value="">
+      <input id="p4" placeholder="プレイヤー4 (北)" value="">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <select id="gameType" style="flex:1">
+          <option value="east_only">東風戦</option>
+          <option value="east_south">半荘戦</option>
+        </select>
+        <input id="startPts" type="number" value="25000" style="flex:1" placeholder="初期持ち点">
+      </div>
+      <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="createRoom()">ルーム作成</button>
+    </div>
+    <div style="border-top:1px solid #333;padding-top:12px">
+      <label>ルームに参加</label>
+      <input id="joinCode" placeholder="ルームコード (6桁)" maxlength="6" style="text-transform:uppercase;text-align:center;font-size:1.3em;letter-spacing:4px">
+      <input id="joinName" placeholder="あなたの名前">
+      <button class="btn btn-secondary" style="width:100%;margin-top:4px" onclick="joinRoom()">参加</button>
+    </div>
+  </div>
+</div>
+
+<!-- Screen 2: Game -->
+<div class="screen" id="gameScreen">
+  <div class="round-info" id="roundInfo">
+    <span id="riWind">東1局</span>
+    <span id="riHonba">0本場</span>
+    <span id="riKyotaku">供託0</span>
+  </div>
+
+  <div class="scoreboard" id="scoreboard"></div>
+
+  <div class="actions">
+    <button class="btn btn-primary" onclick="showAction('ron')">ロン</button>
+    <button class="btn btn-primary" onclick="showAction('tsumo')">ツモ</button>
+    <button class="btn btn-secondary" onclick="showAction('draw')">流局</button>
+    <button class="btn btn-danger btn-small" onclick="doUndo()">取消</button>
+    <button class="btn btn-small" style="background:#555" onclick="showHistory()">履歴</button>
+  </div>
+
+  <div id="actionPanel" style="display:none"></div>
+
+  <div class="room-code-display" id="roomCodeDisplay" style="font-size:1em;padding:8px;margin:8px 0;letter-spacing:4px;cursor:pointer" onclick="copyRoomCode()"></div>
+</div>
+
+<!-- Modal for history -->
+<div class="modal" id="historyModal">
+  <div class="modal-content">
+    <h2>対局履歴</h2>
+    <div class="history-list" id="historyList"></div>
+    <button class="btn btn-secondary" style="width:100%;margin-top:12px" onclick="closeModal('historyModal')">閉じる</button>
+  </div>
+</div>
+
+<script>
+const WIND_NAMES = {E:'東',S:'南',W:'西',N:'北'};
+const WIND_ORDER = ['E','S','W','N'];
+
+let gameState = null;
+let gameId = null;
+let roomCode = null;
+let myName = null;
+let ws = null;
+let lastDeltas = {};
+
+// Common point values for one-tap selection
+const POINT_TABLE_RON = [
+  {pts: 1000, label: '1翻30符'},
+  {pts: 1300, label: '1翻40符'},
+  {pts: 1600, label: '1翻50符'},
+  {pts: 2000, label: '2翻30符/1翻子'},
+  {pts: 2600, label: '2翻40符'},
+  {pts: 3200, label: '2翻50符'},
+  {pts: 3900, label: '3翻30符'},
+  {pts: 5200, label: '3翻40符'},
+  {pts: 7700, label: '3翻60符'},
+  {pts: 8000, label: '満貫'},
+  {pts: 12000, label: '跳満'},
+  {pts: 16000, label: '倍満'},
+  {pts: 24000, label: '三倍満'},
+  {pts: 32000, label: '役満'},
+];
+
+const POINT_TABLE_RON_DEALER = [
+  {pts: 1500, label: '1翻30符'},
+  {pts: 2000, label: '1翻40符'},
+  {pts: 2400, label: '1翻50符'},
+  {pts: 2900, label: '2翻30符'},
+  {pts: 3900, label: '2翻40符'},
+  {pts: 4800, label: '2翻50符'},
+  {pts: 5800, label: '3翻30符'},
+  {pts: 7700, label: '3翻40符'},
+  {pts: 12000, label: '満貫'},
+  {pts: 18000, label: '跳満'},
+  {pts: 24000, label: '倍満'},
+  {pts: 36000, label: '三倍満'},
+  {pts: 48000, label: '役満'},
+];
+
+const POINT_TABLE_TSUMO = [
+  {label: '1翻30符', dealer: 500, non: 300},
+  {label: '1翻40符', dealer: 700, non: 400},
+  {label: '2翻30符', dealer: 1000, non: 500},
+  {label: '2翻40符', dealer: 1300, non: 700},
+  {label: '3翻30符', dealer: 2000, non: 1000},
+  {label: '3翻40符', dealer: 2600, non: 1300},
+  {label: '満貫', dealer: 4000, non: 2000},
+  {label: '跳満', dealer: 6000, non: 3000},
+  {label: '倍満', dealer: 8000, non: 4000},
+  {label: '三倍満', dealer: 12000, non: 6000},
+  {label: '役満', dealer: 16000, non: 8000},
+];
+
+const POINT_TABLE_TSUMO_DEALER = [
+  {label: '1翻30符', all: 500},
+  {label: '1翻40符', all: 700},
+  {label: '2翻30符', all: 1000},
+  {label: '2翻40符', all: 1300},
+  {label: '3翻30符', all: 2000},
+  {label: '3翻40符', all: 2600},
+  {label: '満貫', all: 4000},
+  {label: '跳満', all: 6000},
+  {label: '倍満', all: 8000},
+  {label: '三倍満', all: 12000},
+  {label: '役満', all: 16000},
+];
+
+function toast(msg, isError=false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(() => t.className = 'toast', 2200);
+}
+
+function copyRoomCode() {
+  if (roomCode) {
+    navigator.clipboard.writeText(roomCode).then(() => toast('コードをコピーしました'));
+  }
+}
+
+async function createRoom() {
+  const names = [
+    document.getElementById('p1').value.trim() || 'プレイヤー1',
+    document.getElementById('p2').value.trim() || 'プレイヤー2',
+    document.getElementById('p3').value.trim() || 'プレイヤー3',
+    document.getElementById('p4').value.trim() || 'プレイヤー4',
+  ];
+  const gameType = document.getElementById('gameType').value;
+  const startPts = parseInt(document.getElementById('startPts').value) || 25000;
+
+  try {
+    const res = await fetch('/api/v1/games', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({player_names: names, starting_points: startPts, game_type: gameType}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    gameId = data.game_id;
+    roomCode = data.room_code;
+    gameState = data.game_state;
+    myName = names[0];
+    showGameScreen();
+    connectWS();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function joinRoom() {
+  const code = document.getElementById('joinCode').value.trim().toUpperCase();
+  const name = document.getElementById('joinName').value.trim() || 'ゲスト';
+  if (code.length < 4) { toast('コードを入力してください', true); return; }
+
+  try {
+    const res = await fetch(`/api/v1/rooms/${code}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'ルームが見つかりません');
+    gameId = data.game_id;
+    roomCode = code;
+    gameState = data.game_state;
+    myName = name;
+    showGameScreen();
+    connectWS();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/ws/rooms/${roomCode}?player_name=${encodeURIComponent(myName)}`;
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    document.getElementById('connStatus').classList.add('connected');
+  };
+  ws.onclose = () => {
+    document.getElementById('connStatus').classList.remove('connected');
+    // Auto-reconnect
+    setTimeout(connectWS, 2000);
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'pong') return;
+    if (msg.game_state) {
+      const prev = gameState;
+      gameState = msg.game_state;
+      if (msg.round_result) {
+        computeDeltas(msg.round_result.point_changes);
+      }
+      renderGame();
+      if (msg.type === 'undo') toast('取り消しされました');
+    }
+    if (msg.type === 'player_joined') toast(`${msg.player_name} が参加`);
+    if (msg.type === 'player_left') toast(`${msg.player_name} が退出`);
+  };
+  // Keep-alive
+  setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({type:'ping'})); }, 25000);
+}
+
+function showGameScreen() {
+  document.getElementById('lobbyScreen').classList.remove('active');
+  document.getElementById('gameScreen').classList.add('active');
+  document.getElementById('roomCodeDisplay').textContent = `ROOM: ${roomCode}`;
+  renderGame();
+}
+
+function computeDeltas(pointChanges) {
+  lastDeltas = {};
+  if (pointChanges) {
+    for (const [seat, delta] of Object.entries(pointChanges)) {
+      lastDeltas[parseInt(seat)] = delta;
+    }
+  }
+}
+
+function renderGame() {
+  if (!gameState) return;
+  const gs = gameState;
+
+  // Round info
+  const windName = WIND_NAMES[gs.current_round_wind] || '東';
+  const dealerNum = (gs.current_dealer % 4) + 1;
+  document.getElementById('riWind').textContent = `${windName}${dealerNum}局`;
+  document.getElementById('riHonba').textContent = `${gs.current_honba}本場`;
+  document.getElementById('riKyotaku').textContent = `供託${gs.current_kyotaku}`;
+
+  // Scoreboard
+  const sb = document.getElementById('scoreboard');
+  sb.innerHTML = '';
+  const seatWinds = computeSeatWinds(gs);
+  for (const p of gs.players) {
+    const card = document.createElement('div');
+    card.className = 'player-card' + (p.seat === gs.current_dealer ? ' dealer' : '');
+    const delta = lastDeltas[p.seat];
+    let deltaHtml = '';
+    if (delta && delta !== 0) {
+      const cls = delta > 0 ? 'plus' : 'minus';
+      deltaHtml = `<div class="delta ${cls}">${delta > 0 ? '+' : ''}${delta.toLocaleString()}</div>`;
+    }
+    card.innerHTML = `
+      <div class="wind">${WIND_NAMES[seatWinds[p.seat]] || ''}</div>
+      <div class="name">${escHtml(p.name)}</div>
+      <div class="points${p.points < 0 ? ' negative' : ''}">${p.points.toLocaleString()}</div>
+      ${deltaHtml}
+    `;
+    sb.appendChild(card);
+  }
+
+  // Hide action panel when game updates (new round)
+  document.getElementById('actionPanel').style.display = 'none';
+}
+
+function computeSeatWinds(gs) {
+  // current_dealer is the dealer seat; dealer is always 東 in current round
+  const winds = {};
+  for (let i = 0; i < 4; i++) {
+    const offset = (i - gs.current_dealer + 4) % 4;
+    winds[i] = WIND_ORDER[offset];
+  }
+  return winds;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showAction(type) {
+  const panel = document.getElementById('actionPanel');
+  panel.style.display = 'block';
+
+  if (type === 'ron') renderRonPanel(panel);
+  else if (type === 'tsumo') renderTsumoPanel(panel);
+  else if (type === 'draw') renderDrawPanel(panel);
+}
+
+function renderRonPanel(panel) {
+  const gs = gameState;
+  const isDealer = {};
+  gs.players.forEach(p => { isDealer[p.seat] = p.seat === gs.current_dealer; });
+
+  let html = '<h2>ロン</h2>';
+
+  // Winner selection
+  html += '<label>和了者</label><div class="player-chips" id="ronWinner">';
+  gs.players.forEach(p => {
+    html += `<div class="chip" data-seat="${p.seat}" onclick="selectChip(this,'ronWinner')">${escHtml(p.name)}</div>`;
+  });
+  html += '</div>';
+
+  // Loser selection
+  html += '<label>放銃者</label><div class="player-chips" id="ronLoser">';
+  gs.players.forEach(p => {
+    html += `<div class="chip" data-seat="${p.seat}" onclick="selectChip(this,'ronLoser')">${escHtml(p.name)}</div>`;
+  });
+  html += '</div>';
+
+  // Point selection - show both tables, JS will filter based on winner being dealer
+  html += '<label>点数 (子)</label>';
+  html += '<div class="point-grid" id="ronPointsNon">';
+  POINT_TABLE_RON.forEach(p => {
+    html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPointsNon')">
+      ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
+  });
+  html += '</div>';
+
+  html += '<label>点数 (親)</label>';
+  html += '<div class="point-grid" id="ronPointsDealer" style="display:none">';
+  POINT_TABLE_RON_DEALER.forEach(p => {
+    html += `<div class="point-btn" data-pts="${p.pts}" onclick="selectPoint(this,'ronPointsDealer')">
+      ${p.pts.toLocaleString()}<span class="label">${p.label}</span></div>`;
+  });
+  html += '</div>';
+
+  // Custom point input
+  html += '<label>またはカスタム点数</label>';
+  html += '<input type="number" id="ronCustomPts" placeholder="例: 5200" step="100">';
+
+  // Riichi
+  html += '<label>リーチ宣言</label><div class="riichi-row" id="ronRiichi">';
+  gs.players.forEach(p => {
+    html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
+  });
+  html += '</div>';
+
+  html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitRon()">確定</button>`;
+  html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
+
+  panel.innerHTML = html;
+}
+
+function renderTsumoPanel(panel) {
+  const gs = gameState;
+
+  let html = '<h2>ツモ</h2>';
+
+  // Winner selection
+  html += '<label>和了者</label><div class="player-chips" id="tsumoWinner">';
+  gs.players.forEach(p => {
+    html += `<div class="chip" data-seat="${p.seat}" onclick="selectChipTsumo(this)">${escHtml(p.name)}</div>`;
+  });
+  html += '</div>';
+
+  // Point grids - non-dealer tsumo
+  html += '<label>点数 (子ツモ)</label>';
+  html += '<div class="point-grid" id="tsumoPointsNon">';
+  POINT_TABLE_TSUMO.forEach((p, i) => {
+    html += `<div class="point-btn" data-idx="${i}" onclick="selectPoint(this,'tsumoPointsNon')">
+      ${p.dealer.toLocaleString()}/${p.non.toLocaleString()}<span class="label">${p.label}</span></div>`;
+  });
+  html += '</div>';
+
+  // Dealer tsumo
+  html += '<label>点数 (親ツモ)</label>';
+  html += '<div class="point-grid" id="tsumoPointsDealer" style="display:none">';
+  POINT_TABLE_TSUMO_DEALER.forEach((p, i) => {
+    html += `<div class="point-btn" data-idx="${i}" onclick="selectPoint(this,'tsumoPointsDealer')">
+      ${p.all.toLocaleString()}オール<span class="label">${p.label}</span></div>`;
+  });
+  html += '</div>';
+
+  // Custom
+  html += '<label>またはカスタム (翻/符)</label>';
+  html += '<div style="display:flex;gap:8px">';
+  html += '<input type="number" id="tsumoHan" placeholder="翻" min="1" style="flex:1">';
+  html += '<input type="number" id="tsumoFu" placeholder="符" min="20" step="10" value="30" style="flex:1">';
+  html += '</div>';
+
+  // Riichi
+  html += '<label>リーチ宣言</label><div class="riichi-row" id="tsumoRiichi">';
+  gs.players.forEach(p => {
+    html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
+  });
+  html += '</div>';
+
+  html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitTsumo()">確定</button>`;
+  html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
+
+  panel.innerHTML = html;
+}
+
+function renderDrawPanel(panel) {
+  const gs = gameState;
+
+  let html = '<h2>流局</h2>';
+
+  html += '<label>テンパイ者 (複数選択可)</label><div class="player-chips" id="drawTenpai">';
+  gs.players.forEach(p => {
+    html += `<div class="chip" data-seat="${p.seat}" onclick="toggleChip(this)">${escHtml(p.name)}</div>`;
+  });
+  html += '</div>';
+
+  html += '<label>リーチ宣言</label><div class="riichi-row" id="drawRiichi">';
+  gs.players.forEach(p => {
+    html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
+  });
+  html += '</div>';
+
+  html += `<button class="btn btn-secondary" style="width:100%;margin-top:12px" onclick="submitDraw()">確定</button>`;
+  html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
+
+  panel.innerHTML = html;
+}
+
+function selectChip(el, groupId) {
+  document.querySelectorAll(`#${groupId} .chip`).forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+
+  // For ron: show appropriate point table based on winner being dealer
+  if (groupId === 'ronWinner') {
+    const seat = parseInt(el.dataset.seat);
+    const isDealer = seat === gameState.current_dealer;
+    document.getElementById('ronPointsNon').style.display = isDealer ? 'none' : 'grid';
+    document.getElementById('ronPointsDealer').style.display = isDealer ? 'grid' : 'none';
+  }
+}
+
+function selectChipTsumo(el) {
+  document.querySelectorAll('#tsumoWinner .chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  const seat = parseInt(el.dataset.seat);
+  const isDealer = seat === gameState.current_dealer;
+  document.getElementById('tsumoPointsNon').style.display = isDealer ? 'none' : 'grid';
+  document.getElementById('tsumoPointsDealer').style.display = isDealer ? 'grid' : 'none';
+}
+
+function toggleChip(el) {
+  el.classList.toggle('selected');
+}
+
+function selectPoint(el, groupId) {
+  document.querySelectorAll(`#${groupId} .point-btn`).forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+function hideAction() {
+  document.getElementById('actionPanel').style.display = 'none';
+}
+
+function getSelectedSeat(groupId) {
+  const sel = document.querySelector(`#${groupId} .chip.selected`);
+  return sel ? parseInt(sel.dataset.seat) : null;
+}
+
+function getSelectedSeats(groupId) {
+  return Array.from(document.querySelectorAll(`#${groupId} .chip.selected`))
+    .map(c => parseInt(c.dataset.seat));
+}
+
+function getRiichiSeats(groupId) {
+  return Array.from(document.querySelectorAll(`#${groupId} input:checked`))
+    .map(cb => parseInt(cb.value));
+}
+
+// Reverse-calculate han/fu from a ron point value for the API
+function ronPointsToHanFu(pts, isDealer) {
+  // Standard point table reverse lookup
+  const table = isDealer ? [
+    [1500,1,30],[2000,1,40],[2400,1,50],[2900,2,30],[3900,2,40],[4800,2,50],
+    [5800,3,30],[7700,3,40],[12000,4,30],[18000,6,30],[24000,8,30],[36000,11,30],[48000,13,30],
+  ] : [
+    [1000,1,30],[1300,1,40],[1600,1,50],[2000,2,30],[2600,2,40],[3200,2,50],
+    [3900,3,30],[5200,3,40],[6400,3,50],[7700,3,60],[8000,4,30],[12000,6,30],
+    [16000,8,30],[24000,11,30],[32000,13,30],
+  ];
+  for (const [p, h, f] of table) {
+    if (p === pts) return {han: h, fu: f, yakuman: 0};
+  }
+  // For unknown pts, try to work backwards or default to mangan
+  if (pts >= 48000 && isDealer) return {han: 13, fu: 30, yakuman: 1};
+  if (pts >= 32000 && !isDealer) return {han: 13, fu: 30, yakuman: 1};
+  return {han: 5, fu: 30, yakuman: 0}; // fallback mangan
+}
+
+function tsumoIdxToHanFu(idx, isDealer) {
+  const table = isDealer ? [
+    [1,30],[1,40],[2,30],[2,40],[3,30],[3,40],[5,30],[6,30],[8,30],[11,30],[13,30],
+  ] : [
+    [1,30],[1,40],[2,30],[2,40],[3,30],[3,40],[5,30],[6,30],[8,30],[11,30],[13,30],
+  ];
+  if (idx >= 0 && idx < table.length) {
+    return {han: table[idx][0], fu: table[idx][1], yakuman: table[idx][0] >= 13 ? 1 : 0};
+  }
+  return {han: 5, fu: 30, yakuman: 0};
+}
+
+async function submitRon() {
+  const winner = getSelectedSeat('ronWinner');
+  const loser = getSelectedSeat('ronLoser');
+  if (winner === null || loser === null) { toast('和了者と放銃者を選択してください', true); return; }
+  if (winner === loser) { toast('和了者と放銃者は別のプレイヤーにしてください', true); return; }
+
+  const riichi = getRiichiSeats('ronRiichi');
+  const isDealer = winner === gameState.current_dealer;
+
+  // Check custom pts first
+  const customPts = parseInt(document.getElementById('ronCustomPts').value);
+  let han, fu, yakuman;
+  if (customPts > 0) {
+    const calc = ronPointsToHanFu(customPts, isDealer);
+    han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+  } else {
+    const gridId = isDealer ? 'ronPointsDealer' : 'ronPointsNon';
+    const sel = document.querySelector(`#${gridId} .point-btn.selected`);
+    if (!sel) { toast('点数を選択してください', true); return; }
+    const pts = parseInt(sel.dataset.pts);
+    const calc = ronPointsToHanFu(pts, isDealer);
+    han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+  }
+
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/ron`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({winner_seat: winner, loser_seat: loser, han, fu, yakuman_multiplier: yakuman, riichi_seats: riichi}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    gameState = data.game_state;
+    computeDeltas(data.round_result.point_changes);
+    renderGame();
+    toast('ロン確定');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function submitTsumo() {
+  const winner = getSelectedSeat('tsumoWinner');
+  if (winner === null) { toast('和了者を選択してください', true); return; }
+
+  const riichi = getRiichiSeats('tsumoRiichi');
+  const isDealer = winner === gameState.current_dealer;
+
+  // Check custom han/fu first
+  const customHan = parseInt(document.getElementById('tsumoHan').value);
+  const customFu = parseInt(document.getElementById('tsumoFu').value);
+  let han, fu, yakuman;
+  if (customHan > 0) {
+    han = customHan; fu = customFu || 30; yakuman = han >= 13 ? 1 : 0;
+  } else {
+    const gridId = isDealer ? 'tsumoPointsDealer' : 'tsumoPointsNon';
+    const sel = document.querySelector(`#${gridId} .point-btn.selected`);
+    if (!sel) { toast('点数を選択してください', true); return; }
+    const idx = parseInt(sel.dataset.idx);
+    const calc = tsumoIdxToHanFu(idx, isDealer);
+    han = calc.han; fu = calc.fu; yakuman = calc.yakuman;
+  }
+
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/tsumo`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({winner_seat: winner, han, fu, yakuman_multiplier: yakuman, riichi_seats: riichi}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    gameState = data.game_state;
+    computeDeltas(data.round_result.point_changes);
+    renderGame();
+    toast('ツモ確定');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function submitDraw() {
+  const tenpai = getSelectedSeats('drawTenpai');
+  const riichi = getRiichiSeats('drawRiichi');
+
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/draw`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tenpai_seats: tenpai, riichi_seats: riichi}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    gameState = data.game_state;
+    computeDeltas(data.round_result.point_changes);
+    renderGame();
+    toast('流局確定');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function doUndo() {
+  if (!confirm('直前の操作を取り消しますか？')) return;
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/undo`, {method: 'POST'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    gameState = data.game_state;
+    lastDeltas = {};
+    renderGame();
+    toast('取り消しました');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function showHistory() {
+  try {
+    const res = await fetch(`/api/v1/games/${gameId}/history`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'エラー');
+    const list = document.getElementById('historyList');
+    list.innerHTML = '';
+    if (data.rounds.length === 0) {
+      list.innerHTML = '<p style="text-align:center;color:#aaa">まだ記録がありません</p>';
+    }
+    const typeLabels = {ron:'ロン',tsumo:'ツモ',draw:'流局',init:'開始'};
+    data.rounds.forEach(r => {
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      const windName = WIND_NAMES[r.round_wind] || '';
+      const changes = Object.entries(r.point_changes)
+        .map(([s, d]) => `${gameState.players[parseInt(s)].name}: ${d > 0 ? '+' : ''}${d.toLocaleString()}`)
+        .filter(x => !x.endsWith(': 0'))
+        .join(', ');
+      div.innerHTML = `<span class="type">${windName}${(parseInt(r.dealer_seat) % 4) + 1}局 ${r.honba}本場</span>
+        ${typeLabels[r.result_type] || r.result_type} ${changes}`;
+      list.appendChild(div);
+    });
+    document.getElementById('historyModal').classList.add('active');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('active');
+}
+</script>
+</body>
+</html>
