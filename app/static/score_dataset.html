@@ -271,6 +271,56 @@
         font-size: 0.75rem;
         border-radius: 6px;
       }
+      .yaku-edit-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      .yaku-edit-row select, .yaku-edit-row input[type="text"] {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        font-size: 0.88rem;
+      }
+      .yaku-edit-row input[type="number"] {
+        width: 60px;
+        padding: 6px 8px;
+        font-size: 0.88rem;
+      }
+      .yaku-remove-btn {
+        margin-top: 0;
+        padding: 4px 8px;
+        background: #b91c1c;
+        font-size: 0.75rem;
+        border-radius: 6px;
+        flex-shrink: 0;
+      }
+      .gcs-file-item {
+        border: 1px solid #d8dfeb;
+        border-radius: 10px;
+        padding: 10px;
+        background: #fff;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .gcs-file-info {
+        flex: 1;
+        min-width: 0;
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .gcs-file-info .file-name {
+        font-weight: 600;
+        word-break: break-all;
+      }
+      .gcs-file-info .file-meta {
+        color: #5f5849;
+        font-size: 0.78rem;
+      }
       .badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
       .badge {
         display: inline-flex;
@@ -414,20 +464,60 @@
             <label class="check"><input id="tenhou" type="checkbox" /> 天和</label>
           </div>
 
-          <button id="generateBtn">データセットに追加</button>
+          <button id="generateBtn">点数計算して編集</button>
           <div id="error" class="error"></div>
         </section>
 
         <section class="card">
-          <h2>データセット出力</h2>
-          <p class="hint">追加されたデータセットエントリーが下に表示されます。全体JSONをコピーして利用できます。</p>
+          <h2>結果編集</h2>
+          <div id="editFormArea" class="hidden">
+            <div class="section-block">
+              <label>役一覧</label>
+              <div id="editYakuList"></div>
+              <div style="display:flex;gap:8px;margin-top:8px;">
+                <button id="addYakuBtn" type="button" class="mini-btn">役を追加</button>
+              </div>
+            </div>
 
+            <div class="row" style="margin-top:10px;">
+              <div>
+                <label for="editHan">合計翻数</label>
+                <input id="editHan" type="number" min="0" value="0" />
+              </div>
+              <div>
+                <label for="editFu">符</label>
+                <input id="editFu" type="number" min="0" step="10" value="30" />
+              </div>
+            </div>
+
+            <div class="section-block" style="margin-top:10px;">
+              <label>自動算出点数</label>
+              <div id="editPointsDisplay" class="hint"></div>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:10px;">
+              <button id="confirmEntryBtn" type="button">確定してデータセットに追加</button>
+              <button id="cancelEditBtn" type="button" class="mini-btn" style="background:#b91c1c;">キャンセル</button>
+            </div>
+          </div>
+          <div id="editPlaceholder" class="hint">左の入力欄で条件を設定し「点数計算して編集」を押すと、ここに編集フォームが表示されます。</div>
+
+          <h2 style="margin-top:20px;">データセット</h2>
           <div class="dataset-list" id="datasetList"></div>
 
           <label>全体JSON</label>
           <pre class="dataset-json" id="datasetJson">[]</pre>
-          <button id="copyJsonBtn" class="copy-btn" type="button">JSONをコピー</button>
-          <button id="clearAllBtn" class="mini-btn" type="button" style="background:#b91c1c;margin-left:8px;">全てクリア</button>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            <button id="copyJsonBtn" class="copy-btn" type="button">JSONをコピー</button>
+            <button id="uploadGcsBtn" type="button">GCSにアップロード</button>
+            <button id="clearAllBtn" class="mini-btn" type="button" style="background:#b91c1c;">全てクリア</button>
+          </div>
+          <div id="uploadStatus" class="hint" style="margin-top:6px;"></div>
+
+          <h2 style="margin-top:20px;">GCS保存済みデータセット</h2>
+          <button id="refreshGcsListBtn" type="button" class="mini-btn" style="margin-bottom:8px;">一覧を更新</button>
+          <div id="gcsFileList" class="dataset-list"></div>
+          <div id="gcsListStatus" class="hint"></div>
         </section>
       </div>
     </main>
@@ -1006,6 +1096,331 @@
         };
       }
 
+      /* ── Format conversion helpers ── */
+      const YAKU_JA_TO_EN = {
+        "ダブル立直": "Double Riichi",
+        "ドラ": "Dora",
+        "一気通貫": "Pure Straight",
+        "一発": "Ippatsu",
+        "一盃口": "Pure Double Sequence",
+        "七対子": "Seven Pairs",
+        "三暗刻": "3 Concealed Triplets",
+        "三槓子": "3 Quads",
+        "三色同刻": "Mixed Triple Triplets",
+        "三色同順": "Mixed Triple Sequence",
+        "九蓮宝燈": "Nine Gates",
+        "二盃口": "Twice Pure Double Sequence",
+        "四暗刻": "Four Concealed Triplets",
+        "四暗刻単騎": "Four Concealed Triplets (Single Wait)",
+        "四槓子": "Four Quads",
+        "国士無双": "Thirteen Orphans",
+        "国士無双十三面待ち": "Thirteen Orphans (13 Waits)",
+        "地和": "Earthly Hand",
+        "場風牌": "Prevalent Wind",
+        "大三元": "Big Three Dragons",
+        "大四喜": "Big Four Winds",
+        "天和": "Heavenly Hand",
+        "字一色": "All Honors",
+        "対々和": "All Triplets",
+        "小三元": "Little Three Dragons",
+        "小四喜": "Little Four Winds",
+        "嶺上開花": "After a Quad",
+        "平和": "Pinfu",
+        "断么九": "All Simples",
+        "槍槓": "Robbing a Quad",
+        "河底撈魚": "Under the River",
+        "流し満貫": "Nagashi Mangan",
+        "海底撈月": "Under the Sea",
+        "混一色": "Half Flush",
+        "混全帯么九": "Half Outside Hand",
+        "混老頭": "All Terminals and Honors",
+        "清一色": "Full Flush",
+        "清老頭": "All Terminals",
+        "立直": "Riichi",
+        "純全帯么九": "Pure Outside Hand",
+        "純正九蓮宝燈": "Pure Nine Gates",
+        "緑一色": "All Green",
+        "自風牌": "Seat Wind",
+        "裏ドラ": "Ura Dora",
+        "赤ドラ": "Red Five",
+        "門前清自摸和": "Fully Concealed Hand"
+      };
+
+      const WIND_TO_EN = { E: "east", S: "south", W: "west", N: "north" };
+
+      function tileCodeToNumber(code) {
+        const t = (code || "").trim();
+        if (t === "5mr") return 10;
+        if (t === "5pr") return 20;
+        if (t === "5sr") return 30;
+        if (/^[1-9]m$/.test(t)) return 10 + parseInt(t[0]);
+        if (/^[1-9]p$/.test(t)) return 20 + parseInt(t[0]);
+        if (/^[1-9]s$/.test(t)) return 30 + parseInt(t[0]);
+        const honorMap = { E: 41, S: 42, W: 43, N: 44, P: 45, F: 46, C: 47 };
+        return honorMap[t] || null;
+      }
+
+      function convertToDatasetFormat(payload, result) {
+        const ctx = payload.context;
+        const hand = payload.hand;
+        const r = result;
+        const isDealer = ctx.seat_wind === "E";
+        const isTsumo = ctx.win_type === "tsumo";
+
+        const input = {
+          round: {
+            honba: ctx.honba,
+            bakaze: WIND_TO_EN[ctx.round_wind] || ctx.round_wind,
+            dora_indicators: ctx.dora_indicators.map(tileCodeToNumber),
+            ura_dora_indicators: ctx.ura_dora_indicators.map(tileCodeToNumber)
+          },
+          win: {
+            jikaze: WIND_TO_EN[ctx.seat_wind] || ctx.seat_wind,
+            win_type: ctx.win_type
+          },
+          yaku_context: {
+            is_riichi: ctx.riichi,
+            is_double_riichi: ctx.double_riichi,
+            is_ippatsu: ctx.ippatsu,
+            is_tenhou: ctx.tenhou,
+            is_chiihou: ctx.chiihou,
+            is_under_the_river: ctx.houtei,
+            is_under_the_sea: ctx.haitei,
+            is_rinshan_kaihou: ctx.rinshan,
+            is_robbing_a_quad: ctx.chankan
+          },
+          winning_hand: {
+            closed_tiles: hand.closed_tiles.map(tileCodeToNumber),
+            melds: (hand.melds || []).map((m) => ({
+              type: m.type,
+              tiles: m.tiles.map(tileCodeToNumber)
+            })),
+            winning_tile: tileCodeToNumber(hand.win_tile)
+          }
+        };
+
+        let oyaPayment = null;
+        let koPayment = null;
+        if (isTsumo) {
+          if (isDealer) {
+            koPayment = r.points.tsumo_non_dealer_pay;
+          } else {
+            oyaPayment = r.points.tsumo_dealer_pay;
+            koPayment = r.points.tsumo_non_dealer_pay;
+          }
+        }
+
+        const yakuList = (r.yaku || []).map((y) => ({
+          name: YAKU_JA_TO_EN[y.name] || y.name,
+          han: y.han
+        }));
+        (r.yakuman || []).forEach((name) => {
+          yakuList.push({ name: YAKU_JA_TO_EN[name] || name, han: 0 });
+        });
+
+        const output = {
+          han: r.han,
+          fu: r.fu || null,
+          oya_payment: oyaPayment,
+          ko_payment: koPayment,
+          yaku: yakuList
+        };
+
+        return { input, output };
+      }
+
+      /* ── Points auto-calculation ── */
+      const ALL_YAKU_EN = [
+        "Riichi","Double Riichi","Ippatsu","Fully Concealed Hand","Pinfu",
+        "All Simples","Pure Double Sequence","Seat Wind","Prevalent Wind",
+        "Little Three Dragons","Mixed Triple Sequence","Pure Straight",
+        "Half Outside Hand","All Triplets","3 Concealed Triplets","3 Quads",
+        "Mixed Triple Triplets","Seven Pairs","Half Flush","Full Flush",
+        "Pure Outside Hand","Twice Pure Double Sequence",
+        "All Terminals and Honors","Half Outside Hand",
+        "Under the Sea","Under the River","After a Quad","Robbing a Quad",
+        "Dora","Ura Dora","Red Five",
+        "Nagashi Mangan",
+        "Thirteen Orphans","Thirteen Orphans (13 Waits)",
+        "Four Concealed Triplets","Four Concealed Triplets (Single Wait)",
+        "Big Three Dragons","Little Four Winds","Big Four Winds",
+        "All Honors","All Terminals","All Green","Nine Gates","Pure Nine Gates",
+        "Four Quads","Heavenly Hand","Earthly Hand"
+      ];
+
+      function calcBasePoints(han, fu) {
+        if (han >= 78) return 8000 * Math.floor(han / 13);
+        if (han >= 13) return 8000;
+        if (han >= 11) return 6000;
+        if (han >= 8) return 4000;
+        if (han >= 6) return 3000;
+        if (han >= 5) return 2000;
+        if (han === 4 && fu >= 30) return 2000;
+        if (han === 3 && fu >= 70) return 2000;
+        const base = fu * Math.pow(2, han + 2);
+        return Math.min(base, 2000);
+      }
+
+      function ceilTo100(n) { return Math.ceil(n / 100) * 100; }
+
+      function calcPayments(han, fu, isDealer, isTsumo) {
+        const base = calcBasePoints(han, fu);
+        if (isTsumo) {
+          if (isDealer) {
+            return { oya_payment: null, ko_payment: ceilTo100(base * 2) };
+          }
+          return { oya_payment: ceilTo100(base * 2), ko_payment: ceilTo100(base) };
+        }
+        return { oya_payment: null, ko_payment: null };
+      }
+
+      /* ── Edit form state ── */
+      let editState = null; // { input, editingIndex }
+
+      function openEditForm(input, yakuList, han, fu, editingIndex) {
+        editState = { input, editingIndex };
+        document.getElementById("editFormArea").classList.remove("hidden");
+        document.getElementById("editPlaceholder").classList.add("hidden");
+        editState.yakuList = yakuList.map((y) => ({ ...y }));
+        document.getElementById("editHan").value = han;
+        document.getElementById("editFu").value = fu || 30;
+        renderEditYakuList();
+        recalcEditPoints();
+      }
+
+      function closeEditForm() {
+        editState = null;
+        document.getElementById("editFormArea").classList.add("hidden");
+        document.getElementById("editPlaceholder").classList.remove("hidden");
+      }
+
+      function renderEditYakuList() {
+        const root = document.getElementById("editYakuList");
+        root.innerHTML = "";
+        editState.yakuList.forEach((y, idx) => {
+          const row = document.createElement("div");
+          row.className = "yaku-edit-row";
+
+          const sel = document.createElement("select");
+          const customOpt = document.createElement("option");
+          customOpt.value = "__custom__";
+          customOpt.textContent = "-- 手入力 --";
+          sel.appendChild(customOpt);
+          ALL_YAKU_EN.forEach((name) => {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            sel.appendChild(opt);
+          });
+          if (ALL_YAKU_EN.includes(y.name)) {
+            sel.value = y.name;
+          } else {
+            sel.value = "__custom__";
+          }
+          sel.addEventListener("change", () => {
+            if (sel.value !== "__custom__") {
+              editState.yakuList[idx].name = sel.value;
+              textInput.value = sel.value;
+              textInput.classList.add("hidden");
+            } else {
+              textInput.classList.remove("hidden");
+              textInput.value = editState.yakuList[idx].name;
+              textInput.focus();
+            }
+            syncHanFromYaku();
+          });
+          row.appendChild(sel);
+
+          const textInput = document.createElement("input");
+          textInput.type = "text";
+          textInput.value = y.name;
+          textInput.placeholder = "役名(英語)";
+          textInput.className = ALL_YAKU_EN.includes(y.name) ? "hidden" : "";
+          textInput.addEventListener("input", () => {
+            editState.yakuList[idx].name = textInput.value;
+          });
+          row.appendChild(textInput);
+
+          const hanInput = document.createElement("input");
+          hanInput.type = "number";
+          hanInput.min = "0";
+          hanInput.value = y.han;
+          hanInput.title = "翻数";
+          hanInput.addEventListener("input", () => {
+            editState.yakuList[idx].han = parseInt(hanInput.value) || 0;
+            syncHanFromYaku();
+          });
+          row.appendChild(hanInput);
+
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "yaku-remove-btn";
+          removeBtn.textContent = "×";
+          removeBtn.addEventListener("click", () => {
+            editState.yakuList.splice(idx, 1);
+            renderEditYakuList();
+            syncHanFromYaku();
+          });
+          row.appendChild(removeBtn);
+
+          root.appendChild(row);
+        });
+      }
+
+      function syncHanFromYaku() {
+        const total = editState.yakuList.reduce((s, y) => s + (y.han || 0), 0);
+        document.getElementById("editHan").value = total;
+        recalcEditPoints();
+      }
+
+      function recalcEditPoints() {
+        if (!editState) return;
+        const han = parseInt(document.getElementById("editHan").value) || 0;
+        const fu = parseInt(document.getElementById("editFu").value) || 0;
+        const isDealer = editState.input.win.jikaze === "east";
+        const isTsumo = editState.input.win.win_type === "tsumo";
+        const { oya_payment, ko_payment } = calcPayments(han, fu, isDealer, isTsumo);
+        const parts = [];
+        if (isTsumo) {
+          if (isDealer) {
+            parts.push(`子各 ${ko_payment} オール`);
+          } else {
+            parts.push(`親 ${oya_payment} / 子各 ${ko_payment}`);
+          }
+        } else {
+          const ronPts = isDealer ? ceilTo100(calcBasePoints(han, fu) * 6) : ceilTo100(calcBasePoints(han, fu) * 4);
+          parts.push(`ロン ${ronPts}`);
+        }
+        document.getElementById("editPointsDisplay").textContent =
+          `${han}翻 ${fu}符 → ${parts.join(" ")}`;
+      }
+
+      function confirmEntry() {
+        if (!editState) return;
+        const han = parseInt(document.getElementById("editHan").value) || 0;
+        const fu = parseInt(document.getElementById("editFu").value) || 0;
+        const isDealer = editState.input.win.jikaze === "east";
+        const isTsumo = editState.input.win.win_type === "tsumo";
+        const { oya_payment, ko_payment } = calcPayments(han, fu, isDealer, isTsumo);
+        const entry = {
+          input: editState.input,
+          output: {
+            han,
+            fu: fu || null,
+            oya_payment,
+            ko_payment,
+            yaku: editState.yakuList.filter((y) => y.name)
+          }
+        };
+        if (editState.editingIndex != null) {
+          datasetEntries[editState.editingIndex] = entry;
+        } else {
+          datasetEntries.push(entry);
+        }
+        renderDatasetList();
+        closeEditForm();
+      }
+
       /* ── Dataset rendering ── */
       function renderDatasetList() {
         const listEl = document.getElementById("datasetList");
@@ -1016,8 +1431,20 @@
           const header = document.createElement("div");
           header.className = "dataset-entry-header";
           const label = document.createElement("strong");
-          label.textContent = `#${idx + 1}: ${entry.answer.point_label}`;
+          label.textContent = `#${idx + 1}: ${entry.output.han}翻 ${entry.output.fu || "-"}符`;
           header.appendChild(label);
+
+          const btnGroup = document.createElement("div");
+          btnGroup.style.cssText = "display:flex;gap:4px;";
+          const editBtn = document.createElement("button");
+          editBtn.type = "button";
+          editBtn.className = "mini-btn";
+          editBtn.textContent = "編集";
+          editBtn.style.marginTop = "0";
+          editBtn.addEventListener("click", () => {
+            openEditForm(entry.input, entry.output.yaku, entry.output.han, entry.output.fu, idx);
+          });
+          btnGroup.appendChild(editBtn);
           const removeBtn = document.createElement("button");
           removeBtn.type = "button";
           removeBtn.className = "remove-entry-btn";
@@ -1026,28 +1453,27 @@
             datasetEntries.splice(idx, 1);
             renderDatasetList();
           });
-          header.appendChild(removeBtn);
+          btnGroup.appendChild(removeBtn);
+          header.appendChild(btnGroup);
           div.appendChild(header);
 
           const yakuRow = document.createElement("div");
           yakuRow.className = "badge-row";
-          (entry.answer.yaku || []).forEach((y) => {
+          (entry.output.yaku || []).forEach((y) => {
             const badge = document.createElement("span");
             badge.className = "badge";
-            badge.textContent = `${y.name} ${y.han}翻`;
-            yakuRow.appendChild(badge);
-          });
-          (entry.answer.yakuman || []).forEach((name) => {
-            const badge = document.createElement("span");
-            badge.className = "badge";
-            badge.textContent = name;
+            badge.textContent = y.han > 0 ? `${y.name} ${y.han}翻` : y.name;
             yakuRow.appendChild(badge);
           });
           div.appendChild(yakuRow);
 
           const info = document.createElement("div");
           info.className = "hint";
-          info.textContent = `${entry.answer.han}翻 ${entry.answer.fu}符 / ロン:${entry.answer.points.ron} ツモ親:${entry.answer.points.tsumo_dealer_pay} ツモ子:${entry.answer.points.tsumo_non_dealer_pay}`;
+          const parts = [];
+          if (entry.output.oya_payment != null) parts.push(`親払:${entry.output.oya_payment}`);
+          if (entry.output.ko_payment != null) parts.push(`子払:${entry.output.ko_payment}`);
+          if (!parts.length) parts.push("ロン");
+          info.textContent = `${entry.output.han}翻 ${entry.output.fu || "-"}符 / ${parts.join(" ")}`;
           div.appendChild(info);
           listEl.appendChild(div);
         });
@@ -1079,26 +1505,8 @@
           return;
         }
 
-        const r = data.result;
-        const entry = {
-          hand: payload.hand,
-          context: payload.context,
-          rules: payload.rules,
-          answer: {
-            han: r.han,
-            fu: r.fu,
-            fu_breakdown: r.fu_breakdown,
-            yaku: r.yaku,
-            yakuman: r.yakuman,
-            dora: r.dora,
-            point_label: r.point_label,
-            points: r.points,
-            payments: r.payments
-          }
-        };
-
-        datasetEntries.push(entry);
-        renderDatasetList();
+        const { input, output } = convertToDatasetFormat(payload, data.result);
+        openEditForm(input, output.yaku, output.han, output.fu, null);
       }
 
       /* ── Copy JSON ── */
@@ -1113,6 +1521,136 @@
             btn.classList.remove("copied");
           }, 2000);
         });
+      }
+
+      /* ── GCS upload / list / download ── */
+      async function uploadToGcs() {
+        const status = document.getElementById("uploadStatus");
+        status.textContent = "";
+        if (!datasetEntries.length) {
+          status.textContent = "データセットが空です。";
+          return;
+        }
+        status.textContent = "アップロード中...";
+        try {
+          const res = await fetch("/api/v1/dataset/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entries: datasetEntries })
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            status.textContent = `失敗: ${data.detail || "unknown error"}`;
+            return;
+          }
+          status.textContent = `アップロード完了: gs://${data.storage.bucket}/${data.storage.object_name} (${data.count}件)`;
+          refreshGcsList();
+        } catch (e) {
+          status.textContent = `通信エラー: ${e.message}`;
+        }
+      }
+
+      async function refreshGcsList() {
+        const listEl = document.getElementById("gcsFileList");
+        const status = document.getElementById("gcsListStatus");
+        status.textContent = "読み込み中...";
+        listEl.innerHTML = "";
+        try {
+          const res = await fetch("/api/v1/dataset/list");
+          const data = await res.json();
+          if (!res.ok) {
+            status.textContent = `取得失敗: ${data.detail || "unknown error"}`;
+            return;
+          }
+          const files = data.files || [];
+          if (!files.length) {
+            status.textContent = "保存済みデータセットはありません。";
+            return;
+          }
+          status.textContent = `${files.length}件`;
+          files.forEach((f) => {
+            const item = document.createElement("div");
+            item.className = "gcs-file-item";
+
+            const info = document.createElement("div");
+            info.className = "gcs-file-info";
+            const nameSpan = document.createElement("div");
+            nameSpan.className = "file-name";
+            nameSpan.textContent = f.name.split("/").pop();
+            nameSpan.title = f.name;
+            info.appendChild(nameSpan);
+            const meta = document.createElement("div");
+            meta.className = "file-meta";
+            const date = f.updated ? new Date(f.updated).toLocaleString("ja-JP") : "-";
+            const size = f.size != null ? `${(f.size / 1024).toFixed(1)}KB` : "-";
+            meta.textContent = `${date} / ${size}`;
+            info.appendChild(meta);
+            item.appendChild(info);
+
+            const btnGroup = document.createElement("div");
+            btnGroup.style.cssText = "display:flex;gap:4px;flex-shrink:0;";
+
+            const dlBtn = document.createElement("button");
+            dlBtn.type = "button";
+            dlBtn.className = "mini-btn";
+            dlBtn.textContent = "DL";
+            dlBtn.style.marginTop = "0";
+            dlBtn.addEventListener("click", () => downloadGcsFile(f.name));
+            btnGroup.appendChild(dlBtn);
+
+            const loadBtn = document.createElement("button");
+            loadBtn.type = "button";
+            loadBtn.className = "mini-btn";
+            loadBtn.textContent = "読込";
+            loadBtn.style.marginTop = "0";
+            loadBtn.style.background = "#0f766e";
+            loadBtn.addEventListener("click", () => loadGcsFile(f.name));
+            btnGroup.appendChild(loadBtn);
+
+            item.appendChild(btnGroup);
+            listEl.appendChild(item);
+          });
+        } catch (e) {
+          status.textContent = `通信エラー: ${e.message}`;
+        }
+      }
+
+      function downloadGcsFile(name) {
+        const url = `/api/v1/dataset/download?name=${encodeURIComponent(name)}`;
+        fetch(url)
+          .then((res) => res.json())
+          .then((data) => {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = name.split("/").pop();
+            a.click();
+            URL.revokeObjectURL(a.href);
+          })
+          .catch((e) => alert(`ダウンロード失敗: ${e.message}`));
+      }
+
+      async function loadGcsFile(name) {
+        const status = document.getElementById("gcsListStatus");
+        try {
+          const res = await fetch(`/api/v1/dataset/download?name=${encodeURIComponent(name)}`);
+          const data = await res.json();
+          if (!res.ok) {
+            status.textContent = `読込失敗: ${data.detail || "unknown"}`;
+            return;
+          }
+          const entries = data.payload?.entries || data.entries || [];
+          if (!entries.length) {
+            status.textContent = "データセットが空です。";
+            return;
+          }
+          datasetEntries.length = 0;
+          entries.forEach((e) => datasetEntries.push(e));
+          renderDatasetList();
+          status.textContent = `${entries.length}件を読み込みました。`;
+        } catch (e) {
+          status.textContent = `通信エラー: ${e.message}`;
+        }
       }
 
       /* ── Event listeners ── */
@@ -1148,7 +1686,19 @@
         renderDoraInputs();
       });
       document.getElementById("generateBtn").addEventListener("click", generateEntry);
+      document.getElementById("addYakuBtn").addEventListener("click", () => {
+        if (!editState) return;
+        editState.yakuList.push({ name: "", han: 1 });
+        renderEditYakuList();
+        syncHanFromYaku();
+      });
+      document.getElementById("editHan").addEventListener("input", recalcEditPoints);
+      document.getElementById("editFu").addEventListener("input", recalcEditPoints);
+      document.getElementById("confirmEntryBtn").addEventListener("click", confirmEntry);
+      document.getElementById("cancelEditBtn").addEventListener("click", closeEditForm);
       document.getElementById("copyJsonBtn").addEventListener("click", copyJson);
+      document.getElementById("uploadGcsBtn").addEventListener("click", uploadToGcs);
+      document.getElementById("refreshGcsListBtn").addEventListener("click", refreshGcsList);
       document.getElementById("clearAllBtn").addEventListener("click", () => {
         datasetEntries.length = 0;
         renderDatasetList();
@@ -1158,6 +1708,7 @@
       switchPattern("standard");
       renderDoraInputs();
       syncHandJsonFromState();
+      refreshGcsList();
     </script>
   </body>
 </html>

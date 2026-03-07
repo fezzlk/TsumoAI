@@ -1,0 +1,24 @@
+{
+  "han": 4,
+  "fu": 30,
+  "oya_payment": 3900,
+  "ko_payment": 2000,
+  "yaku": [
+    {
+      "name": "Pure Double Sequence",
+      "han": 1
+    },
+    {
+      "name": "Fully Concealed Hand",
+      "han": 1
+    },
+    {
+      "name": "Riichi",
+      "han": 1
+    },
+    {
+      "name": "Dora",
+      "han": 1
+    }
+  ]
+}

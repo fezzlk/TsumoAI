@@ -1,0 +1,105 @@
+{
+  "round": {
+    "honba": {
+      "description": "本場数",
+      "format": "integer (0以上)",
+      "input_example": 1
+    },
+    "bakaze": {
+      "description": "場風",
+      "format": "string (\"east\" | \"south\" | \"west\" | \"north\")",
+      "input_example": "east"
+    },
+    "dora_indicators": {
+      "description": "ドラ表示牌（1-4枚）",
+      "format": "array<number> length=1..4",
+      "input_example": [13, 34]
+    },
+    "ura_dora_indicators": {
+      "description": "裏ドラ表示牌（0-4枚）。0枚でない場合は dora_indicators と同枚数",
+      "format": "array<number> length=0..4",
+      "input_example": [18, 36]
+    }
+  },
+  "win": {
+    "jikaze": {
+      "description": "和了者の自風",
+      "format": "string (\"east\" | \"south\" | \"west\" | \"north\")",
+      "input_example": "east"
+    },
+    "win_type": {
+      "description": "和了種別",
+      "format": "string (\"ron\" | \"tsumo\")",
+      "input_example": "tsumo"
+    }
+  },
+  "yaku_context": {
+    "is_riichi": {
+      "description": "立直しているか",
+      "format": "boolean",
+      "input_example": true
+    },
+    "is_double_riichi": {
+      "description": "ダブル立直か",
+      "format": "boolean",
+      "input_example": false
+    },
+    "is_ippatsu": {
+      "description": "一発か",
+      "format": "boolean",
+      "input_example": false
+    },
+    "is_tenhou": {
+      "description": "天和か",
+      "format": "boolean",
+      "input_example": false
+    },
+    "is_chiihou": {
+      "description": "地和か",
+      "format": "boolean",
+      "input_example": false
+    },
+    "is_under_the_river": {
+      "description": "河底撈魚（最後の捨て牌ロン）か",
+      "format": "boolean",
+      "input_example": false
+    },
+    "is_under_the_sea": {
+      "description": "海底撈月（最後のツモ和了）か",
+      "format": "boolean",
+      "input_example": false
+    },
+    "is_rinshan_kaihou": {
+      "description": "嶺上開花か",
+      "format": "boolean",
+      "input_example": false
+    },
+    "is_robbing_a_quad": {
+      "description": "槍槓か",
+      "format": "boolean",
+      "input_example": false
+    }
+  },
+  "winning_hand": {
+    "closed_tiles": {
+      "description": "和了時の手牌（雀頭を含む。副露牌は含めない）",
+      "format": "array<number>",
+      "input_example": [22, 23, 24, 25, 26, 27, 32, 33, 34, 35, 36, 41, 41]
+    },
+    "melds": {
+      "description": "副露面子一覧（チー/ポン/カン）。面前なら空配列",
+      "format": "array<object>",
+      "input_example": [
+        {
+          "type": "pon",
+          "tiles": [45, 45, 45]
+        }
+      ]
+    },
+    "winning_tile": {
+      "description": "和了牌",
+      "format": "number",
+      "input_example": 24
+    }
+  }
+}

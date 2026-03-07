@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     image_ttl_hours: int = 24
     gcs_bucket_name: str | None = None
     gcs_feedback_prefix: str = "score-feedback"
+    gcs_dataset_prefix: str = "score-dataset"
     recognition_feedback_path: str = "data/recognition_feedback.jsonl"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

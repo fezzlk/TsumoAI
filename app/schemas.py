@@ -232,3 +232,13 @@ class RecognitionFeedbackRequest(BaseModel):
 class RecognitionFeedbackResponse(BaseModel):
     status: Literal["ok"]
     storage: dict
+
+
+class DatasetUploadRequest(BaseModel):
+    entries: list[dict[str, Any]]
+
+
+class DatasetUploadResponse(BaseModel):
+    status: Literal["ok"]
+    count: int
+    storage: dict

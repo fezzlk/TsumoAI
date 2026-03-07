@@ -1,0 +1,44 @@
+{
+  "han": {
+    "description": "翻数",
+    "format": "integer",
+    "input_example": 4
+  },
+  "fu": {
+    "description": "符",
+    "format": "integer | null",
+    "input_example": 30
+  },
+  "oya_payment": {
+    "description": "親の支払い点数（ツモ時）。ロン時や親和了ツモで不要な場合は null",
+    "format": "integer | null",
+    "input_example": 3900
+  },
+  "ko_payment": {
+    "description": "子の支払い点数（ツモ時）。ロン時は null",
+    "format": "integer | null",
+    "input_example": 2000
+  },
+  "yaku": {
+    "description": "構成役と各翻数。役の日本語名と name の対応は `yaku_name_map.json` を参照",
+    "format": "array<object>",
+    "input_example": [
+      {
+        "name": "Pure Double Sequence",
+        "han": 1
+      },
+      {
+        "name": "Fully Concealed Hand",
+        "han": 1
+      },
+      {
+        "name": "Riichi",
+        "han": 1
+      },
+      {
+        "name": "Dora",
+        "han": 1
+      }
+    ]
+  }
+}

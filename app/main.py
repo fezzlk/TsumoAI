@@ -5,8 +5,8 @@ from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
@@ -19,6 +19,8 @@ from app.hand_scoring import score_hand_shape
 from app.repository import InMemoryRepository
 from app.schemas import (
     ContextInput,
+    DatasetUploadRequest,
+    DatasetUploadResponse,
     RecognizeJobCreateResponse,
     RecognizeJobStatusResponse,
     RecognitionFeedbackRequest,
@@ -48,6 +50,7 @@ recognition_jobs = RecognitionJobManager(repo=repo, model_name=settings.openai_m
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 gcs_feedback_store = GCSFeedbackStore()
+gcs_dataset_store = GCSFeedbackStore(prefix=settings.gcs_dataset_prefix)
 recognition_feedback_store = RecognitionFeedbackStore()
 
 
@@ -276,3 +279,51 @@ def recognition_feedback(req: RecognitionFeedbackRequest) -> RecognitionFeedback
     payload["comment"] = req.comment.strip()
     storage_info = recognition_feedback_store.save(payload)
     return RecognitionFeedbackResponse(status="ok", storage=storage_info)
+
+
+@app.post("/api/v1/dataset/upload", response_model=DatasetUploadResponse)
+def upload_dataset(req: DatasetUploadRequest) -> DatasetUploadResponse:
+    if not req.entries:
+        raise HTTPException(status_code=422, detail="entries must not be empty")
+    try:
+        storage_info = gcs_dataset_store.save({"entries": req.entries})
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Failed to upload dataset to GCS: {exc}") from exc
+    return DatasetUploadResponse(status="ok", count=len(req.entries), storage=storage_info)
+
+
+@app.get("/api/v1/dataset/list")
+def list_datasets() -> dict:
+    bucket_name = gcs_dataset_store.bucket_name
+    prefix = gcs_dataset_store.prefix
+    if not bucket_name:
+        raise HTTPException(status_code=503, detail="GCS bucket is not configured")
+    client = gcs_dataset_store._get_client()
+    bucket = client.bucket(bucket_name)
+    blobs = bucket.list_blobs(prefix=prefix + "/")
+    files = []
+    for blob in blobs:
+        if blob.name.endswith(".json"):
+            files.append({
+                "name": blob.name,
+                "size": blob.size,
+                "updated": blob.updated.isoformat() if blob.updated else None,
+            })
+    files.sort(key=lambda f: f["updated"] or "", reverse=True)
+    return {"files": files}
+
+
+@app.get("/api/v1/dataset/download")
+def download_dataset(name: str = Query(...)) -> JSONResponse:
+    bucket_name = gcs_dataset_store.bucket_name
+    if not bucket_name:
+        raise HTTPException(status_code=503, detail="GCS bucket is not configured")
+    client = gcs_dataset_store._get_client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(name)
+    if not blob.exists():
+        raise HTTPException(status_code=404, detail="file not found")
+    data = json.loads(blob.download_as_text())
+    return JSONResponse(content=data)

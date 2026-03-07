@@ -1,0 +1,28 @@
+{
+  "round": {
+    "honba": 0,
+    "bakaze": "east",
+    "dora_indicators": [13, 34],
+    "ura_dora_indicators": []
+  },
+  "win": {
+    "jikaze": "east",
+    "win_type": "tsumo"
+  },
+  "yaku_context": {
+    "is_riichi": false,
+    "is_double_riichi": false,
+    "is_ippatsu": false,
+    "is_tenhou": false,
+    "is_chiihou": false,
+    "is_under_the_river": false,
+    "is_under_the_sea": false,
+    "is_rinshan_kaihou": false,
+    "is_robbing_a_quad": false
+  },
+  "winning_hand": {
+    "closed_tiles": [22, 23, 24, 25, 26, 27, 32, 33, 34, 35, 36, 41, 41],
+    "melds": [],
+    "winning_tile": 24
+  }
+}
