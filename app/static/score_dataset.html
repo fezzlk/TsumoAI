@@ -386,8 +386,8 @@
 
           <label>和了方法</label>
           <div class="option-group">
-            <label class="option-item"><input type="radio" name="winType" value="ron" checked /> ロン</label>
-            <label class="option-item"><input type="radio" name="winType" value="tsumo" /> ツモ</label>
+            <label class="option-item"><input type="radio" name="winType" value="tsumo" checked /> ツモ</label>
+            <label class="option-item"><input type="radio" name="winType" value="ron" /> ロン</label>
           </div>
 
           <label>場風</label>
@@ -752,10 +752,20 @@
       }
 
       /* ── Hand tile flattening ── */
+      function tileSortKey(code) {
+        const n = tileCodeToNumber(code);
+        return n != null ? n : 9999;
+      }
+
       function flattenHandTiles(hand) {
-        const out = [];
-        (hand.closed_tiles || []).forEach((tile) => out.push(tile));
-        (hand.melds || []).forEach((meld) => (meld.tiles || []).forEach((tile) => out.push(tile)));
+        const closed = [...(hand.closed_tiles || [])];
+        closed.sort((a, b) => tileSortKey(a) - tileSortKey(b));
+        const out = [...closed];
+        (hand.melds || []).forEach((meld) => {
+          const sorted = [...(meld.tiles || [])];
+          sorted.sort((a, b) => tileSortKey(a) - tileSortKey(b));
+          sorted.forEach((tile) => out.push(tile));
+        });
         return out;
       }
 
