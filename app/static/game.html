@@ -855,6 +855,12 @@ function renderRonPanel(panel) {
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitRon()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
+
+  // Auto-select my seat as winner
+  if (mySeat !== null) {
+    const myChip = document.querySelector(`#ronWinner .chip[data-seat="${mySeat}"]`);
+    if (myChip) { myChip.classList.add('selected'); renderRonWinnerPoints(); }
+  }
 }
 
 function toggleRonWinner(el) {
@@ -936,6 +942,12 @@ function renderTsumoPanel(panel) {
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitTsumo()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
+
+  // Auto-select my seat as winner
+  if (mySeat !== null) {
+    const myChip = document.querySelector(`#tsumoWinner .chip[data-seat="${mySeat}"]`);
+    if (myChip) selectChipTsumo(myChip);
+  }
 }
 
 function renderDrawPanel(panel) {
@@ -1328,8 +1340,8 @@ async function showChart() {
     const rounds = data.rounds;
     const gs = data.game_state;
     if (rounds.length === 0) { toast('まだ記録がありません', true); return; }
-    drawChart(rounds, gs);
     document.getElementById('chartModal').classList.add('active');
+    requestAnimationFrame(() => drawChart(rounds, gs));
   } catch (e) {
     toast(e.message, true);
   }
@@ -1485,12 +1497,24 @@ function drawChart(rounds, gs) {
 
 function downloadChart() {
   const canvas = document.getElementById('chartCanvas');
-  // Create a download link
-  const link = document.createElement('a');
-  link.download = `mahjong_score_${roomCode || 'game'}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
-  toast('画像を保存しました');
+  const filename = `mahjong_score_${roomCode || 'game'}.png`;
+  canvas.toBlob(blob => {
+    if (!blob) { toast('画像の生成に失敗しました', true); return; }
+    // Try Web Share API (mobile: saves to photos/shares directly)
+    if (navigator.canShare && navigator.canShare({files: [new File([blob], filename, {type: 'image/png'})]})) {
+      const file = new File([blob], filename, {type: 'image/png'});
+      navigator.share({files: [file], title: '点数推移グラフ'}).catch(() => {});
+      return;
+    }
+    // Fallback: blob URL download
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('画像を保存しました');
+  }, 'image/png');
 }
 
 function closeModal(id) {
