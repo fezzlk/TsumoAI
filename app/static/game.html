@@ -70,10 +70,10 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 .chip.selected { background: #e94560; border-color: #e94560; }
 .chip:active { transform: scale(0.95); }
 
-/* Riichi checkboxes */
-.riichi-row { display: flex; gap: 8px; margin: 8px 0; align-items: center; flex-wrap: wrap; }
-.riichi-check { display: flex; align-items: center; gap: 4px; }
-.riichi-check input { width: auto; margin: 0; }
+/* Riichi toggle on player card */
+.riichi-btn { margin-top: 6px; padding: 4px 12px; border: 1px solid #555; border-radius: 12px; background: transparent; color: #888; font-size: 0.7em; cursor: pointer; transition: all 0.15s; }
+.riichi-btn.active { background: #f39c12; border-color: #f39c12; color: #fff; font-weight: bold; }
+.riichi-btn:active { transform: scale(0.93); }
 
 /* History */
 .history-list { max-height: 300px; overflow-y: auto; }
@@ -212,6 +212,7 @@ let mySeat = null;
 let ws = null;
 let lastDeltas = {};
 let keepAliveTimer = null;
+let riichiSeats = new Set();
 
 // Common point values for one-tap selection
 const POINT_TABLE_RON = [
@@ -468,11 +469,13 @@ function renderGame() {
       const cls = delta > 0 ? 'plus' : 'minus';
       deltaHtml = `<div class="delta ${cls}">${delta > 0 ? '+' : ''}${delta.toLocaleString()}</div>`;
     }
+    const isRiichi = riichiSeats.has(p.seat);
     card.innerHTML = `
       <div class="wind">${WIND_NAMES[seatWinds[p.seat]] || ''}</div>
       <div class="name">${escHtml(p.name)}</div>
       <div class="points${p.points < 0 ? ' negative' : ''}">${p.points.toLocaleString()}</div>
       ${deltaHtml}
+      <button class="riichi-btn${isRiichi ? ' active' : ''}" onclick="toggleRiichi(${p.seat})">立直</button>
     `;
     sb.appendChild(card);
   }
@@ -609,12 +612,6 @@ function renderRonPanel(panel) {
   html += '<label>またはカスタム点数</label>';
   html += '<input type="number" id="ronCustomPts" placeholder="例: 5200" step="100">';
 
-  html += '<label>リーチ宣言</label><div class="riichi-row" id="ronRiichi">';
-  gs.players.forEach(p => {
-    html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
-  });
-  html += '</div>';
-
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitRon()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
@@ -652,12 +649,6 @@ function renderTsumoPanel(panel) {
   html += '<input type="number" id="tsumoFu" placeholder="符" min="20" step="10" value="30" style="flex:1">';
   html += '</div>';
 
-  html += '<label>リーチ宣言</label><div class="riichi-row" id="tsumoRiichi">';
-  gs.players.forEach(p => {
-    html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
-  });
-  html += '</div>';
-
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitTsumo()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
@@ -670,12 +661,6 @@ function renderDrawPanel(panel) {
   html += '<label>テンパイ者 (複数選択可)</label><div class="player-chips" id="drawTenpai">';
   gs.players.forEach(p => {
     html += `<div class="chip" data-seat="${p.seat}" onclick="toggleChip(this)">${escHtml(p.name)}</div>`;
-  });
-  html += '</div>';
-
-  html += '<label>リーチ宣言</label><div class="riichi-row" id="drawRiichi">';
-  gs.players.forEach(p => {
-    html += `<label class="riichi-check"><input type="checkbox" value="${p.seat}"> ${escHtml(p.name)}</label>`;
   });
   html += '</div>';
 
@@ -728,9 +713,14 @@ function getSelectedSeats(groupId) {
     .map(c => parseInt(c.dataset.seat));
 }
 
-function getRiichiSeats(groupId) {
-  return Array.from(document.querySelectorAll(`#${groupId} input:checked`))
-    .map(cb => parseInt(cb.value));
+function toggleRiichi(seat) {
+  if (riichiSeats.has(seat)) riichiSeats.delete(seat);
+  else riichiSeats.add(seat);
+  renderGame();
+}
+
+function getRiichiSeatsFromBoard() {
+  return Array.from(riichiSeats);
 }
 
 function ronPointsToHanFu(pts, isDealer) {
@@ -768,7 +758,7 @@ async function submitRon() {
   if (winner === null || loser === null) { toast('和了者と放銃者を選択してください', true); return; }
   if (winner === loser) { toast('和了者と放銃者は別のプレイヤーにしてください', true); return; }
 
-  const riichi = getRiichiSeats('ronRiichi');
+  const riichi = getRiichiSeatsFromBoard();
   const isDealer = winner === gameState.current_dealer;
 
   const customPts = parseInt(document.getElementById('ronCustomPts').value);
@@ -794,6 +784,7 @@ async function submitRon() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'エラー');
     gameState = data.game_state;
+    riichiSeats.clear();
     computeDeltas(data.round_result.point_changes);
     renderGame();
     toast('ロン確定');
@@ -806,7 +797,7 @@ async function submitTsumo() {
   const winner = getSelectedSeat('tsumoWinner');
   if (winner === null) { toast('和了者を選択してください', true); return; }
 
-  const riichi = getRiichiSeats('tsumoRiichi');
+  const riichi = getRiichiSeatsFromBoard();
   const isDealer = winner === gameState.current_dealer;
 
   const customHan = parseInt(document.getElementById('tsumoHan').value);
@@ -832,6 +823,7 @@ async function submitTsumo() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'エラー');
     gameState = data.game_state;
+    riichiSeats.clear();
     computeDeltas(data.round_result.point_changes);
     renderGame();
     toast('ツモ確定');
@@ -842,7 +834,7 @@ async function submitTsumo() {
 
 async function submitDraw() {
   const tenpai = getSelectedSeats('drawTenpai');
-  const riichi = getRiichiSeats('drawRiichi');
+  const riichi = getRiichiSeatsFromBoard();
 
   try {
     const res = await fetch(`/api/v1/games/${gameId}/draw`, {
@@ -853,6 +845,7 @@ async function submitDraw() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'エラー');
     gameState = data.game_state;
+    riichiSeats.clear();
     computeDeltas(data.round_result.point_changes);
     renderGame();
     toast('流局確定');
