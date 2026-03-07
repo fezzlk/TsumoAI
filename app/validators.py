@@ -150,6 +150,10 @@ def validate_score_request(req: ScoreRequest) -> None:
             raise HTTPException(status_code=422, detail=f"{meld.type} must contain exactly 3 tiles")
         if meld.type in {"kan", "ankan", "kakan"} and len(meld.tiles) != 4:
             raise HTTPException(status_code=422, detail=f"{meld.type} must contain exactly 4 tiles")
+        if meld.type in {"pon", "kan", "ankan", "kakan"}:
+            normalized = {_normalize_tile(t) for t in meld.tiles}
+            if len(normalized) != 1:
+                raise HTTPException(status_code=422, detail=f"{meld.type} tiles must all be the same tile")
 
     kan_melds = sum(1 for m in req.hand.melds if m.type in {"kan", "ankan", "kakan"})
     total_tiles = len(req.hand.closed_tiles) + sum(len(m.tiles) for m in req.hand.melds)

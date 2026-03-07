@@ -478,8 +478,8 @@ def test_score_endpoint_adds_daisangen():
     assert response.status_code == 200
     body = response.json()
     assert "大三元" in body["result"]["yakuman"]
-    assert "四暗刻" in body["result"]["yakuman"]
-    assert body["result"]["point_label"] == "ダブル役満"
+    assert "四暗刻単騎" in body["result"]["yakuman"]
+    assert body["result"]["point_label"] == "3倍役満"
 
 
 def test_score_endpoint_adds_chuuren():

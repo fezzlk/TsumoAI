@@ -281,11 +281,28 @@ def _has_suukantsu(hand: HandInput) -> bool:
     return sum(1 for m in hand.melds if m.type in {"kan", "ankan", "kakan"}) == 4
 
 
-def _has_suuankou(hand: HandInput) -> bool:
+def _has_suuankou(hand: HandInput, context: ContextInput) -> bool:
     if any(m.open for m in hand.melds):
         return False
-    for pattern in _all_meld_patterns(hand):
-        if all(kind == "pon" for kind, _ in pattern):
+    win = _normalize_tile(hand.win_tile)
+    for pattern, pair in _all_meld_patterns_with_pair(hand):
+        if not all(kind == "pon" for kind, _ in pattern):
+            continue
+        if context.win_type == "ron":
+            if _normalize_tile(pair) != win:
+                continue
+        return True
+    return False
+
+
+def _is_suuankou_tanki(hand: HandInput, context: ContextInput) -> bool:
+    if any(m.open for m in hand.melds):
+        return False
+    win = _normalize_tile(hand.win_tile)
+    for pattern, pair in _all_meld_patterns_with_pair(hand):
+        if not all(kind == "pon" for kind, _ in pattern):
+            continue
+        if _normalize_tile(pair) == win:
             return True
     return False
 
@@ -369,20 +386,30 @@ def _has_sankantsu(hand: HandInput) -> bool:
     return sum(1 for m in hand.melds if m.type in {"kan", "ankan", "kakan"}) == 3
 
 
-def _has_sanankou(hand: HandInput) -> bool:
+def _has_sanankou(hand: HandInput, context: ContextInput) -> bool:
     open_pon_like_count = sum(
         1 for meld in hand.melds if meld.open and meld.type in {"pon", "kan", "ankan", "kakan"}
     )
-    for melds in _all_meld_patterns(hand):
+    win = _normalize_tile(hand.win_tile)
+    for melds, pair in _all_meld_patterns_with_pair(hand):
         concealed_pon_count = sum(1 for kind, _ in melds if kind == "pon") - open_pon_like_count
+        if context.win_type == "ron" and _normalize_tile(pair) != win:
+            ron_completes_pon = any(
+                kind == "pon" and _normalize_tile(tile) == win
+                for kind, tile in melds
+                if (kind, tile) not in [(k, t) for k, t in _open_meld_patterns(hand)]
+            )
+            if ron_completes_pon:
+                concealed_pon_count -= 1
         if concealed_pon_count >= 3:
             return True
     return False
 
 
-def _has_iipeikou(hand: HandInput) -> bool:
+def _count_peikou(hand: HandInput) -> int:
     if hand.melds:
-        return False
+        return 0
+    best = 0
     for melds, _ in _all_meld_patterns_with_pair(hand):
         seq_counts: dict[tuple[str, int], int] = {}
         for kind, tile in melds:
@@ -390,9 +417,9 @@ def _has_iipeikou(hand: HandInput) -> bool:
             if kind == "chi" and len(t) == 2 and t[1] in {"m", "p", "s"}:
                 key = (t[1], int(t[0]))
                 seq_counts[key] = seq_counts.get(key, 0) + 1
-        if any(v >= 2 for v in seq_counts.values()):
-            return True
-    return False
+        pairs = sum(v // 2 for v in seq_counts.values())
+        best = max(best, pairs)
+    return best
 
 
 def _is_value_pair(tile: str, context: ContextInput) -> bool:
@@ -502,9 +529,13 @@ def _yakuman_hits(hand: HandInput, context: ContextInput, rules: RuleSet) -> tup
     if _has_daisangen(hand):
         hits.append("大三元")
         multiplier += 1
-    if _has_suuankou(hand):
-        hits.append("四暗刻")
-        multiplier += 1
+    if _has_suuankou(hand, context):
+        if _is_suuankou_tanki(hand, context):
+            hits.append("四暗刻単騎")
+            multiplier += 2 if rules.double_yakuman_ari else 1
+        else:
+            hits.append("四暗刻")
+            multiplier += 1
     if _has_suukantsu(hand):
         hits.append("四槓子")
         multiplier += 1
@@ -651,11 +682,20 @@ def _meld_fu(kind: str, tile: str, is_open: bool) -> int:
     return 16 if is_yaochu and is_open else 32 if is_yaochu else 8 if is_open else 16
 
 
-def _calc_regular_fu(hand: HandInput, context: ContextInput, rules: RuleSet, has_pinfu: bool) -> tuple[int, list[FuBreakdownItem]]:
+def _calc_fu_for_pattern(
+    melds: list[tuple[str, str]],
+    pair: str,
+    hand: HandInput,
+    context: ContextInput,
+    rules: RuleSet,
+    has_pinfu: bool,
+    n_open: int,
+) -> tuple[int, list[FuBreakdownItem]]:
+    """Calculate fu for a specific (melds, pair) decomposition without double-counting."""
     if has_pinfu and context.win_type == "tsumo":
         return 20, [FuBreakdownItem(name="副底", fu=20)]
-    if _has_chiitoitsu(hand):
-        return 25, [FuBreakdownItem(name="七対子", fu=25)]
+    if has_pinfu and context.win_type == "ron":
+        return 30, [FuBreakdownItem(name="副底", fu=20), FuBreakdownItem(name="門前ロン", fu=10)]
 
     breakdown_base: list[FuBreakdownItem] = [FuBreakdownItem(name="副底", fu=20)]
     if context.win_type == "tsumo":
@@ -663,78 +703,184 @@ def _calc_regular_fu(hand: HandInput, context: ContextInput, rules: RuleSet, has
     if context.win_type == "ron" and _is_closed_hand(hand):
         breakdown_base.append(FuBreakdownItem(name="門前ロン", fu=10))
 
-    best_total = 20
+    meld_entries: list[dict] = []
+    for kind, tile in melds[n_open:]:
+        meld_entries.append({"kind": kind, "tile": tile, "open": False})
+    for meld in hand.melds:
+        tiles = [_normalize_tile(t) for t in meld.tiles]
+        kind = "chi" if meld.type == "chi" else "pon" if meld.type == "pon" else "kan"
+        base_tile = min(tiles, key=_tile_to_index) if kind == "chi" else tiles[0]
+        meld_entries.append({"kind": kind, "tile": base_tile, "open": meld.open})
+
+    win = _normalize_tile(hand.win_tile)
+    win_targets: list[tuple[str, int]] = []
+    if _normalize_tile(pair) == win:
+        win_targets.append(("pair", -1))
+    for idx, m in enumerate(meld_entries):
+        if win in _meld_tiles(m["kind"], m["tile"]):
+            win_targets.append(("meld", idx))
+    if not win_targets:
+        win_targets = [("meld", -1)]
+
+    best_total = sum(item.fu for item in breakdown_base)
     best_breakdown = breakdown_base
 
-    for melds, pair in _all_meld_patterns_with_pair(hand):
-        meld_entries: list[dict] = []
-        for kind, tile in melds:
-            meld_entries.append({"kind": kind, "tile": tile, "open": False})
-        for meld in hand.melds:
-            tiles = [_normalize_tile(t) for t in meld.tiles]
-            kind = "chi" if meld.type == "chi" else "pon" if meld.type == "pon" else "kan"
-            base_tile = min(tiles, key=_tile_to_index) if kind == "chi" else tiles[0]
-            meld_entries.append({"kind": kind, "tile": base_tile, "open": meld.open})
+    for target_type, target_idx in win_targets:
+        details = breakdown_base.copy()
+        total = sum(item.fu for item in details)
 
-        win = _normalize_tile(hand.win_tile)
-        win_targets: list[tuple[str, int]] = []
-        if _normalize_tile(pair) == win:
-            win_targets.append(("pair", -1))
+        pfu = _pair_fu(pair, context, rules)
+        if pfu:
+            details.append(FuBreakdownItem(name="雀頭", fu=pfu))
+            total += pfu
+
+        wait_fu = 0
+        if target_type == "pair":
+            wait_fu = 2
+        elif target_idx >= 0:
+            target_meld = meld_entries[target_idx]
+            if target_meld["kind"] == "chi":
+                s = _normalize_tile(target_meld["tile"])
+                start = int(s[0])
+                n = int(win[0])
+                if n == start + 1:
+                    wait_fu = 2
+                elif (start == 1 and n == 3) or (start == 7 and n == 7):
+                    wait_fu = 2
+        if wait_fu:
+            details.append(FuBreakdownItem(name="待ち", fu=2))
+            total += 2
+
         for idx, m in enumerate(meld_entries):
-            if win in _meld_tiles(m["kind"], m["tile"]):
-                win_targets.append(("meld", idx))
-        if not win_targets:
-            win_targets = [("meld", -1)]
+            is_open = m["open"]
+            if (
+                context.win_type == "ron"
+                and idx == target_idx
+                and m["kind"] == "pon"
+                and not m["open"]
+            ):
+                is_open = True
+            mfu = _meld_fu(m["kind"], m["tile"], is_open)
+            if mfu:
+                details.append(FuBreakdownItem(name="面子", fu=mfu))
+                total += mfu
 
-        for target_type, target_idx in win_targets:
-            details = breakdown_base.copy()
-            total = sum(item.fu for item in details)
+        rounded = ((total + 9) // 10) * 10
+        if rounded > total:
+            details.append(FuBreakdownItem(name="切り上げ", fu=rounded - total))
 
-            pfu = _pair_fu(pair, context, rules)
-            if pfu:
-                details.append(FuBreakdownItem(name="雀頭", fu=pfu))
-                total += pfu
-
-            wait_fu = 0
-            if target_type == "pair":
-                wait_fu = 2
-            elif target_idx >= 0:
-                target_meld = meld_entries[target_idx]
-                if target_meld["kind"] == "chi":
-                    s = _normalize_tile(target_meld["tile"])
-                    start = int(s[0])
-                    n = int(win[0])
-                    if n == start + 1:
-                        wait_fu = 2
-                    elif (start == 1 and n == 3) or (start == 7 and n == 7):
-                        wait_fu = 2
-            if wait_fu:
-                details.append(FuBreakdownItem(name="待ち", fu=2))
-                total += 2
-
-            for idx, m in enumerate(meld_entries):
-                is_open = m["open"]
-                if (
-                    context.win_type == "ron"
-                    and idx == target_idx
-                    and m["kind"] == "pon"
-                    and not m["open"]
-                ):
-                    is_open = True
-                mfu = _meld_fu(m["kind"], m["tile"], is_open)
-                if mfu:
-                    details.append(FuBreakdownItem(name="面子", fu=mfu))
-                    total += mfu
-
-            rounded = ((total + 9) // 10) * 10
-            if rounded > total:
-                details.append(FuBreakdownItem(name="切り上げ", fu=rounded - total))
-
-            if rounded >= best_total:
-                best_total = rounded
-                best_breakdown = details
+        if rounded >= best_total:
+            best_total = rounded
+            best_breakdown = details
 
     return best_total, best_breakdown
+
+
+def _check_pattern_yaku(
+    melds: list[tuple[str, str]],
+    pair: str,
+    hand: HandInput,
+    context: ContextInput,
+    rules: RuleSet,
+    is_open: bool,
+    n_open: int,
+    has_honor: bool,
+) -> tuple[list[YakuItem], int, bool]:
+    """Check pattern-dependent yaku for a specific (melds, pair) decomposition."""
+    yaku: list[YakuItem] = []
+    han = 0
+    has_pinfu = False
+    win = _normalize_tile(hand.win_tile)
+    closed_melds = melds[n_open:]
+
+    # 平和
+    if (
+        not is_open
+        and len(win) == 2
+        and all(k == "chi" for k, _ in melds)
+        and not _is_value_pair(pair, context)
+        and any(_is_ryanmen_wait(t, hand.win_tile) for k, t in melds if k == "chi")
+    ):
+        yaku.append(YakuItem(name="平和", han=1))
+        han += 1
+        has_pinfu = True
+
+    # 一盃口 / 二盃口
+    if not is_open:
+        seq_counts: dict[tuple[str, int], int] = {}
+        for k, t in melds:
+            nt = _normalize_tile(t)
+            if k == "chi" and len(nt) == 2 and nt[1] in {"m", "p", "s"}:
+                key = (nt[1], int(nt[0]))
+                seq_counts[key] = seq_counts.get(key, 0) + 1
+        pairs_count = sum(v // 2 for v in seq_counts.values())
+        if pairs_count >= 2:
+            yaku.append(YakuItem(name="二盃口", han=3))
+            han += 3
+        elif pairs_count == 1:
+            yaku.append(YakuItem(name="一盃口", han=1))
+            han += 1
+
+    # 三色同順 / 一気通貫 (共通の chi_starts を使う)
+    chi_starts: dict[str, set[int]] = {"m": set(), "p": set(), "s": set()}
+    for k, t in melds:
+        nt = _normalize_tile(t)
+        if k == "chi" and len(nt) == 2 and nt[1] in {"m", "p", "s"}:
+            chi_starts[nt[1]].add(int(nt[0]))
+
+    if chi_starts["m"] & chi_starts["p"] & chi_starts["s"]:
+        s_han = 1 if is_open else 2
+        yaku.append(YakuItem(name="三色同順", han=s_han))
+        han += s_han
+
+    for suit in ("m", "p", "s"):
+        if {1, 4, 7} <= chi_starts[suit]:
+            i_han = 1 if is_open else 2
+            yaku.append(YakuItem(name="一気通貫", han=i_han))
+            han += i_han
+            break
+
+    # 純全帯么九 / 混全帯么九
+    if _is_terminal_or_honor(pair) and all(_meld_has_terminal_or_honor(k, t) for k, t in melds):
+        pair_is_number = len(_normalize_tile(pair)) == 2
+        if not has_honor and pair_is_number:
+            j_han = 2 if is_open else 3
+            yaku.append(YakuItem(name="純全帯么九", han=j_han))
+            han += j_han
+        elif has_honor:
+            c_han = 1 if is_open else 2
+            yaku.append(YakuItem(name="混全帯么九", han=c_han))
+            han += c_han
+
+    # 対々和
+    if all(k == "pon" for k, _ in melds):
+        yaku.append(YakuItem(name="対々和", han=2))
+        han += 2
+
+    # 三色同刻
+    pon_ranks: dict[str, set[int]] = {"m": set(), "p": set(), "s": set()}
+    for k, t in melds:
+        nt = _normalize_tile(t)
+        if k == "pon" and len(nt) == 2 and nt[0].isdigit() and nt[1] in {"m", "p", "s"}:
+            pon_ranks[nt[1]].add(int(nt[0]))
+    if pon_ranks["m"] & pon_ranks["p"] & pon_ranks["s"]:
+        yaku.append(YakuItem(name="三色同刻", han=2))
+        han += 2
+
+    # 三暗刻
+    closed_pon_count = sum(1 for k, _ in closed_melds if k == "pon")
+    ankan_count = sum(1 for m in hand.melds if not m.open)
+    concealed_pon_total = closed_pon_count + ankan_count
+    if context.win_type == "ron" and _normalize_tile(pair) != win:
+        for k, t in closed_melds:
+            if k == "pon" and _normalize_tile(t) == win:
+                concealed_pon_total -= 1
+                break
+    if concealed_pon_total >= 3:
+        yaku.append(YakuItem(name="三暗刻", han=2))
+        han += 2
+
+    return yaku, han, has_pinfu
 
 
 def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> ScoreResult:
@@ -760,121 +906,135 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
             ],
         )
 
-    yaku: list[YakuItem] = []
-    yaku_han = 0
+    # Pre-compute shared data
+    is_open = any(m.open for m in hand.melds)
+    has_kan_meld = any(m.type in {"kan", "ankan", "kakan"} for m in hand.melds)
+    has_honor = any(len(_normalize_tile(t)) == 1 for t in _all_tiles(hand))
+    n_open = len(hand.melds)
+
+    # Context yaku (same for all interpretations)
+    ctx_yaku: list[YakuItem] = []
+    ctx_han = 0
     if context.double_riichi:
-        yaku.append(YakuItem(name="ダブル立直", han=2))
-        yaku_han += 2
+        ctx_yaku.append(YakuItem(name="ダブル立直", han=2))
+        ctx_han += 2
     elif context.riichi:
-        yaku.append(YakuItem(name="立直", han=1))
-        yaku_han += 1
+        ctx_yaku.append(YakuItem(name="立直", han=1))
+        ctx_han += 1
     if context.ippatsu:
-        yaku.append(YakuItem(name="一発", han=1))
-        yaku_han += 1
+        ctx_yaku.append(YakuItem(name="一発", han=1))
+        ctx_han += 1
     if context.haitei:
-        yaku.append(YakuItem(name="海底摸月", han=1))
-        yaku_han += 1
+        ctx_yaku.append(YakuItem(name="海底摸月", han=1))
+        ctx_han += 1
     if context.houtei:
-        yaku.append(YakuItem(name="河底撈魚", han=1))
-        yaku_han += 1
-    if context.rinshan:
-        yaku.append(YakuItem(name="嶺上開花", han=1))
-        yaku_han += 1
+        ctx_yaku.append(YakuItem(name="河底撈魚", han=1))
+        ctx_han += 1
+    if context.rinshan and has_kan_meld:
+        ctx_yaku.append(YakuItem(name="嶺上開花", han=1))
+        ctx_han += 1
     if context.chankan:
-        yaku.append(YakuItem(name="槍槓", han=1))
-        yaku_han += 1
-    if context.win_type == "tsumo" and not any(m.open for m in hand.melds):
-        yaku.append(YakuItem(name="門前清自摸和", han=1))
-        yaku_han += 1
+        ctx_yaku.append(YakuItem(name="槍槓", han=1))
+        ctx_han += 1
+    if context.win_type == "tsumo" and not is_open:
+        ctx_yaku.append(YakuItem(name="門前清自摸和", han=1))
+        ctx_han += 1
     if context.tenhou:
-        yaku.append(YakuItem(name="天和", han=13))
-        yaku_han += 13
+        ctx_yaku.append(YakuItem(name="天和", han=13))
+        ctx_han += 13
     if context.chiihou:
-        yaku.append(YakuItem(name="地和", han=13))
-        yaku_han += 13
+        ctx_yaku.append(YakuItem(name="地和", han=13))
+        ctx_han += 13
 
-    yaku_han += _append_yakuhai_yaku(yaku, hand, context)
-    has_pinfu = _has_pinfu(hand, context)
-
+    # Tile-based yaku (same for all interpretations)
+    tile_yaku: list[YakuItem] = []
+    tile_han = 0
+    tile_han += _append_yakuhai_yaku(tile_yaku, hand, context)
     if _has_tanyao(hand, rules):
-        yaku.append(YakuItem(name="断么九", han=1))
-        yaku_han += 1
-    if has_pinfu:
-        yaku.append(YakuItem(name="平和", han=1))
-        yaku_han += 1
-    if _has_iipeikou(hand):
-        yaku.append(YakuItem(name="一盃口", han=1))
-        yaku_han += 1
-    if _has_sanshoku_doujun(hand):
-        sanshoku_han = 1 if any(m.open for m in hand.melds) else 2
-        yaku.append(YakuItem(name="三色同順", han=sanshoku_han))
-        yaku_han += sanshoku_han
-    if _has_ittsuu(hand):
-        is_open_hand = any(meld.open for meld in hand.melds)
-        ittsuu_han = 1 if is_open_hand else 2
-        yaku.append(YakuItem(name="一気通貫", han=ittsuu_han))
-        yaku_han += ittsuu_han
-    if _has_junchan(hand):
-        junchan_han = 2 if any(m.open for m in hand.melds) else 3
-        yaku.append(YakuItem(name="純全帯么九", han=junchan_han))
-        yaku_han += junchan_han
-    elif _has_chanta(hand):
-        chanta_han = 1 if any(m.open for m in hand.melds) else 2
-        yaku.append(YakuItem(name="混全帯么九", han=chanta_han))
-        yaku_han += chanta_han
-    if _has_toitoi(hand):
-        yaku.append(YakuItem(name="対々和", han=2))
-        yaku_han += 2
-    if _has_sanshoku_doukou(hand):
-        yaku.append(YakuItem(name="三色同刻", han=2))
-        yaku_han += 2
+        tile_yaku.append(YakuItem(name="断么九", han=1))
+        tile_han += 1
     if _has_shousangen(hand):
-        yaku.append(YakuItem(name="小三元", han=2))
-        yaku_han += 2
-    if _has_sanankou(hand):
-        yaku.append(YakuItem(name="三暗刻", han=2))
-        yaku_han += 2
+        tile_yaku.append(YakuItem(name="小三元", han=2))
+        tile_han += 2
     if _has_sankantsu(hand):
-        yaku.append(YakuItem(name="三槓子", han=2))
-        yaku_han += 2
-    if _has_chiitoitsu(hand):
-        yaku.append(YakuItem(name="七対子", han=2))
-        yaku_han += 2
+        tile_yaku.append(YakuItem(name="三槓子", han=2))
+        tile_han += 2
     if _has_honroutou(hand):
-        yaku.append(YakuItem(name="混老頭", han=2))
-        yaku_han += 2
+        tile_yaku.append(YakuItem(name="混老頭", han=2))
+        tile_han += 2
     if _has_chinitsu(hand):
-        chinitsu_han = 5 if any(m.open for m in hand.melds) else 6
-        yaku.append(YakuItem(name="清一色", han=chinitsu_han))
-        yaku_han += chinitsu_han
+        chinitsu_han = 5 if is_open else 6
+        tile_yaku.append(YakuItem(name="清一色", han=chinitsu_han))
+        tile_han += chinitsu_han
     elif _has_honitsu(hand):
-        honitsu_han = 2 if any(m.open for m in hand.melds) else 3
-        yaku.append(YakuItem(name="混一色", han=honitsu_han))
-        yaku_han += honitsu_han
+        honitsu_han = 2 if is_open else 3
+        tile_yaku.append(YakuItem(name="混一色", han=honitsu_han))
+        tile_han += honitsu_han
 
-    if yaku_han == 0:
-        raise ValueError("No yaku: dora-only hands cannot win")
-
+    # Dora (same for all interpretations)
     dora = DoraBreakdown(
         dora=_count_dora(hand, context.dora_indicators),
         aka_dora=context.aka_dora_count,
         ura_dora=_count_dora(hand, context.ura_dora_indicators),
     )
+    dora_yaku: list[YakuItem] = []
     if dora.dora > 0:
-        yaku.append(YakuItem(name="ドラ", han=dora.dora))
+        dora_yaku.append(YakuItem(name="ドラ", han=dora.dora))
     if dora.aka_dora > 0:
-        yaku.append(YakuItem(name="赤ドラ", han=dora.aka_dora))
+        dora_yaku.append(YakuItem(name="赤ドラ", han=dora.aka_dora))
     if dora.ura_dora > 0:
-        yaku.append(YakuItem(name="裏ドラ", han=dora.ura_dora))
-    han = yaku_han + context.aka_dora_count + dora.dora + dora.ura_dora
-    fu, fu_breakdown = _calc_regular_fu(hand, context, rules, has_pinfu)
-    label = _point_label_from_han_fu(han, fu)
-    points, payments = _calc_points(context, han, fu)
+        dora_yaku.append(YakuItem(name="裏ドラ", han=dora.ura_dora))
+    dora_han_total = dora.dora + dora.aka_dora + dora.ura_dora
+
+    # Enumerate all interpretations, pick the one with highest points
+    best_received = -1
+    best_result: tuple | None = None
+
+    # Standard meld interpretations
+    patterns = _all_meld_patterns_with_pair(hand)
+    for melds, pair in patterns:
+        pat_yaku, pat_han, has_pinfu = _check_pattern_yaku(
+            melds, pair, hand, context, rules, is_open, n_open, has_honor,
+        )
+        total_yaku_han = ctx_han + tile_han + pat_han
+        if total_yaku_han == 0:
+            continue
+        total_han = total_yaku_han + dora_han_total
+        fu, fu_breakdown = _calc_fu_for_pattern(
+            melds, pair, hand, context, rules, has_pinfu, n_open,
+        )
+        all_yaku = ctx_yaku + tile_yaku + pat_yaku + dora_yaku
+        label = _point_label_from_han_fu(total_han, fu)
+        points, payments = _calc_points(context, total_han, fu)
+        if payments.total_received > best_received:
+            best_received = payments.total_received
+            best_result = (total_han, fu, fu_breakdown, all_yaku, label, points, payments)
+
+    # Chiitoitsu interpretation
+    if _has_chiitoitsu(hand):
+        pat_yaku = [YakuItem(name="七対子", han=2)]
+        pat_han = 2
+        total_yaku_han = ctx_han + tile_han + pat_han
+        if total_yaku_han > 0:
+            total_han = total_yaku_han + dora_han_total
+            fu = 25
+            fu_breakdown = [FuBreakdownItem(name="七対子", fu=25)]
+            all_yaku = ctx_yaku + tile_yaku + pat_yaku + dora_yaku
+            label = _point_label_from_han_fu(total_han, fu)
+            points, payments = _calc_points(context, total_han, fu)
+            if payments.total_received > best_received:
+                best_received = payments.total_received
+                best_result = (total_han, fu, fu_breakdown, all_yaku, label, points, payments)
+
+    if best_result is None:
+        raise ValueError("No yaku: dora-only hands cannot win")
+
+    total_han, fu, fu_breakdown, all_yaku, label, points, payments = best_result
     return ScoreResult(
-        han=han,
+        han=total_han,
         fu=fu,
         fu_breakdown=fu_breakdown,
-        yaku=yaku,
+        yaku=all_yaku,
         yakuman=[],
         dora=dora,
         point_label=label,
