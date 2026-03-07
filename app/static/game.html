@@ -855,6 +855,12 @@ function renderRonPanel(panel) {
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitRon()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
+
+  // Auto-select my seat as winner
+  if (mySeat !== null) {
+    const myChip = document.querySelector(`#ronWinner .chip[data-seat="${mySeat}"]`);
+    if (myChip) { myChip.classList.add('selected'); renderRonWinnerPoints(); }
+  }
 }
 
 function toggleRonWinner(el) {
@@ -936,6 +942,12 @@ function renderTsumoPanel(panel) {
   html += `<button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="submitTsumo()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
+
+  // Auto-select my seat as winner
+  if (mySeat !== null) {
+    const myChip = document.querySelector(`#tsumoWinner .chip[data-seat="${mySeat}"]`);
+    if (myChip) selectChipTsumo(myChip);
+  }
 }
 
 function renderDrawPanel(panel) {
