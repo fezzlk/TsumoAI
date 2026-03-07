@@ -124,6 +124,7 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 .swap-card { background: #16213e; border: 2px solid #333; border-radius: 8px; padding: 12px; text-align: center; cursor: pointer; }
 .swap-card.selected { border-color: #e94560; background: #2a1a3e; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -563,15 +564,37 @@ function showQR() {
   document.getElementById('qrRoomCode').textContent = `ROOM: ${roomCode}`;
   document.getElementById('qrModal').classList.add('active');
 
+  const joinUrl = `${location.origin}/game?room=${roomCode}`;
+
+  // Try server-side QR first
   const img = new Image();
   img.src = `/api/v1/games/${gameId}/qr`;
   img.alt = 'QR Code';
   img.onload = () => { container.innerHTML = ''; container.appendChild(img); };
   img.onerror = () => {
-    // Fallback: show URL text
-    const joinUrl = `${location.origin}/game?room=${roomCode}`;
-    container.innerHTML = `<p style="color:#aaa;word-break:break-all;font-size:0.85em">${escHtml(joinUrl)}</p>`;
+    // Fallback: use QR generation via canvas
+    try {
+      const qrImg = generateQRFallback(joinUrl);
+      container.innerHTML = '';
+      container.appendChild(qrImg);
+    } catch (e) {
+      container.innerHTML = `<p style="color:#aaa;word-break:break-all;font-size:0.85em">${escHtml(joinUrl)}</p>`;
+    }
   };
+}
+
+function generateQRFallback(text) {
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  const div = document.createElement('div');
+  div.innerHTML = qr.createImgTag(6, 8);
+  const img = div.querySelector('img');
+  img.style.borderRadius = '8px';
+  img.style.background = '#fff';
+  img.style.padding = '8px';
+  img.style.maxWidth = '220px';
+  return img;
 }
 
 // --- Seat Swap ---
