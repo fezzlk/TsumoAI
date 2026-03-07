@@ -320,8 +320,8 @@ def apply_draw(session: GameSession, tenpai_seats: list[int] | None = None,
 
     _take_snapshot(session)
 
-    tenpai_seats = tenpai_seats or []
-    riichi_seats = riichi_seats or []
+    tenpai_seats = list(dict.fromkeys(tenpai_seats or []))
+    riichi_seats = list(dict.fromkeys(riichi_seats or []))
     point_changes: dict[int, int] = {i: 0 for i in range(4)}
 
     # Apply riichi deductions

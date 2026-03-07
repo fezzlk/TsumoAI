@@ -309,5 +309,6 @@ class RoundResultResponse(BaseModel):
 
 class GameRoundResponse(BaseModel):
     game_id: UUID
+    room_code: str | None = None
     round_result: RoundResultResponse
     game_state: GameStateResponse

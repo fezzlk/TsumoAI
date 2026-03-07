@@ -287,15 +287,21 @@ async function joinRoom() {
   }
 }
 
+let keepAliveTimer = null;
+
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = `${proto}//${location.host}/ws/rooms/${roomCode}?player_name=${encodeURIComponent(myName)}`;
   ws = new WebSocket(url);
   ws.onopen = () => {
     document.getElementById('connStatus').classList.add('connected');
+    // Clear any previous keep-alive timer before creating a new one
+    if (keepAliveTimer) clearInterval(keepAliveTimer);
+    keepAliveTimer = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({type:'ping'})); }, 25000);
   };
   ws.onclose = () => {
     document.getElementById('connStatus').classList.remove('connected');
+    if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
     // Auto-reconnect
     setTimeout(connectWS, 2000);
   };
@@ -314,8 +320,6 @@ function connectWS() {
     if (msg.type === 'player_joined') toast(`${msg.player_name} が参加`);
     if (msg.type === 'player_left') toast(`${msg.player_name} が退出`);
   };
-  // Keep-alive
-  setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({type:'ping'})); }, 25000);
 }
 
 function showGameScreen() {
