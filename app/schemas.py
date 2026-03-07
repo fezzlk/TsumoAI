@@ -249,9 +249,22 @@ class DatasetUploadResponse(BaseModel):
 
 
 class CreateGameRequest(BaseModel):
-    player_names: list[str] = Field(..., min_length=4, max_length=4)
+    player_names: list[str] = Field(
+        default=["プレイヤー1", "プレイヤー2", "プレイヤー3", "プレイヤー4"],
+        min_length=4,
+        max_length=4,
+    )
     starting_points: int = 25000
     game_type: Literal["east_only", "east_south"] = "east_only"
+
+
+class ClaimSeatRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=20)
+
+
+class SwapSeatsRequest(BaseModel):
+    seat_a: conint(ge=0, le=3)
+    seat_b: conint(ge=0, le=3)
 
 
 class PlayerStateResponse(BaseModel):
