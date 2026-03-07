@@ -1328,8 +1328,8 @@ async function showChart() {
     const rounds = data.rounds;
     const gs = data.game_state;
     if (rounds.length === 0) { toast('まだ記録がありません', true); return; }
-    drawChart(rounds, gs);
     document.getElementById('chartModal').classList.add('active');
+    requestAnimationFrame(() => drawChart(rounds, gs));
   } catch (e) {
     toast(e.message, true);
   }
