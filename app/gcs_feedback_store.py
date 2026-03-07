@@ -17,7 +17,7 @@ class GCSFeedbackStore:
 
     def _get_client(self) -> storage.Client:
         if self._client is None:
-            self._client = storage.Client()
+            self._client = storage.Client(project=settings.gcp_project)
         return self._client
 
     def save(self, payload: dict) -> dict:

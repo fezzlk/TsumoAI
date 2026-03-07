@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     recognize_ensemble_passes: int = 3
     image_ttl_hours: int = 24
+    gcp_project: str | None = None
     gcs_bucket_name: str | None = None
     gcs_feedback_prefix: str = "score-feedback"
     gcs_dataset_prefix: str = "score-dataset"
