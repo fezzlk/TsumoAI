@@ -70,10 +70,13 @@ label { display: block; margin-bottom: 4px; font-size: 0.85em; color: #aaa; }
 .chip.selected { background: #e94560; border-color: #e94560; }
 .chip:active { transform: scale(0.95); }
 
-/* Riichi toggle on player card */
-.riichi-btn { margin-top: 6px; padding: 4px 12px; border: 1px solid #555; border-radius: 12px; background: transparent; color: #888; font-size: 0.7em; cursor: pointer; transition: all 0.15s; }
+/* Riichi/Tenpai toggle on player card */
+.riichi-btn, .tenpai-btn { margin-top: 4px; padding: 3px 10px; border: 1px solid #555; border-radius: 12px; background: transparent; color: #888; font-size: 0.65em; cursor: pointer; transition: all 0.15s; display: inline-block; }
 .riichi-btn.active { background: #f39c12; border-color: #f39c12; color: #fff; font-weight: bold; }
-.riichi-btn:active { transform: scale(0.93); }
+.tenpai-btn.active { background: #3498db; border-color: #3498db; color: #fff; font-weight: bold; }
+.riichi-btn:active, .tenpai-btn:active { transform: scale(0.93); }
+.riichi-btn.disabled, .tenpai-btn.disabled { opacity: 0.3; cursor: default; }
+.toggle-row { margin-top: 6px; display: flex; gap: 6px; justify-content: center; }
 
 /* History */
 .history-list { max-height: 300px; overflow-y: auto; }
@@ -213,6 +216,7 @@ let ws = null;
 let lastDeltas = {};
 let keepAliveTimer = null;
 let riichiSeats = new Set();
+let tenpaiSeats = new Set();
 
 // Common point values for one-tap selection
 const POINT_TABLE_RON = [
@@ -410,6 +414,16 @@ function connectWS() {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'pong') return;
+    if (msg.type === 'riichi_toggle') {
+      if (msg.active) riichiSeats.add(msg.seat); else riichiSeats.delete(msg.seat);
+      renderGame();
+      return;
+    }
+    if (msg.type === 'tenpai_toggle') {
+      if (msg.active) tenpaiSeats.add(msg.seat); else tenpaiSeats.delete(msg.seat);
+      renderGame();
+      return;
+    }
     if (msg.game_state) {
       gameState = msg.game_state;
       if (msg.round_result) {
@@ -470,12 +484,20 @@ function renderGame() {
       deltaHtml = `<div class="delta ${cls}">${delta > 0 ? '+' : ''}${delta.toLocaleString()}</div>`;
     }
     const isRiichi = riichiSeats.has(p.seat);
+    const isTenpai = tenpaiSeats.has(p.seat);
+    const canControl = mySeat === null || mySeat === p.seat;
+    const disabledCls = canControl ? '' : ' disabled';
+    const riichiOnclick = canControl ? `onclick="toggleRiichi(${p.seat})"` : '';
+    const tenpaiOnclick = canControl ? `onclick="toggleTenpai(${p.seat})"` : '';
     card.innerHTML = `
       <div class="wind">${WIND_NAMES[seatWinds[p.seat]] || ''}</div>
       <div class="name">${escHtml(p.name)}</div>
       <div class="points${p.points < 0 ? ' negative' : ''}">${p.points.toLocaleString()}</div>
       ${deltaHtml}
-      <button class="riichi-btn${isRiichi ? ' active' : ''}" onclick="toggleRiichi(${p.seat})">立直</button>
+      <div class="toggle-row">
+        <button class="riichi-btn${isRiichi ? ' active' : ''}${disabledCls}" ${riichiOnclick}>立直</button>
+        <button class="tenpai-btn${isTenpai ? ' active' : ''}${disabledCls}" ${tenpaiOnclick}>聴牌</button>
+      </div>
     `;
     sb.appendChild(card);
   }
@@ -655,15 +677,8 @@ function renderTsumoPanel(panel) {
 }
 
 function renderDrawPanel(panel) {
-  const gs = gameState;
   let html = '<h2>流局</h2>';
-
-  html += '<label>テンパイ者 (複数選択可)</label><div class="player-chips" id="drawTenpai">';
-  gs.players.forEach(p => {
-    html += `<div class="chip" data-seat="${p.seat}" onclick="toggleChip(this)">${escHtml(p.name)}</div>`;
-  });
-  html += '</div>';
-
+  html += '<p style="text-align:center;color:#aaa;font-size:0.85em;margin:8px 0">各プレイヤーの「聴牌」ボタンで宣言してください</p>';
   html += `<button class="btn btn-secondary" style="width:100%;margin-top:12px" onclick="submitDraw()">確定</button>`;
   html += `<button class="btn btn-secondary btn-small" style="width:100%;margin-top:4px" onclick="hideAction()">キャンセル</button>`;
   panel.innerHTML = html;
@@ -714,13 +729,29 @@ function getSelectedSeats(groupId) {
 }
 
 function toggleRiichi(seat) {
-  if (riichiSeats.has(seat)) riichiSeats.delete(seat);
-  else riichiSeats.add(seat);
+  const active = !riichiSeats.has(seat);
+  if (active) riichiSeats.add(seat); else riichiSeats.delete(seat);
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({type: 'riichi_toggle', seat, active}));
+  }
+  renderGame();
+}
+
+function toggleTenpai(seat) {
+  const active = !tenpaiSeats.has(seat);
+  if (active) tenpaiSeats.add(seat); else tenpaiSeats.delete(seat);
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({type: 'tenpai_toggle', seat, active}));
+  }
   renderGame();
 }
 
 function getRiichiSeatsFromBoard() {
   return Array.from(riichiSeats);
+}
+
+function getTenpaiSeatsFromBoard() {
+  return Array.from(tenpaiSeats);
 }
 
 function ronPointsToHanFu(pts, isDealer) {
@@ -785,6 +816,7 @@ async function submitRon() {
     if (!res.ok) throw new Error(data.detail || 'エラー');
     gameState = data.game_state;
     riichiSeats.clear();
+    tenpaiSeats.clear();
     computeDeltas(data.round_result.point_changes);
     renderGame();
     toast('ロン確定');
@@ -824,6 +856,7 @@ async function submitTsumo() {
     if (!res.ok) throw new Error(data.detail || 'エラー');
     gameState = data.game_state;
     riichiSeats.clear();
+    tenpaiSeats.clear();
     computeDeltas(data.round_result.point_changes);
     renderGame();
     toast('ツモ確定');
@@ -833,7 +866,7 @@ async function submitTsumo() {
 }
 
 async function submitDraw() {
-  const tenpai = getSelectedSeats('drawTenpai');
+  const tenpai = getTenpaiSeatsFromBoard();
   const riichi = getRiichiSeatsFromBoard();
 
   try {
@@ -846,6 +879,7 @@ async function submitDraw() {
     if (!res.ok) throw new Error(data.detail || 'エラー');
     gameState = data.game_state;
     riichiSeats.clear();
+    tenpaiSeats.clear();
     computeDeltas(data.round_result.point_changes);
     renderGame();
     toast('流局確定');

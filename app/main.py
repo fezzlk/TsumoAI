@@ -630,6 +630,11 @@ async def room_websocket(websocket: WebSocket, room_code: str, player_name: str 
             msg = json.loads(data)
             if msg.get("type") == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
+            elif msg.get("type") in ("riichi_toggle", "tenpai_toggle"):
+                await room_manager.broadcast_game_update(code, msg["type"], {
+                    "seat": msg.get("seat"),
+                    "active": msg.get("active"),
+                })
     except WebSocketDisconnect:
         room_manager.disconnect(code, websocket)
         await room_manager.broadcast_game_update(code, "player_left", {
