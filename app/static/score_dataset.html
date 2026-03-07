@@ -1146,6 +1146,10 @@
         "門前清自摸和": "Fully Concealed Hand"
       };
 
+      const YAKU_EN_TO_JA = Object.fromEntries(
+        Object.entries(YAKU_JA_TO_EN).map(([ja, en]) => [en, ja])
+      );
+
       const WIND_TO_EN = { E: "east", S: "south", W: "west", N: "north" };
 
       function tileCodeToNumber(code) {
@@ -1309,7 +1313,8 @@
           ALL_YAKU_EN.forEach((name) => {
             const opt = document.createElement("option");
             opt.value = name;
-            opt.textContent = name;
+            const ja = YAKU_EN_TO_JA[name];
+            opt.textContent = ja ? `${ja} (${name})` : name;
             sel.appendChild(opt);
           });
           if (ALL_YAKU_EN.includes(y.name)) {
@@ -1462,7 +1467,8 @@
           (entry.output.yaku || []).forEach((y) => {
             const badge = document.createElement("span");
             badge.className = "badge";
-            badge.textContent = y.han > 0 ? `${y.name} ${y.han}翻` : y.name;
+            const dispName = YAKU_EN_TO_JA[y.name] || y.name;
+            badge.textContent = y.han > 0 ? `${dispName} ${y.han}翻` : dispName;
             yakuRow.appendChild(badge);
           });
           div.appendChild(yakuRow);
