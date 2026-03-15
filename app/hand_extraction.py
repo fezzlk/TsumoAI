@@ -221,6 +221,17 @@ def extract_hand_from_image(image_bytes: bytes, should_cancel: Callable[[], bool
     """Image -> hand-shape candidates. This module must not score."""
     if should_cancel and should_cancel():
         raise RecognitionCancelledError("recognition canceled")
+
+    # Try local TFLite recognition first
+    try:
+        from app.tile_recognizer_local import recognize_tiles_local
+
+        local_result = recognize_tiles_local(image_bytes)
+        if local_result is not None:
+            return local_result
+    except Exception:
+        pass  # Fall through to OpenAI API
+
     if not settings.openai_api_key:
         return _fallback_result()
 

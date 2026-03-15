@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -70,6 +71,14 @@ except Exception:  # pragma: no cover
     HEIC_ENABLED = False
 
 app = FastAPI(title="Mahjong Hand Score PoC", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 repo = InMemoryRepository(ttl_hours=settings.image_ttl_hours)
 recognition_jobs = RecognitionJobManager(repo=repo, model_name=settings.openai_model)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -126,13 +135,15 @@ def _to_recognition_image_bytes(upload: UploadFile, image_bytes: bytes) -> tuple
 
 
 def _build_recognize_response(width: int, height: int, game_id: str | None, payload: dict) -> RecognizeResponse:
+    model_name = payload.get("model_name", settings.openai_model)
+    model_version = "local" if model_name == "tflite-mobilenetv2" else "api-current"
     record = repo.create(
         "recognition",
         {
             "game_id": game_id,
             "image": {"width": width, "height": height},
             "hand_estimate": {"tiles_count": payload["tiles_count"], "slots": payload["slots"]},
-            "model": {"name": settings.openai_model, "version": "api-current"},
+            "model": {"name": model_name, "version": model_version},
             "warnings": payload.get("warnings", []),
         },
     )

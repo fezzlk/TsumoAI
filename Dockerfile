@@ -10,6 +10,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY ml/output/tile_classifier.tflite ml/output/labels.txt ./ml/output/
 
 EXPOSE 8080
 

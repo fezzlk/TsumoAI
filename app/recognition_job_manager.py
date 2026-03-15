@@ -78,13 +78,15 @@ class RecognitionJobManager:
                 self._set_canceled(job_id)
                 return
 
+            model_name = payload.get("model_name", self._model_name)
+            model_version = "local" if model_name == "tflite-mobilenetv2" else "api-current"
             record = self._repo.create(
                 "recognition",
                 {
                     "game_id": job.game_id,
                     "image": {"width": job.width, "height": job.height},
                     "hand_estimate": {"tiles_count": payload["tiles_count"], "slots": payload["slots"]},
-                    "model": {"name": self._model_name, "version": "api-current"},
+                    "model": {"name": model_name, "version": model_version},
                     "warnings": payload.get("warnings", []),
                 },
             )

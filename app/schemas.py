@@ -60,7 +60,7 @@ class ImageMeta(BaseModel):
 
 
 class ModelMeta(BaseModel):
-    name: Literal["gpt-4o-mini"]
+    name: Literal["gpt-4o-mini", "tflite-mobilenetv2"]
     version: str
 
 
