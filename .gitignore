@@ -3,3 +3,11 @@
 __pycache__/
 *.py[cod]
 venv/*
+
+# Auto-generated MCP server context (added automatically)
+.mcp-server-context.md
+
+# ML training data and generated artifacts
+ml/tiles-resized/
+ml/output/*.keras
+.claude/

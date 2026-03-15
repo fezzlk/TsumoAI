@@ -1,4 +1,15 @@
 services:
+  ml-train:
+    build: ./ml
+    container_name: mahjong-ml-train
+    volumes:
+      - ./ml:/app
+      - ./mobile/assets/ml:/output
+    environment:
+      - FLUTTER_ASSETS_DIR=/output
+    profiles:
+      - ml
+
   api:
     build: .
     container_name: mahjong-score-api
@@ -7,5 +18,9 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcloud/application_default_credentials.json
+      - GOOGLE_CLOUD_PROJECT=nazonator
     volumes:
       - ./app:/app/app
+      - ~/.config/gcloud:/tmp/gcloud:ro
