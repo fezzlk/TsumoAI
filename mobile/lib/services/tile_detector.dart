@@ -278,7 +278,21 @@ class TileDetector {
     final threshold = (peak * input.params.projectionThreshold).toInt();
 
     // ── Step 3: Find all regions above threshold ──
-    final plateaus = _findAllPlateaus(mainProj, threshold);
+    var plateaus = _findAllPlateaus(mainProj, threshold);
+    if (plateaus.isEmpty) return empty;
+
+    // Filter plateaus by average density: a real tile region should have
+    // dense white pixels, not sparse noise/reflections on the mat.
+    // Require at least 30% of the peak density within the plateau.
+    final densityThreshold = peak * 0.30;
+    plateaus = plateaus.where((p) {
+      int sum = 0;
+      for (int i = p.start; i < p.start + p.length; i++) {
+        sum += mainProj[i];
+      }
+      final avgDensity = sum / p.length;
+      return avgDensity >= densityThreshold;
+    }).toList();
     if (plateaus.isEmpty) return empty;
 
     // Total tile pixels = sum of all plateau lengths

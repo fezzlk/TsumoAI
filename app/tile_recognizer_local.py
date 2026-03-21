@@ -145,6 +145,14 @@ def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
     max_tile_w = band_h * 1.5
     groups = [(s, e) for s, e in groups if min_tile_w <= (e - s + 1) <= max_tile_w]
 
+    # Filter by white pixel density: reject sparse noise/reflections on the mat
+    v_peak = np.max(v_proj)
+    density_threshold = v_peak * 0.30
+    groups = [
+        (s, e) for s, e in groups
+        if np.mean(v_proj[s:e + 1]) >= density_threshold
+    ]
+
     if not groups:
         return []
 
