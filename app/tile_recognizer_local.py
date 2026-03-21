@@ -94,10 +94,22 @@ def _segment_tiles(image: np.ndarray, tile_aspect: float = 0.75) -> list[np.ndar
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
+    # Detect green mat region first (H=35-85 for green, moderate S and V)
+    lower_green = np.array([35, 40, 40])
+    upper_green = np.array([85, 255, 255])
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
+
+    # Dilate green mask to include tiles sitting on/near the mat edge
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (80, 80))
+    mat_region = cv2.dilate(green_mask, dilate_kernel)
+
     # White pixel mask: low saturation, high value
     lower_white = np.array([0, 0, 160])
     upper_white = np.array([180, 80, 255])
-    mask = cv2.inRange(hsv, lower_white, upper_white)
+    white_mask = cv2.inRange(hsv, lower_white, upper_white)
+
+    # Restrict white detection to mat region only
+    mask = cv2.bitwise_and(white_mask, mat_region)
 
     # Morphological cleanup
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
