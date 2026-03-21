@@ -94,26 +94,10 @@ def _segment_tiles(image: np.ndarray, tile_aspect: float = 0.75) -> list[np.ndar
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
-    # Detect green mat region first (H=35-85 for green, moderate S and V)
-    lower_green = np.array([35, 40, 40])
-    upper_green = np.array([85, 255, 255])
-    green_mask = cv2.inRange(hsv, lower_green, upper_green)
-
-    # Dilate green mask to include tiles sitting on/near the mat edge
-    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (120, 120))
-    mat_region = cv2.dilate(green_mask, dilate_kernel)
-
     # White pixel mask: low saturation, high value
     lower_white = np.array([0, 0, 160])
     upper_white = np.array([180, 80, 255])
-    white_mask = cv2.inRange(hsv, lower_white, upper_white)
-
-    # Restrict white detection to mat region if green was detected
-    green_ratio = np.count_nonzero(green_mask) / (green_mask.shape[0] * green_mask.shape[1])
-    if green_ratio > 0.02:  # at least 2% green detected
-        mask = cv2.bitwise_and(white_mask, mat_region)
-    else:
-        mask = white_mask
+    mask = cv2.inRange(hsv, lower_white, upper_white)
 
     # Morphological cleanup
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
@@ -124,12 +108,19 @@ def _segment_tiles(image: np.ndarray, tile_aspect: float = 0.75) -> list[np.ndar
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
 
     tiles: list[np.ndarray] = []
-    min_area = 500  # minimum pixel area for a tile component
+
+    # Find the largest component to use as size reference
+    if num_labels <= 1:
+        return tiles
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    max_area = int(areas.max())
+    # Tiles must be at least 15% of the largest component's area
+    area_threshold = max(500, int(max_area * 0.15))
 
     for i in range(1, num_labels):  # skip background (label 0)
         x, y, w, h, area = stats[i]
 
-        if area < min_area:
+        if area < area_threshold:
             continue
 
         # Density: white pixels should fill at least 20% of bounding box

@@ -213,60 +213,12 @@ class TileDetector {
     final mH = scanMYEnd - scanMYStart;
     if (mW <= 0 || mH <= 0) return empty;
 
-    // Step 1: Build green mat mask (detect where the mat is)
-    final greenMask = Uint8List(mH * mW);
-    for (int my = 0; my < mH; my++) {
-      for (int mx = 0; mx < mW; mx++) {
-        if (_isGreenPixel(input, mx * _scale, (my + scanMYStart) * _scale)) {
-          greenMask[my * mW + mx] = 1;
-        }
-      }
-    }
-
-    // Dilate green mask to include tiles sitting on/near the mat edge.
-    // Use separable 1D dilation (horizontal then vertical) for performance.
-    final dilateRadius = 15; // ~60 real pixels at 4x scale
-    final hDilated = Uint8List(mH * mW);
-    for (int y = 0; y < mH; y++) {
-      final rowOff = y * mW;
-      for (int x = 0; x < mW; x++) {
-        if (greenMask[rowOff + x] == 1) {
-          final xStart = (x - dilateRadius).clamp(0, mW - 1);
-          final xEnd = (x + dilateRadius).clamp(0, mW - 1);
-          for (int dx = xStart; dx <= xEnd; dx++) {
-            hDilated[rowOff + dx] = 1;
-          }
-        }
-      }
-    }
-    final matRegion = Uint8List(mH * mW);
-    for (int x = 0; x < mW; x++) {
-      for (int y = 0; y < mH; y++) {
-        if (hDilated[y * mW + x] == 1) {
-          final yStart = (y - dilateRadius).clamp(0, mH - 1);
-          final yEnd = (y + dilateRadius).clamp(0, mH - 1);
-          for (int dy = yStart; dy <= yEnd; dy++) {
-            matRegion[dy * mW + x] = 1;
-          }
-        }
-      }
-    }
-
-    // Check if green mat was detected at all
-    int greenCount = 0;
-    for (int i = 0; i < mH * mW; i++) {
-      greenCount += matRegion[i];
-    }
-    final hasGreenMat = greenCount > (mH * mW * 0.02); // at least 2% green
-
-    // Step 2: Build white pixel mask, restricted to mat region if detected
+    // Build white pixel mask
     final mask = Uint8List(mH * mW);
     for (int my = 0; my < mH; my++) {
       for (int mx = 0; mx < mW; mx++) {
-        final idx = my * mW + mx;
-        if (!_isWhitePixel(input, mx * _scale, (my + scanMYStart) * _scale)) continue;
-        if (!hasGreenMat || matRegion[idx] == 1) {
-          mask[idx] = 1;
+        if (_isWhitePixel(input, mx * _scale, (my + scanMYStart) * _scale)) {
+          mask[my * mW + mx] = 1;
         }
       }
     }
@@ -322,15 +274,26 @@ class TileDetector {
 
     if (components.isEmpty) return empty;
 
-    // Filter components: minimum area + density check
+    // Find the largest component area to use as reference
+    int maxArea = 0;
+    for (final c in components) {
+      if (c[4] > maxArea) maxArea = c[4];
+    }
+
+    // Filter components:
+    // 1. Minimum absolute area
+    // 2. Must be at least 15% of the largest component (rejects noise)
+    // 3. Density check (white pixels should fill bounding box)
+    final areaThreshold = (maxArea * 0.15).toInt();
+    final minArea = _minComponentArea > areaThreshold ? _minComponentArea : areaThreshold;
+
     final filtered = <List<int>>[];
     for (final c in components) {
       final count = c[4];
-      if (count < _minComponentArea) continue;
+      if (count < minArea) continue;
       final bw = c[2] - c[0] + 1;
       final bh = c[3] - c[1] + 1;
       final bboxArea = bw * bh;
-      // Density: white pixels should fill at least 20% of bounding box
       if (bboxArea == 0 || count / bboxArea < 0.20) continue;
       filtered.add(c);
     }
@@ -403,42 +366,6 @@ class TileDetector {
   }
 
   // ───────── Helpers ─────────
-
-  /// Check if a pixel is "green" (green mat detection in YCbCr).
-  /// Green in YCbCr: medium luminance, Cb < 128 (less blue), Cr < 128 (less red).
-  static bool _isGreenPixel(_AnalysisInput input, int x, int y) {
-    if (x < 0 || x >= input.width || y < 0 || y >= input.height) return false;
-
-    final yOffset = y * input.yBytesPerRow + x;
-    if (yOffset < 0 || yOffset >= input.yBytes.length) return false;
-
-    // Green mat has moderate luminance (not too dark, not too bright)
-    final lum = input.yBytes[yOffset];
-    if (lum < 50 || lum > 200) return false;
-
-    if (input.uvBytes == null) return false;
-
-    final uvX = x ~/ 2;
-    final uvY = y ~/ 2;
-    final uvOffset = uvY * input.uvBytesPerRow + uvX * input.uvPixelStride;
-    if (uvOffset < 0 || uvOffset >= input.uvBytes!.length) return false;
-
-    int cb, cr;
-    if (input.vBytes != null) {
-      if (uvOffset >= input.vBytes!.length) return false;
-      cb = input.uvBytes![uvOffset];
-      cr = input.vBytes![uvOffset];
-    } else if (input.uvPixelStride >= 2) {
-      if (uvOffset + 1 >= input.uvBytes!.length) return false;
-      cb = input.uvBytes![uvOffset];
-      cr = input.uvBytes![uvOffset + 1];
-    } else {
-      return false;
-    }
-
-    // Green: Cb < 128 (shifted toward green from blue) and Cr < 128 (shifted from red)
-    return cb < 120 && cr < 120;
-  }
 
   /// Check if a pixel is "white" (high luminance, neutral chrominance).
   static bool _isWhitePixel(_AnalysisInput input, int x, int y) {
