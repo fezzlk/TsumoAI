@@ -59,11 +59,14 @@ class RecognizeResponse {
   final String recognitionId;
   final HandEstimate handEstimate;
   final List<String> warnings;
+  /// Raw JSON from the API response (used for feedback submission).
+  final Map<String, dynamic> rawJson;
 
   RecognizeResponse({
     required this.recognitionId,
     required this.handEstimate,
     required this.warnings,
+    required this.rawJson,
   });
 
   factory RecognizeResponse.fromJson(Map<String, dynamic> json) {
@@ -71,6 +74,7 @@ class RecognizeResponse {
       recognitionId: json['recognition_id'] as String,
       handEstimate: HandEstimate.fromJson(json['hand_estimate']),
       warnings: (json['warnings'] as List?)?.cast<String>() ?? [],
+      rawJson: json,
     );
   }
 }

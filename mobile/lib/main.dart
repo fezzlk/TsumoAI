@@ -24,7 +24,7 @@ class TsumoAIApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => RecognitionService(),
+      create: (_) => RecognitionService()..initOnDevice(),
       child: MaterialApp(
         title: 'TsumoAI',
         debugShowCheckedModeBanner: false,

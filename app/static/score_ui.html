@@ -1659,7 +1659,51 @@
       syncHandJsonFromState();
       refreshSubmitAvailability();
       setRecognizeOnlyUiState();
-      submitScore();
+
+      // Pre-fill from query params: ?tiles=1m,2m,3m,...
+      (function loadFromQueryParams() {
+        const params = new URLSearchParams(window.location.search);
+        const tilesParam = params.get("tiles");
+        if (!tilesParam) {
+          submitScore();
+          return;
+        }
+        const tiles = tilesParam.split(",").map(t => t.trim()).filter(Boolean);
+        if (tiles.length === 0) {
+          submitScore();
+          return;
+        }
+
+        // Ensure manual input mode is selected
+        uiState.inputMode = "manual";
+        document.querySelectorAll('input[name="inputMode"]').forEach(el => {
+          el.checked = (el.value === "manual");
+        });
+        syncInputModeFromUi();
+
+        // Enable JSON direct edit mode
+        uiState.jsonDirect = true;
+        const jsonSwitch = document.getElementById("jsonDirectSwitch");
+        if (jsonSwitch) jsonSwitch.checked = true;
+
+        // Build hand JSON and write to textarea
+        const handJson = {
+          closed_tiles: tiles,
+          melds: [],
+          win_tile: tiles[tiles.length - 1]
+        };
+        uiState.handJsonFromTiles = handJson;
+        const textarea = document.getElementById("handJsonInput");
+        textarea.disabled = false;
+        textarea.value = JSON.stringify(handJson, null, 2);
+
+        // Disable pattern tile UI (use JSON instead)
+        setTileInputEnabled(false);
+
+        renderWinningTileSelector();
+        refreshSubmitAvailability();
+        submitScore();
+      })();
     </script>
   </body>
 </html>

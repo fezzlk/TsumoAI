@@ -311,18 +311,21 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
 
             // Result overlay
-            if (service.recognition != null)
+            if (service.recognition != null &&
+                service.state == ServiceState.done)
               ResultOverlay(
                 recognition: service.recognition!,
                 score: service.score,
+                isNotWinning: service.isNotWinning,
               ),
 
             // Capture button (pushed up when debug panel is open)
             Positioned(
               bottom: _debugMode
                   ? 380
-                  : service.recognition != null
-                      ? 200
+                  : (service.recognition != null &&
+                          service.state == ServiceState.done)
+                      ? 310
                       : 40,
               left: 0,
               right: 0,

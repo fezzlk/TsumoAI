@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../config.dart';
 import '../models/score_result.dart';
 import '../models/recognize_result.dart';
+import '../screens/feedback_screen.dart';
 
 class ResultOverlay extends StatelessWidget {
   final RecognizeResponse recognition;
   final ScoreResponse? score;
+  final bool isNotWinning;
 
   const ResultOverlay({
     super.key,
     required this.recognition,
     this.score,
+    this.isNotWinning = false,
   });
 
   @override
@@ -35,10 +40,11 @@ class ResultOverlay extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             _buildTilesRow(),
-            if (score != null) ...[
-              const SizedBox(height: 12),
-              _buildScoreSection(score!),
-            ],
+            const SizedBox(height: 12),
+            if (isNotWinning) _buildNotWinningSection(),
+            if (score != null) _buildScoreSection(score!),
+            const SizedBox(height: 10),
+            _buildActionButtons(context),
           ],
         ),
       ),
@@ -83,6 +89,33 @@ class ResultOverlay extends StatelessWidget {
           fontWeight: FontWeight.bold,
           color: Colors.black87,
         ),
+      ),
+    );
+  }
+
+  Widget _buildNotWinningSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 20),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '上がりの形になっていません',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -154,5 +187,59 @@ class ResultOverlay extends StatelessWidget {
       );
     }
     return const SizedBox.shrink();
+  }
+
+  Widget _buildActionButtons(BuildContext context) {
+    final tiles = recognition.handEstimate.topTiles;
+    final tilesParam = tiles.join(',');
+    final url = '${AppConfig.apiBaseUrl}/score-ui?tiles=$tilesParam';
+
+    final buttonStyle = ElevatedButton.styleFrom(
+      backgroundColor: Colors.white.withValues(alpha: 0.15),
+      foregroundColor: Colors.white,
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+      ),
+    );
+
+    return Column(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () async {
+              final uri = Uri.parse(url);
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            },
+            icon: const Icon(Icons.edit, size: 18),
+            label: const Text('WEBで牌姿を修正'),
+            style: buttonStyle,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => FeedbackScreen(
+                    recognition: recognition,
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.feedback_outlined, size: 18),
+            label: const Text('認識が違う（フィードバック）'),
+            style: buttonStyle,
+          ),
+        ),
+      ],
+    );
   }
 }

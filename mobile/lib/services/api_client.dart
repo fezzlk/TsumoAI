@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:async';
 import 'package:dio/dio.dart';
 import '../config.dart';
 import '../models/recognize_result.dart';
@@ -12,16 +11,16 @@ class ApiClient {
   ApiClient() {
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 60),
     ));
   }
 
   String get _baseUrl => AppConfig.apiBaseUrl;
 
-  /// Upload image and start recognition job
-  Future<String> startRecognitionJob(File imageFile) async {
+  /// Upload image and recognize tiles (synchronous call, no polling needed)
+  Future<RecognizeResponse> recognize(File imageFile) async {
     final formData = FormData.fromMap({
-      'file': await MultipartFile.fromFile(
+      'image': await MultipartFile.fromFile(
         imageFile.path,
         filename: 'hand.jpg',
       ),
@@ -32,50 +31,41 @@ class ApiClient {
       data: formData,
     );
 
-    return response.data['job_id'] as String;
+    return RecognizeResponse.fromJson(response.data);
   }
 
-  /// Poll recognition job status
-  Future<RecognizeJobStatus> getJobStatus(String jobId) async {
-    final response = await _dio.get(
-      '$_baseUrl/api/v1/recognize/$jobId',
-    );
-    return RecognizeJobStatus.fromJson(response.data);
-  }
-
-  /// Poll until job completes, returns RecognizeResponse
-  Future<RecognizeResponse> waitForRecognition(
-    String jobId, {
-    Duration pollInterval = const Duration(seconds: 1),
-    Duration timeout = const Duration(seconds: 60),
-  }) async {
-    final deadline = DateTime.now().add(timeout);
-
-    while (DateTime.now().isBefore(deadline)) {
-      final status = await getJobStatus(jobId);
-
-      if (status.status == 'completed' && status.result != null) {
-        return status.result!;
+  /// Calculate score from hand data.
+  /// Returns null if the hand is not a valid winning shape (422).
+  /// Throws on other errors.
+  Future<ScoreResponse?> calculateScore(ScoreRequest request) async {
+    try {
+      final response = await _dio.post(
+        '$_baseUrl/api/v1/score',
+        data: request.toJson(),
+      );
+      return ScoreResponse.fromJson(response.data);
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 422) {
+        // Not a valid winning hand
+        return null;
       }
-      if (status.status == 'failed') {
-        throw Exception('Recognition failed: ${status.error ?? "unknown"}');
-      }
-      if (status.status == 'canceled') {
-        throw Exception('Recognition was canceled');
-      }
-
-      await Future.delayed(pollInterval);
+      rethrow;
     }
-
-    throw TimeoutException('Recognition timed out after $timeout');
   }
 
-  /// Calculate score from hand data
-  Future<ScoreResponse> calculateScore(ScoreRequest request) async {
-    final response = await _dio.post(
-      '$_baseUrl/api/v1/score',
-      data: request.toJson(),
+  /// Send recognition feedback with corrected tiles.
+  Future<void> sendRecognitionFeedback({
+    required Map<String, dynamic> recognitionResponse,
+    required List<String> correctedTiles,
+    String comment = '',
+  }) async {
+    await _dio.post(
+      '$_baseUrl/api/v1/recognition/feedback',
+      data: {
+        'recognition_response': recognitionResponse,
+        'corrected_tiles': correctedTiles,
+        'comment': comment,
+      },
     );
-    return ScoreResponse.fromJson(response.data);
   }
 }
