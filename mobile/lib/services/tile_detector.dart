@@ -252,12 +252,20 @@ class TileDetector {
       }
     }
 
-    // Step 2: Build white pixel mask, restricted to mat region
+    // Check if green mat was detected at all
+    int greenCount = 0;
+    for (int i = 0; i < mH * mW; i++) {
+      greenCount += matRegion[i];
+    }
+    final hasGreenMat = greenCount > (mH * mW * 0.02); // at least 2% green
+
+    // Step 2: Build white pixel mask, restricted to mat region if detected
     final mask = Uint8List(mH * mW);
     for (int my = 0; my < mH; my++) {
       for (int mx = 0; mx < mW; mx++) {
         final idx = my * mW + mx;
-        if (matRegion[idx] == 1 && _isWhitePixel(input, mx * _scale, (my + scanMYStart) * _scale)) {
+        if (!_isWhitePixel(input, mx * _scale, (my + scanMYStart) * _scale)) continue;
+        if (!hasGreenMat || matRegion[idx] == 1) {
           mask[idx] = 1;
         }
       }

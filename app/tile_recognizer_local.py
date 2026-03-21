@@ -108,8 +108,12 @@ def _segment_tiles(image: np.ndarray, tile_aspect: float = 0.75) -> list[np.ndar
     upper_white = np.array([180, 80, 255])
     white_mask = cv2.inRange(hsv, lower_white, upper_white)
 
-    # Restrict white detection to mat region only
-    mask = cv2.bitwise_and(white_mask, mat_region)
+    # Restrict white detection to mat region if green was detected
+    green_ratio = np.count_nonzero(green_mask) / (green_mask.shape[0] * green_mask.shape[1])
+    if green_ratio > 0.02:  # at least 2% green detected
+        mask = cv2.bitwise_and(white_mask, mat_region)
+    else:
+        mask = white_mask
 
     # Morphological cleanup
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
