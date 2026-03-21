@@ -22,7 +22,7 @@ class TileDetectorParams {
   final double projectionThreshold;
 
   const TileDetectorParams({
-    this.luminanceMin = 160,
+    this.luminanceMin = 140,
     this.chrominanceTolerance = 45,
     this.scanRegionTop = 0.05,
     this.scanRegionBottom = 0.95,
@@ -214,16 +214,51 @@ class TileDetector {
     if (mW <= 0 || mH <= 0) return empty;
 
     // Build white pixel mask
-    final mask = Uint8List(mH * mW);
+    final rawMask = Uint8List(mH * mW);
     for (int my = 0; my < mH; my++) {
       for (int mx = 0; mx < mW; mx++) {
         if (_isWhitePixel(input, mx * _scale, (my + scanMYStart) * _scale)) {
-          mask[my * mW + mx] = 1;
+          rawMask[my * mW + mx] = 1;
         }
       }
     }
 
-    // Connected component labeling via flood fill
+    // Morphological close (dilate then erode) to bridge gaps within tile faces
+    // caused by colored patterns breaking up the white region
+    final dilated = Uint8List(mH * mW);
+    for (int y = 0; y < mH; y++) {
+      for (int x = 0; x < mW; x++) {
+        if (rawMask[y * mW + x] == 1) {
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              final ny = y + dy, nx = x + dx;
+              if (ny >= 0 && ny < mH && nx >= 0 && nx < mW) {
+                dilated[ny * mW + nx] = 1;
+              }
+            }
+          }
+        }
+      }
+    }
+    final mask = Uint8List(mH * mW);
+    for (int y = 0; y < mH; y++) {
+      for (int x = 0; x < mW; x++) {
+        final idx = y * mW + x;
+        if (dilated[idx] == 0) continue;
+        bool allSet = true;
+        for (int dy = -1; dy <= 1 && allSet; dy++) {
+          for (int dx = -1; dx <= 1 && allSet; dx++) {
+            final ny = y + dy, nx = x + dx;
+            if (ny < 0 || ny >= mH || nx < 0 || nx >= mW || dilated[ny * mW + nx] == 0) {
+              allSet = false;
+            }
+          }
+        }
+        if (allSet) mask[idx] = 1;
+      }
+    }
+
+    // Connected component labeling via flood fill (8-connected)
     final labels = Int32List(mH * mW);
     int nextLabel = 0;
     // Each component: [minX, minY, maxX, maxY, pixelCount]
@@ -249,22 +284,19 @@ class TileDetector {
           if (cy < minY) minY = cy;
           if (cy > maxY) maxY = cy;
 
-          // 4-connected neighbors
-          if (cx > 0) {
-            final ni = ci - 1;
-            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
-          }
-          if (cx < mW - 1) {
-            final ni = ci + 1;
-            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
-          }
-          if (cy > 0) {
-            final ni = ci - mW;
-            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
-          }
-          if (cy < mH - 1) {
-            final ni = ci + mW;
-            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
+          // 8-connected neighbors
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              if (dy == 0 && dx == 0) continue;
+              final nx = cx + dx, ny = cy + dy;
+              if (nx >= 0 && nx < mW && ny >= 0 && ny < mH) {
+                final ni = ny * mW + nx;
+                if (mask[ni] == 1 && labels[ni] == 0) {
+                  labels[ni] = nextLabel;
+                  stack.add(ni);
+                }
+              }
+            }
           }
         }
 
@@ -274,23 +306,15 @@ class TileDetector {
 
     if (components.isEmpty) return empty;
 
-    // Find the largest component area to use as reference
-    int maxArea = 0;
-    for (final c in components) {
-      if (c[4] > maxArea) maxArea = c[4];
-    }
-
-    // Filter components:
-    // 1. Minimum absolute area
-    // 2. Must be at least 15% of the largest component (rejects noise)
-    // 3. Density check (white pixels should fill bounding box)
-    final areaThreshold = (maxArea * 0.15).toInt();
-    final minArea = _minComponentArea > areaThreshold ? _minComponentArea : areaThreshold;
+    // Filter components by absolute size and max size
+    // Min: reject noise. Max: reject huge surfaces (table, towel)
+    final maxComponentArea = (mH * mW * 0.05).toInt(); // 5% of image = too large for tiles
 
     final filtered = <List<int>>[];
     for (final c in components) {
       final count = c[4];
-      if (count < minArea) continue;
+      if (count < _minComponentArea) continue;
+      if (count > maxComponentArea) continue;
       final bw = c[2] - c[0] + 1;
       final bh = c[3] - c[1] + 1;
       final bboxArea = bw * bh;
