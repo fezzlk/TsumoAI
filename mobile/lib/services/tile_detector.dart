@@ -19,8 +19,6 @@ class TileDetectorParams {
   final double tileAspectRatio;
 
   /// Fraction of the peak projection value used as threshold.
-  /// E.g. 0.3 means a column/row needs at least 30% of the peak's
-  /// white-pixel count to be considered part of the tile region.
   final double projectionThreshold;
 
   const TileDetectorParams({
@@ -109,53 +107,29 @@ class TileDetectorResult {
   });
 }
 
-/// On-device tile counter optimized for white tiles on a green mat.
+/// On-device tile detector using connected-component analysis.
 ///
-/// Uses histogram projection with **adaptive threshold** (fraction of peak).
-/// This handles tiles that occupy only a small fraction of the image.
+/// Works with any tile arrangement (horizontal row, vertical stack, scattered).
 ///
 /// Algorithm:
-/// 1. Compute main-axis projection (white pixel count per column/row)
-/// 2. Threshold = peak value × projectionThreshold
-/// 3. Sum all regions above threshold = total tile length
-/// 4. Measure cross-axis thickness for the largest region
-/// 5. tile_count = total_length / (thickness × aspect_ratio)
+/// 1. Build a downsampled white-pixel mask from the camera YUV frame
+/// 2. Find connected components via flood fill
+/// 3. Filter by area and density to reject noise
+/// 4. Subdivide oversized components using tile aspect ratio
 class TileDetector {
   static const int targetTileCount = 14;
+
+  /// Downscale factor for the white-pixel mask (4 = 1/4 resolution).
+  static const int _scale = 4;
+
+  /// Minimum component area in downscaled pixels.
+  static const int _minComponentArea = 30;
 
   static Future<TileDetectorResult> detect(
     CameraImage image, [
     TileDetectorParams params = const TileDetectorParams(),
   ]) {
-    final yPlane = image.planes[0];
-
-    Uint8List? uvBytes;
-    Uint8List? vBytes;
-    int uvBytesPerRow = 0;
-    int uvPixelStride = 1;
-
-    if (image.planes.length >= 2) {
-      final uvPlane = image.planes[1];
-      uvBytes = Uint8List.fromList(uvPlane.bytes);
-      uvBytesPerRow = uvPlane.bytesPerRow;
-      uvPixelStride = uvPlane.bytesPerPixel ?? 1;
-
-      if (image.planes.length >= 3 && uvPixelStride == 1) {
-        vBytes = Uint8List.fromList(image.planes[2].bytes);
-      }
-    }
-
-    return compute(_analyzeIsolate, _AnalysisInput(
-      yBytes: Uint8List.fromList(yPlane.bytes),
-      uvBytes: uvBytes,
-      vBytes: vBytes,
-      width: image.width,
-      height: image.height,
-      yBytesPerRow: yPlane.bytesPerRow,
-      uvBytesPerRow: uvBytesPerRow,
-      uvPixelStride: uvPixelStride,
-      params: params,
-    ));
+    return compute(_analyzeIsolate, _buildInput(image, params));
   }
 
   static Future<int> countTiles(
@@ -166,10 +140,15 @@ class TileDetector {
   }
 
   /// Returns both axis results for debug display.
+  /// With component-based detection, h/v/best are all the same result.
   static Future<({TileDetectorResult h, TileDetectorResult v, TileDetectorResult best})> detectBoth(
     CameraImage image, [
     TileDetectorParams params = const TileDetectorParams(),
   ]) {
+    return compute(_analyzeBothIsolate, _buildInput(image, params));
+  }
+
+  static _AnalysisInput _buildInput(CameraImage image, TileDetectorParams params) {
     final yPlane = image.planes[0];
 
     Uint8List? uvBytes;
@@ -187,7 +166,7 @@ class TileDetector {
       }
     }
 
-    return compute(_analyzeBothIsolate, _AnalysisInput(
+    return _AnalysisInput(
       yBytes: Uint8List.fromList(yPlane.bytes),
       uvBytes: uvBytes,
       vBytes: vBytes,
@@ -197,197 +176,177 @@ class TileDetector {
       uvBytesPerRow: uvBytesPerRow,
       uvPixelStride: uvPixelStride,
       params: params,
-    ));
+    );
   }
 
   static ({TileDetectorResult h, TileDetectorResult v, TileDetectorResult best}) _analyzeBothIsolate(_AnalysisInput input) {
-    final h = _scanDirection(input, ScanAxis.horizontal);
-    final v = _scanDirection(input, ScanAxis.vertical);
-    final hDiff = (h.tileCount - targetTileCount).abs();
-    final vDiff = (v.tileCount - targetTileCount).abs();
-    TileDetectorResult best;
-    if (hDiff < vDiff) {
-      best = h;
-    } else if (vDiff < hDiff) {
-      best = v;
-    } else {
-      best = h.bandLength >= v.bandLength ? h : v;
-    }
-    return (h: h, v: v, best: best);
+    final result = _detectByComponents(input);
+    return (h: result, v: result, best: result);
   }
-
-  // ───────── Isolate entry point ─────────
 
   static TileDetectorResult _analyzeIsolate(_AnalysisInput input) {
-    final hResult = _scanDirection(input, ScanAxis.horizontal);
-    final vResult = _scanDirection(input, ScanAxis.vertical);
-
-    // Pick whichever axis gives a count closer to the target.
-    // Tie-break: prefer the axis with more total tile pixels.
-    final hDiff = (hResult.tileCount - targetTileCount).abs();
-    final vDiff = (vResult.tileCount - targetTileCount).abs();
-
-    if (hDiff < vDiff) return hResult;
-    if (vDiff < hDiff) return vResult;
-    return hResult.bandLength >= vResult.bandLength ? hResult : vResult;
+    return _detectByComponents(input);
   }
 
-  // ───────── Histogram-based scan ─────────
+  // ───────── Connected-component detection ─────────
 
-  static TileDetectorResult _scanDirection(_AnalysisInput input, ScanAxis axis) {
+  static TileDetectorResult _detectByComponents(_AnalysisInput input) {
     final imgW = input.width;
     final imgH = input.height;
 
-    final mainSize = axis == ScanAxis.horizontal ? imgW : imgH;
-    final crossSize = axis == ScanAxis.horizontal ? imgH : imgW;
-
-    final top = input.params.scanRegionTop.clamp(0.0, 0.95);
-    final bottom = input.params.scanRegionBottom.clamp(top + 0.05, 1.0);
-    final crossStart = (crossSize * top).toInt();
-    final crossEnd = (crossSize * bottom).toInt();
-    final crossSpan = crossEnd - crossStart;
-
     final empty = TileDetectorResult(
       tileCount: 0, bandLength: 0, bandThickness: 0,
-      estimatedTileWidth: 0, axis: axis,
+      estimatedTileWidth: 0, axis: ScanAxis.horizontal,
       imageWidth: imgW, imageHeight: imgH,
     );
-    if (crossSpan <= 0 || mainSize <= 0) return empty;
 
-    // ── Step 1: Main-axis projection ──
-    // For each position along main axis, count white pixels along cross axis.
-    final mainProj = List.filled(mainSize, 0);
-    const crossStep = 3; // sample every 3rd pixel for speed
-    for (int c = crossStart; c < crossEnd; c += crossStep) {
-      for (int m = 0; m < mainSize; m++) {
-        final x = axis == ScanAxis.horizontal ? m : c;
-        final y = axis == ScanAxis.horizontal ? c : m;
-        if (_isWhitePixel(input, x, y)) {
-          mainProj[m]++;
+    // Scan region
+    final top = input.params.scanRegionTop.clamp(0.0, 0.95);
+    final bottom = input.params.scanRegionBottom.clamp(top + 0.05, 1.0);
+    final scanYStart = (imgH * top).toInt();
+    final scanYEnd = (imgH * bottom).toInt();
+
+    // Build downsampled white pixel mask
+    final mW = imgW ~/ _scale;
+    final scanMYStart = scanYStart ~/ _scale;
+    final scanMYEnd = scanYEnd ~/ _scale;
+    final mH = scanMYEnd - scanMYStart;
+    if (mW <= 0 || mH <= 0) return empty;
+
+    final mask = Uint8List(mH * mW);
+    for (int my = 0; my < mH; my++) {
+      for (int mx = 0; mx < mW; mx++) {
+        if (_isWhitePixel(input, mx * _scale, (my + scanMYStart) * _scale)) {
+          mask[my * mW + mx] = 1;
         }
       }
     }
 
-    // ── Step 2: Adaptive threshold from peak ──
-    int peak = 0;
-    for (final v in mainProj) {
-      if (v > peak) peak = v;
-    }
-    if (peak < 3) return empty; // no significant white region found
+    // Connected component labeling via flood fill
+    final labels = Int32List(mH * mW);
+    int nextLabel = 0;
+    // Each component: [minX, minY, maxX, maxY, pixelCount]
+    final components = <List<int>>[];
 
-    final threshold = (peak * input.params.projectionThreshold).toInt();
+    for (int y = 0; y < mH; y++) {
+      for (int x = 0; x < mW; x++) {
+        final idx = y * mW + x;
+        if (mask[idx] != 1 || labels[idx] != 0) continue;
 
-    // ── Step 3: Find all regions above threshold ──
-    var plateaus = _findAllPlateaus(mainProj, threshold);
-    if (plateaus.isEmpty) return empty;
+        nextLabel++;
+        int minX = x, maxX = x, minY = y, maxY = y, count = 0;
+        final stack = <int>[idx];
+        labels[idx] = nextLabel;
 
-    // Filter plateaus by average density: a real tile region should have
-    // dense white pixels, not sparse noise/reflections on the mat.
-    // Require at least 30% of the peak density within the plateau.
-    final densityThreshold = peak * 0.30;
-    plateaus = plateaus.where((p) {
-      int sum = 0;
-      for (int i = p.start; i < p.start + p.length; i++) {
-        sum += mainProj[i];
-      }
-      final avgDensity = sum / p.length;
-      return avgDensity >= densityThreshold;
-    }).toList();
-    if (plateaus.isEmpty) return empty;
+        while (stack.isNotEmpty) {
+          final ci = stack.removeLast();
+          final cx = ci % mW;
+          final cy = ci ~/ mW;
+          count++;
+          if (cx < minX) minX = cx;
+          if (cx > maxX) maxX = cx;
+          if (cy < minY) minY = cy;
+          if (cy > maxY) maxY = cy;
 
-    // Total tile pixels = sum of all plateau lengths
-    int totalLength = 0;
-    int firstStart = plateaus.first.start;
-    int lastEnd = plateaus.last.start + plateaus.last.length;
-    _Run largest = plateaus.first;
-    for (final p in plateaus) {
-      totalLength += p.length;
-      if (p.length > largest.length) largest = p;
-    }
-
-    if (totalLength < 10) return empty;
-
-    // ── Step 4: Cross-axis projection within the largest plateau ──
-    // Use the largest plateau to measure tile thickness (height).
-    final crossProj = List.filled(crossSpan, 0);
-    const mainStep = 3;
-    int peakCross = 0;
-    for (int m = largest.start; m < largest.start + largest.length; m += mainStep) {
-      for (int c = crossStart; c < crossEnd; c++) {
-        final x = axis == ScanAxis.horizontal ? m : c;
-        final y = axis == ScanAxis.horizontal ? c : m;
-        if (_isWhitePixel(input, x, y)) {
-          crossProj[c - crossStart]++;
-          if (crossProj[c - crossStart] > peakCross) {
-            peakCross = crossProj[c - crossStart];
+          // 4-connected neighbors
+          if (cx > 0) {
+            final ni = ci - 1;
+            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
+          }
+          if (cx < mW - 1) {
+            final ni = ci + 1;
+            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
+          }
+          if (cy > 0) {
+            final ni = ci - mW;
+            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
+          }
+          if (cy < mH - 1) {
+            final ni = ci + mW;
+            if (mask[ni] == 1 && labels[ni] == 0) { labels[ni] = nextLabel; stack.add(ni); }
           }
         }
+
+        components.add([minX, minY, maxX, maxY, count]);
       }
     }
 
-    if (peakCross < 2) return empty;
-    final crossThreshold = (peakCross * input.params.projectionThreshold).toInt();
-    final crossPlateaus = _findAllPlateaus(crossProj, crossThreshold);
-    if (crossPlateaus.isEmpty) return empty;
+    if (components.isEmpty) return empty;
 
-    // Use the largest cross-plateau as tile thickness
-    _Run largestCross = crossPlateaus.first;
-    for (final p in crossPlateaus) {
-      if (p.length > largestCross.length) largestCross = p;
+    // Filter components: minimum area + density check
+    final filtered = <List<int>>[];
+    for (final c in components) {
+      final count = c[4];
+      if (count < _minComponentArea) continue;
+      final bw = c[2] - c[0] + 1;
+      final bh = c[3] - c[1] + 1;
+      final bboxArea = bw * bh;
+      // Density: white pixels should fill at least 20% of bounding box
+      if (bboxArea == 0 || count / bboxArea < 0.20) continue;
+      filtered.add(c);
     }
-    final bandThickness = largestCross.length;
 
-    if (bandThickness <= 0) return empty;
+    if (filtered.isEmpty) return empty;
 
-    // ── Step 5: Estimate tile count & build per-tile rects ──
-    final estTileW = bandThickness * input.params.tileAspectRatio;
-    final minTileW = estTileW * 0.4;
-    int count = 0;
-    final crossAbsStart = crossStart + largestCross.start;
+    // Build tile rects, subdividing oversized components by aspect ratio
+    final tileAspect = input.params.tileAspectRatio;
     final tileRects = <TileRect>[];
 
-    for (final p in plateaus) {
-      if (p.length < minTileW) continue; // too narrow = noise
-      final nSub = (p.length / estTileW).round().clamp(1, 20);
-      count += nSub;
-      final subW = p.length / nSub;
-      for (int s = 0; s < nSub; s++) {
-        final mainStart = p.start + (s * subW);
-        if (axis == ScanAxis.horizontal) {
-          tileRects.add(TileRect(
-            left: mainStart,
-            top: crossAbsStart.toDouble(),
-            width: subW,
-            height: bandThickness.toDouble(),
-          ));
-        } else {
-          tileRects.add(TileRect(
-            left: crossAbsStart.toDouble(),
-            top: mainStart,
-            width: bandThickness.toDouble(),
-            height: subW,
-          ));
+    for (final c in filtered) {
+      final bw = (c[2] - c[0] + 1) * _scale;
+      final bh = (c[3] - c[1] + 1) * _scale;
+      final ox = c[0] * _scale.toDouble();
+      final oy = (c[1] + scanMYStart) * _scale.toDouble();
+
+      if (bw >= bh) {
+        // Wider or square: possibly side-by-side tiles
+        final expectedTileW = bh * tileAspect;
+        final nSub = expectedTileW > 0 ? (bw / expectedTileW).round().clamp(1, 20) : 1;
+        final subW = bw / nSub;
+        for (int i = 0; i < nSub; i++) {
+          tileRects.add(TileRect(left: ox + i * subW, top: oy, width: subW, height: bh.toDouble()));
+        }
+      } else {
+        // Taller: possibly stacked tiles
+        final expectedTileH = bw / tileAspect;
+        final nSub = expectedTileH > 0 ? (bh / expectedTileH).round().clamp(1, 20) : 1;
+        final subH = bh / nSub;
+        for (int i = 0; i < nSub; i++) {
+          tileRects.add(TileRect(left: ox, top: oy + i * subH, width: bw.toDouble(), height: subH));
         }
       }
     }
 
-    // Band bounding box for overlay
-    final bandLeft = axis == ScanAxis.horizontal ? firstStart : crossAbsStart;
-    final bandTop = axis == ScanAxis.horizontal ? crossAbsStart : firstStart;
-    final spanMain = lastEnd - firstStart;
-    final bandSpanW = axis == ScanAxis.horizontal ? spanMain : bandThickness;
-    final bandSpanH = axis == ScanAxis.horizontal ? bandThickness : spanMain;
+    if (tileRects.isEmpty) return empty;
+
+    // Compute band-level stats for backward compatibility
+    double minBX = double.infinity, minBY = double.infinity;
+    double maxBX = 0, maxBY = 0;
+    double totalW = 0, totalH = 0;
+    for (final r in tileRects) {
+      if (r.left < minBX) minBX = r.left;
+      if (r.top < minBY) minBY = r.top;
+      if (r.left + r.width > maxBX) maxBX = r.left + r.width;
+      if (r.top + r.height > maxBY) maxBY = r.top + r.height;
+      totalW += r.width;
+      totalH += r.height;
+    }
+    final avgW = totalW / tileRects.length;
+    final avgH = totalH / tileRects.length;
+    final spanX = maxBX - minBX;
+    final spanY = maxBY - minBY;
+    final axis = spanX >= spanY ? ScanAxis.horizontal : ScanAxis.vertical;
 
     return TileDetectorResult(
-      tileCount: count,
-      bandLength: totalLength,
-      bandThickness: bandThickness,
-      estimatedTileWidth: estTileW,
+      tileCount: tileRects.length,
+      bandLength: (axis == ScanAxis.horizontal ? spanX : spanY).toInt(),
+      bandThickness: (axis == ScanAxis.horizontal ? avgH : avgW).toInt(),
+      estimatedTileWidth: axis == ScanAxis.horizontal ? avgW : avgH,
       axis: axis,
-      bandLeft: bandLeft,
-      bandTop: bandTop,
-      bandSpanWidth: bandSpanW,
-      bandSpanHeight: bandSpanH,
+      bandLeft: minBX.toInt(),
+      bandTop: minBY.toInt(),
+      bandSpanWidth: spanX.toInt(),
+      bandSpanHeight: spanY.toInt(),
       imageWidth: imgW,
       imageHeight: imgH,
       tileRects: tileRects,
@@ -395,30 +354,6 @@ class TileDetector {
   }
 
   // ───────── Helpers ─────────
-
-  /// Find ALL contiguous regions in [proj] where values >= [threshold].
-  static List<_Run> _findAllPlateaus(List<int> proj, int threshold) {
-    final results = <_Run>[];
-    int curStart = -1;
-    int curLen = 0;
-
-    for (int i = 0; i < proj.length; i++) {
-      if (proj[i] >= threshold) {
-        if (curStart < 0) curStart = i;
-        curLen++;
-      } else {
-        if (curLen > 0) {
-          results.add(_Run(start: curStart, length: curLen));
-        }
-        curStart = -1;
-        curLen = 0;
-      }
-    }
-    if (curLen > 0) {
-      results.add(_Run(start: curStart, length: curLen));
-    }
-    return results;
-  }
 
   /// Check if a pixel is "white" (high luminance, neutral chrominance).
   static bool _isWhitePixel(_AnalysisInput input, int x, int y) {
@@ -460,12 +395,6 @@ class TileDetector {
     }
     return true;
   }
-}
-
-class _Run {
-  final int start;
-  final int length;
-  const _Run({required this.start, required this.length});
 }
 
 class _AnalysisInput {

@@ -1,7 +1,8 @@
 """Local TFLite-based mahjong tile recognizer.
 
 Uses MobileNetV2 TFLite model to classify individual tiles from a hand image.
-Tile segmentation uses HSV-based white-pixel detection and histogram projection.
+Tile segmentation uses connected-component analysis on a white-pixel mask,
+supporting any tile arrangement (horizontal, vertical, scattered).
 """
 
 from __future__ import annotations
@@ -80,14 +81,16 @@ def _classify_tile(tile_img: np.ndarray) -> tuple[str, float]:
     return label, confidence
 
 
-def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
-    """Segment individual tiles from a hand image using histogram projection.
+def _segment_tiles(image: np.ndarray, tile_aspect: float = 0.75) -> list[np.ndarray]:
+    """Segment individual tiles using connected-component analysis.
+
+    Works with any tile arrangement (horizontal, vertical, scattered).
 
     Steps:
-    1. Convert to HSV and detect white pixels (tiles on green mat)
-    2. Horizontal projection to find the tile band (row range)
-    3. Vertical projection within the band to find column boundaries
-    4. Extract individual tile images
+    1. HSV white-pixel mask + morphological cleanup
+    2. Connected components to find white blobs
+    3. Filter by area and density
+    4. Subdivide oversized components using tile aspect ratio
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
@@ -96,80 +99,49 @@ def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
     upper_white = np.array([180, 80, 255])
     mask = cv2.inRange(hsv, lower_white, upper_white)
 
-    # Apply morphological operations to clean up
+    # Morphological cleanup
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-    # Horizontal projection (sum of white pixels per row)
-    h_proj = np.sum(mask, axis=1) / 255
-    h_threshold = np.max(h_proj) * 0.3
+    # Connected components
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
 
-    rows = np.where(h_proj > h_threshold)[0]
-    if len(rows) == 0:
-        return []
-
-    row_start = rows[0]
-    row_end = rows[-1]
-    # Add small padding
-    pad = int((row_end - row_start) * 0.05)
-    row_start = max(0, row_start - pad)
-    row_end = min(image.shape[0], row_end + pad)
-
-    band = mask[row_start:row_end, :]
-
-    # Vertical projection (sum of white pixels per column in the band)
-    v_proj = np.sum(band, axis=0) / 255
-    v_threshold = np.max(v_proj) * 0.15
-
-    cols = np.where(v_proj > v_threshold)[0]
-    if len(cols) == 0:
-        return []
-
-    # Find contiguous column groups (individual tiles separated by gaps)
-    groups: list[tuple[int, int]] = []
-    group_start = cols[0]
-    prev = cols[0]
-    band_h = row_end - row_start
-    min_gap = max(3, int(band_h * 0.05))  # small gaps within a tile are noise
-
-    for c in cols[1:]:
-        if c - prev > min_gap:
-            groups.append((group_start, prev))
-            group_start = c
-        prev = c
-    groups.append((group_start, prev))
-
-    # Filter out groups that are too narrow (noise) or too wide (background)
-    min_tile_w = band_h * 0.3
-    max_tile_w = band_h * 1.5
-    groups = [(s, e) for s, e in groups if min_tile_w <= (e - s + 1) <= max_tile_w]
-
-    # Filter by white pixel density: reject sparse noise/reflections on the mat
-    v_peak = np.max(v_proj)
-    density_threshold = v_peak * 0.30
-    groups = [
-        (s, e) for s, e in groups
-        if np.mean(v_proj[s:e + 1]) >= density_threshold
-    ]
-
-    if not groups:
-        return []
-
-    # For wide groups that likely contain multiple tiles, subdivide
     tiles: list[np.ndarray] = []
-    expected_tile_w = band_h * 0.72  # typical tile aspect ratio ~0.72
+    min_area = 500  # minimum pixel area for a tile component
 
-    for g_start, g_end in groups:
-        w = g_end - g_start + 1
-        n_sub = max(1, round(w / expected_tile_w))
-        sub_w = w / n_sub
-        for i in range(n_sub):
-            x_start = g_start + int(i * sub_w)
-            x_end = g_start + int((i + 1) * sub_w)
-            tile_img = image[row_start:row_end, x_start:x_end]
-            if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
-                tiles.append(tile_img)
+    for i in range(1, num_labels):  # skip background (label 0)
+        x, y, w, h, area = stats[i]
+
+        if area < min_area:
+            continue
+
+        # Density: white pixels should fill at least 20% of bounding box
+        bbox_area = w * h
+        if bbox_area == 0 or area / bbox_area < 0.20:
+            continue
+
+        # Subdivide if the component spans multiple tiles
+        if w >= h:
+            expected_tile_w = h * tile_aspect
+            n_sub = max(1, round(w / expected_tile_w)) if expected_tile_w > 0 else 1
+            sub_w = w / n_sub
+            for j in range(n_sub):
+                sx = x + int(j * sub_w)
+                ex = x + int((j + 1) * sub_w)
+                tile_img = image[y:y + h, sx:ex]
+                if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
+                    tiles.append(tile_img)
+        else:
+            expected_tile_h = w / tile_aspect
+            n_sub = max(1, round(h / expected_tile_h)) if expected_tile_h > 0 else 1
+            sub_h = h / n_sub
+            for j in range(n_sub):
+                sy = y + int(j * sub_h)
+                ey = y + int((j + 1) * sub_h)
+                tile_img = image[sy:ey, x:x + w]
+                if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
+                    tiles.append(tile_img)
 
     return tiles
 
