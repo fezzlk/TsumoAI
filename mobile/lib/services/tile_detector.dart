@@ -23,7 +23,7 @@ class TileDetectorParams {
 
   const TileDetectorParams({
     this.luminanceMin = 140,
-    this.chrominanceTolerance = 60,
+    this.chrominanceTolerance = 70,
     this.scanRegionTop = 0.05,
     this.scanRegionBottom = 0.95,
     this.tileAspectRatio = 0.75,
