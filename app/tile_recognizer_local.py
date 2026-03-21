@@ -126,33 +126,42 @@ def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
     if len(cols) == 0:
         return []
 
-    col_start = cols[0]
-    col_end = cols[-1]
+    # Find contiguous column groups (individual tiles separated by gaps)
+    groups: list[tuple[int, int]] = []
+    group_start = cols[0]
+    prev = cols[0]
+    band_h = row_end - row_start
+    min_gap = max(3, int(band_h * 0.05))  # small gaps within a tile are noise
 
-    # Crop the tile band
-    tile_band = image[row_start:row_end, col_start:col_end]
+    for c in cols[1:]:
+        if c - prev > min_gap:
+            groups.append((group_start, prev))
+            group_start = c
+        prev = c
+    groups.append((group_start, prev))
 
-    if tile_band.shape[1] == 0 or tile_band.shape[0] == 0:
+    # Filter out groups that are too narrow (noise) or too wide (background)
+    min_tile_w = band_h * 0.3
+    max_tile_w = band_h * 1.5
+    groups = [(s, e) for s, e in groups if min_tile_w <= (e - s + 1) <= max_tile_w]
+
+    if not groups:
         return []
 
-    # Estimate number of tiles: band width / band height gives rough tile count
-    band_h = row_end - row_start
-    band_w = col_end - col_start
-    estimated_tile_w = band_h * 0.72  # typical tile aspect ratio ~0.72
-    n_tiles = max(1, round(band_w / estimated_tile_w))
+    # For wide groups that likely contain multiple tiles, subdivide
+    tiles: list[np.ndarray] = []
+    expected_tile_w = band_h * 0.72  # typical tile aspect ratio ~0.72
 
-    # Clamp to reasonable range
-    n_tiles = max(13, min(n_tiles, 14))
-
-    # Equal-divide the band
-    tile_w = tile_band.shape[1] / n_tiles
-    tiles = []
-    for i in range(n_tiles):
-        x_start = int(i * tile_w)
-        x_end = int((i + 1) * tile_w)
-        tile_img = tile_band[:, x_start:x_end]
-        if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
-            tiles.append(tile_img)
+    for g_start, g_end in groups:
+        w = g_end - g_start + 1
+        n_sub = max(1, round(w / expected_tile_w))
+        sub_w = w / n_sub
+        for i in range(n_sub):
+            x_start = g_start + int(i * sub_w)
+            x_end = g_start + int((i + 1) * sub_w)
+            tile_img = image[row_start:row_end, x_start:x_end]
+            if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
+                tiles.append(tile_img)
 
     return tiles
 

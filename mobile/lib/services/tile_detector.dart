@@ -54,6 +54,15 @@ class TileDetectorParams {
 /// Scan axis used for detection.
 enum ScanAxis { horizontal, vertical }
 
+/// A rectangle in image coordinates (before rotation/scaling).
+class TileRect {
+  final double left;
+  final double top;
+  final double width;
+  final double height;
+  const TileRect({required this.left, required this.top, required this.width, required this.height});
+}
+
 /// Result of tile detection including position data for overlay.
 class TileDetectorResult {
   final int tileCount;
@@ -81,6 +90,9 @@ class TileDetectorResult {
   final int imageWidth;
   final int imageHeight;
 
+  /// Per-tile bounding rects in image coordinates.
+  final List<TileRect> tileRects;
+
   const TileDetectorResult({
     required this.tileCount,
     required this.bandLength,
@@ -93,6 +105,7 @@ class TileDetectorResult {
     this.bandSpanHeight = 0,
     this.imageWidth = 0,
     this.imageHeight = 0,
+    this.tileRects = const [],
   });
 }
 
@@ -312,12 +325,39 @@ class TileDetector {
 
     if (bandThickness <= 0) return empty;
 
-    // ── Step 5: Estimate tile count ──
+    // ── Step 5: Estimate tile count & build per-tile rects ──
     final estTileW = bandThickness * input.params.tileAspectRatio;
-    final count = estTileW > 0 ? (totalLength / estTileW).round() : 0;
+    final minTileW = estTileW * 0.4;
+    int count = 0;
+    final crossAbsStart = crossStart + largestCross.start;
+    final tileRects = <TileRect>[];
+
+    for (final p in plateaus) {
+      if (p.length < minTileW) continue; // too narrow = noise
+      final nSub = (p.length / estTileW).round().clamp(1, 20);
+      count += nSub;
+      final subW = p.length / nSub;
+      for (int s = 0; s < nSub; s++) {
+        final mainStart = p.start + (s * subW);
+        if (axis == ScanAxis.horizontal) {
+          tileRects.add(TileRect(
+            left: mainStart,
+            top: crossAbsStart.toDouble(),
+            width: subW,
+            height: bandThickness.toDouble(),
+          ));
+        } else {
+          tileRects.add(TileRect(
+            left: crossAbsStart.toDouble(),
+            top: mainStart,
+            width: bandThickness.toDouble(),
+            height: subW,
+          ));
+        }
+      }
+    }
 
     // Band bounding box for overlay
-    final crossAbsStart = crossStart + largestCross.start;
     final bandLeft = axis == ScanAxis.horizontal ? firstStart : crossAbsStart;
     final bandTop = axis == ScanAxis.horizontal ? crossAbsStart : firstStart;
     final spanMain = lastEnd - firstStart;
@@ -336,6 +376,7 @@ class TileDetector {
       bandSpanHeight: bandSpanH,
       imageWidth: imgW,
       imageHeight: imgH,
+      tileRects: tileRects,
     );
   }
 

@@ -74,10 +74,19 @@ class TileOverlay extends StatelessWidget {
 
         final tiles = <Widget>[];
 
+        // Use per-tile rects from detector if available, else fall back to equal division
+        final rects = result.tileRects;
+        final useRects = rects.isNotEmpty && rects.length == result.tileCount;
+
         for (int i = 0; i < result.tileCount; i++) {
           double imgL, imgT, imgR, imgB;
 
-          if (result.axis == ScanAxis.horizontal) {
+          if (useRects) {
+            imgL = rects[i].left;
+            imgT = rects[i].top;
+            imgR = imgL + rects[i].width;
+            imgB = imgT + rects[i].height;
+          } else if (result.axis == ScanAxis.horizontal) {
             final tileW = result.bandSpanWidth / result.tileCount;
             imgL = result.bandLeft + i * tileW;
             imgT = result.bandTop.toDouble();
