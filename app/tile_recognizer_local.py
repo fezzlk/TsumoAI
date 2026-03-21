@@ -100,7 +100,7 @@ def _segment_tiles(image: np.ndarray, tile_aspect: float = 0.75) -> list[np.ndar
     green_mask = cv2.inRange(hsv, lower_green, upper_green)
 
     # Dilate green mask to include tiles sitting on/near the mat edge
-    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (80, 80))
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (120, 120))
     mat_region = cv2.dilate(green_mask, dilate_kernel)
 
     # White pixel mask: low saturation, high value

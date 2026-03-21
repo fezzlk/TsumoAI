@@ -125,24 +125,12 @@ class _CameraScreenState extends State<CameraScreen> {
           _detectedTileCount = result.tileCount;
           _lastDetectorResult = result;
         });
-
-        if (result.tileCount == TileDetector.targetTileCount && !_isCapturing) {
-          final service = context.read<RecognitionService>();
-          if (service.state == ServiceState.idle) {
-            _onAutoDetected();
-          }
-        }
       }
     } catch (e) {
       debugPrint('Tile detection error: $e');
     } finally {
       _isAnalyzing = false;
     }
-  }
-
-  Future<void> _onAutoDetected() async {
-    await _stopAutoDetection();
-    await _captureAndProcess();
   }
 
   Future<void> _toggleAutoDetect() async {

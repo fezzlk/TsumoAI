@@ -224,20 +224,29 @@ class TileDetector {
     }
 
     // Dilate green mask to include tiles sitting on/near the mat edge.
-    // A tile on the mat won't be green itself, but will be adjacent to green.
-    final dilateRadius = 8; // ~32 real pixels at 4x scale
-    final matRegion = Uint8List(mH * mW);
+    // Use separable 1D dilation (horizontal then vertical) for performance.
+    final dilateRadius = 15; // ~60 real pixels at 4x scale
+    final hDilated = Uint8List(mH * mW);
     for (int y = 0; y < mH; y++) {
+      final rowOff = y * mW;
       for (int x = 0; x < mW; x++) {
-        if (greenMask[y * mW + x] == 1) {
-          // Mark a square around this green pixel
-          for (int dy = -dilateRadius; dy <= dilateRadius; dy++) {
-            for (int dx = -dilateRadius; dx <= dilateRadius; dx++) {
-              final ny = y + dy, nx = x + dx;
-              if (ny >= 0 && ny < mH && nx >= 0 && nx < mW) {
-                matRegion[ny * mW + nx] = 1;
-              }
-            }
+        if (greenMask[rowOff + x] == 1) {
+          final xStart = (x - dilateRadius).clamp(0, mW - 1);
+          final xEnd = (x + dilateRadius).clamp(0, mW - 1);
+          for (int dx = xStart; dx <= xEnd; dx++) {
+            hDilated[rowOff + dx] = 1;
+          }
+        }
+      }
+    }
+    final matRegion = Uint8List(mH * mW);
+    for (int x = 0; x < mW; x++) {
+      for (int y = 0; y < mH; y++) {
+        if (hDilated[y * mW + x] == 1) {
+          final yStart = (y - dilateRadius).clamp(0, mH - 1);
+          final yEnd = (y + dilateRadius).clamp(0, mH - 1);
+          for (int dy = yStart; dy <= yEnd; dy++) {
+            matRegion[dy * mW + x] = 1;
           }
         }
       }
