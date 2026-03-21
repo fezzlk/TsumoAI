@@ -23,7 +23,7 @@ class TileDetectorParams {
 
   const TileDetectorParams({
     this.luminanceMin = 140,
-    this.chrominanceTolerance = 45,
+    this.chrominanceTolerance = 60,
     this.scanRegionTop = 0.05,
     this.scanRegionBottom = 0.95,
     this.tileAspectRatio = 0.75,
@@ -123,7 +123,7 @@ class TileDetector {
   static const int _scale = 4;
 
   /// Minimum component area in downscaled pixels.
-  static const int _minComponentArea = 30;
+  static const int _minComponentArea = 80;
 
   static Future<TileDetectorResult> detect(
     CameraImage image, [
@@ -214,47 +214,12 @@ class TileDetector {
     if (mW <= 0 || mH <= 0) return empty;
 
     // Build white pixel mask
-    final rawMask = Uint8List(mH * mW);
+    final mask = Uint8List(mH * mW);
     for (int my = 0; my < mH; my++) {
       for (int mx = 0; mx < mW; mx++) {
         if (_isWhitePixel(input, mx * _scale, (my + scanMYStart) * _scale)) {
-          rawMask[my * mW + mx] = 1;
+          mask[my * mW + mx] = 1;
         }
-      }
-    }
-
-    // Morphological close (dilate then erode) to bridge gaps within tile faces
-    // caused by colored patterns breaking up the white region
-    final dilated = Uint8List(mH * mW);
-    for (int y = 0; y < mH; y++) {
-      for (int x = 0; x < mW; x++) {
-        if (rawMask[y * mW + x] == 1) {
-          for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-              final ny = y + dy, nx = x + dx;
-              if (ny >= 0 && ny < mH && nx >= 0 && nx < mW) {
-                dilated[ny * mW + nx] = 1;
-              }
-            }
-          }
-        }
-      }
-    }
-    final mask = Uint8List(mH * mW);
-    for (int y = 0; y < mH; y++) {
-      for (int x = 0; x < mW; x++) {
-        final idx = y * mW + x;
-        if (dilated[idx] == 0) continue;
-        bool allSet = true;
-        for (int dy = -1; dy <= 1 && allSet; dy++) {
-          for (int dx = -1; dx <= 1 && allSet; dx++) {
-            final ny = y + dy, nx = x + dx;
-            if (ny < 0 || ny >= mH || nx < 0 || nx >= mW || dilated[ny * mW + nx] == 0) {
-              allSet = false;
-            }
-          }
-        }
-        if (allSet) mask[idx] = 1;
       }
     }
 
