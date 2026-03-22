@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
-import 'package:path_provider/path_provider.dart';
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../models/score_request.dart';
@@ -117,39 +116,54 @@ class _ScanScreenState extends State<ScanScreen> {
     final viewSize = context.size;
     if (viewSize == null) return;
 
-    final scaleX = fullImage.width / viewSize.width;
-    final scaleY = fullImage.height / viewSize.height;
+    // Calculate how the camera preview is rendered within the view.
+    // CameraPreview uses BoxFit.cover-like behavior: the image fills
+    // the view, cropping the overflow. We need to account for this.
+    final imgW = fullImage.width.toDouble();
+    final imgH = fullImage.height.toDouble();
+    final viewW = viewSize.width;
+    final viewH = viewSize.height;
+
+    final imgAspect = imgW / imgH;
+    final viewAspect = viewW / viewH;
+
+    late final double scale, offsetX, offsetY;
+    if (imgAspect > viewAspect) {
+      // Image is wider than view: height fills, width is cropped
+      scale = imgH / viewH;
+      offsetX = (imgW - viewW * scale) / 2;
+      offsetY = 0;
+    } else {
+      // Image is taller than view: width fills, height is cropped
+      scale = imgW / viewW;
+      offsetX = 0;
+      offsetY = (imgH - viewH * scale) / 2;
+    }
+
     final slotWidth = _slotAreaRect.width / 14;
     final slotHeight = _slotAreaRect.height;
 
-    // Debug: save full image and crop info
-    final debugDir = await getTemporaryDirectory();
-    final debugPath = '${debugDir.path}/tile_debug';
-    await Directory(debugPath).create(recursive: true);
+    // Padding: crop 30% larger than the slot to capture full tile
+    final padX = slotWidth * 0.3;
+    final padY = slotHeight * 0.3;
 
-    // Save full captured image
-    final fullJpg = img.encodeJpg(fullImage, quality: 90);
-    await File('$debugPath/full.jpg').writeAsBytes(fullJpg);
     debugPrint('DEBUG: fullImage=${fullImage.width}x${fullImage.height} viewSize=$viewSize');
-    debugPrint('DEBUG: scaleX=$scaleX scaleY=$scaleY slotRect=$_slotAreaRect');
+    debugPrint('DEBUG: scale=$scale offsetX=$offsetX offsetY=$offsetY slotRect=$_slotAreaRect');
 
     final futures = <Future<void>>[];
     for (int i = 0; i < 14; i++) {
       final slotLeft = _slotAreaRect.left + i * slotWidth;
       final slotTop = _slotAreaRect.top;
 
-      final cropX = (slotLeft * scaleX).round().clamp(0, fullImage.width - 1);
-      final cropY = (slotTop * scaleY).round().clamp(0, fullImage.height - 1);
-      final cropW = (slotWidth * scaleX).round().clamp(1, fullImage.width - cropX);
-      final cropH = (slotHeight * scaleY).round().clamp(1, fullImage.height - cropY);
+      // Map screen coordinates to image coordinates with aspect ratio correction
+      final cropX = ((slotLeft - padX) * scale + offsetX).round().clamp(0, fullImage.width - 1);
+      final cropY = ((slotTop - padY) * scale + offsetY).round().clamp(0, fullImage.height - 1);
+      final cropW = ((slotWidth + padX * 2) * scale).round().clamp(1, fullImage.width - cropX);
+      final cropH = ((slotHeight + padY * 2) * scale).round().clamp(1, fullImage.height - cropY);
 
       debugPrint('DEBUG: slot$i crop=($cropX,$cropY,${cropW}x$cropH)');
 
       final cropped = img.copyCrop(fullImage, x: cropX, y: cropY, width: cropW, height: cropH);
-
-      // Save each cropped tile for debugging
-      final croppedJpg = img.encodeJpg(cropped, quality: 90);
-      await File('$debugPath/tile_$i.jpg').writeAsBytes(croppedJpg);
 
       final idx = i;
       _croppedImages[idx] = cropped;
@@ -164,7 +178,6 @@ class _ScanScreenState extends State<ScanScreen> {
       }));
     }
     await Future.wait(futures);
-    debugPrint('DEBUG: crops saved to $debugPath');
   }
 
   Future<void> _calculateScore() async {
