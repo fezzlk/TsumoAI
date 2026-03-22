@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 
@@ -22,9 +24,12 @@ class TileClassifier {
   /// Load model and labels. Call once at app startup.
   Future<void> init() async {
     try {
-      _interpreter = await Interpreter.fromAsset(
-        _modelPath.replaceFirst('assets/', ''),
-      );
+      // Copy asset to temp file — tflite_flutter needs a file path
+      final modelBytes = await rootBundle.load(_modelPath);
+      final tempDir = await getTemporaryDirectory();
+      final modelFile = File('${tempDir.path}/tile_classifier.tflite');
+      await modelFile.writeAsBytes(modelBytes.buffer.asUint8List());
+      _interpreter = Interpreter.fromFile(modelFile);
     } catch (e) {
       _isReady = false;
       throw Exception('TFLiteモデル読込失敗 ($_modelPath): $e');
