@@ -27,6 +27,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   final List<String?> _tiles = List.filled(14, null);
   final List<bool> _isClassifying = List.filled(14, false);
+  final List<img.Image?> _croppedImages = List.filled(14, null);
 
   bool _isCapturing = false;
   bool _isScoring = false;
@@ -85,7 +86,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _scoreResult = null;
       _isNotWinning = false;
       _errorMessage = null;
-      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; }
+      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; }
     });
 
     try {
@@ -151,6 +152,7 @@ class _ScanScreenState extends State<ScanScreen> {
       await File('$debugPath/tile_$i.jpg').writeAsBytes(croppedJpg);
 
       final idx = i;
+      _croppedImages[idx] = cropped;
       futures.add(Future(() {
         final results = _classifier.classify(cropped, topK: 1);
         if (mounted) {
@@ -203,11 +205,58 @@ class _ScanScreenState extends State<ScanScreen> {
 
   void _reset() {
     setState(() {
-      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = false; }
+      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = false; _croppedImages[i] = null; }
       _scoreResult = null;
       _isNotWinning = false;
       _errorMessage = null;
     });
+  }
+
+  void _showCroppedDebug() {
+    final images = _croppedImages.where((i) => i != null).toList();
+    if (images.isEmpty) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text('トリミング結果', style: TextStyle(color: Colors.white, fontSize: 14)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: GridView.builder(
+            shrinkWrap: true,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7, crossAxisSpacing: 4, mainAxisSpacing: 4,
+              childAspectRatio: 0.75,
+            ),
+            itemCount: 14,
+            itemBuilder: (_, i) {
+              final cropped = _croppedImages[i];
+              if (cropped == null) {
+                return Container(color: Colors.grey[800], child: const Center(child: Text('?', style: TextStyle(color: Colors.white38))));
+              }
+              final bytes = img.encodeJpg(cropped);
+              return Column(
+                children: [
+                  Expanded(
+                    child: Image.memory(bytes, fit: BoxFit.contain),
+                  ),
+                  Text(
+                    '${cropped.width}x${cropped.height}',
+                    style: const TextStyle(color: Colors.white38, fontSize: 8),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
   }
 
   bool get _allTilesReady => _tiles.every((t) => t != null);
@@ -361,10 +410,15 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
               ),
               if (_anyTileReady) ...[
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: _showCroppedDebug,
+                  icon: const Icon(Icons.grid_view, color: Colors.white54, size: 20),
+                  tooltip: 'トリミング確認',
+                ),
                 IconButton(
                   onPressed: _reset,
-                  icon: const Icon(Icons.refresh, color: Colors.white54),
+                  icon: const Icon(Icons.refresh, color: Colors.white54, size: 20),
                   tooltip: 'リセット',
                 ),
               ],
