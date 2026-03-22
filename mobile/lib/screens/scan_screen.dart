@@ -46,8 +46,12 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _initClassifier() async {
     try {
       await _classifier.init();
+      if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Classifier init error: $e');
+      if (mounted) {
+        setState(() => _errorMessage = '牌識別モデル読込エラー: $e');
+      }
     }
   }
 

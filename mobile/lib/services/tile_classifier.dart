@@ -25,19 +25,24 @@ class TileClassifier {
       _interpreter = await Interpreter.fromAsset(
         _modelPath.replaceFirst('assets/', ''),
       );
+    } catch (e) {
+      _isReady = false;
+      throw Exception('TFLiteモデル読込失敗 ($_modelPath): $e');
+    }
 
+    try {
       final labelsData = await rootBundle.loadString(_labelsPath);
       _labels = labelsData
           .split('\n')
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty)
           .toList();
-
-      _isReady = true;
     } catch (e) {
       _isReady = false;
-      rethrow;
+      throw Exception('ラベル読込失敗 ($_labelsPath): $e');
     }
+
+    _isReady = true;
   }
 
   /// Classify a cropped tile image (as raw RGBA/RGB bytes from image package).
