@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
@@ -19,11 +20,24 @@ class ScanScreen extends StatefulWidget {
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
+enum _ScanPhase { camera, align, results }
+
 class _ScanScreenState extends State<ScanScreen> {
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
   final ApiClient _api = ApiClient();
 
+  _ScanPhase _phase = _ScanPhase.camera;
+
+  // Captured image
+  Uint8List? _capturedBytes;
+  img.Image? _capturedImage;
+
+  // Grid position on the displayed image (user-adjustable)
+  Offset _gridOffset = Offset.zero;
+  double _gridScale = 1.0;
+
+  // Tile results
   final List<String?> _tiles = List.filled(14, null);
   final List<bool> _isClassifying = List.filled(14, false);
   final List<img.Image?> _croppedImages = List.filled(14, null);
@@ -35,7 +49,6 @@ class _ScanScreenState extends State<ScanScreen> {
   String? _errorMessage;
 
   ContextInput _context = ContextInput();
-  Rect _slotAreaRect = Rect.zero;
 
   @override
   void initState() {
@@ -78,107 +91,87 @@ class _ScanScreenState extends State<ScanScreen> {
     super.dispose();
   }
 
+  // ── Phase 1: Capture ──
+
   Future<void> _capture() async {
     if (_controller == null || !_controller!.value.isInitialized || _isCapturing) return;
-    setState(() {
-      _isCapturing = true;
-      _scoreResult = null;
-      _isNotWinning = false;
-      _errorMessage = null;
-      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; }
-    });
+    setState(() => _isCapturing = true);
 
     try {
       final xFile = await _controller!.takePicture();
       final bytes = await File(xFile.path).readAsBytes();
       final decoded = img.decodeImage(bytes);
-      if (decoded == null) throw Exception('Failed to decode image');
-      await _classifySlots(decoded);
-    } catch (e) {
+      if (decoded == null) throw Exception('画像のデコードに失敗');
+
       setState(() {
-        _errorMessage = 'エラー: $e';
-        for (int i = 0; i < 14; i++) { _isClassifying[i] = false; }
+        _capturedBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: 90));
+        _capturedImage = decoded;
+        _phase = _ScanPhase.align;
+        _gridOffset = Offset.zero;
+        _gridScale = 1.0;
+        _errorMessage = null;
+        for (int i = 0; i < 14; i++) {
+          _tiles[i] = null;
+          _isClassifying[i] = false;
+          _croppedImages[i] = null;
+        }
       });
+    } catch (e) {
+      setState(() => _errorMessage = '撮影エラー: $e');
     } finally {
       setState(() => _isCapturing = false);
     }
   }
 
-  Future<void> _classifySlots(img.Image fullImage) async {
-    if (!_classifier.isReady) {
-      setState(() {
-        _errorMessage = '牌識別モデルが読み込まれていません';
-        for (int i = 0; i < 14; i++) { _isClassifying[i] = false; }
-      });
+  // ── Phase 2: Align grid & classify ──
+
+  Future<void> _classifyFromGrid(Size imageDisplaySize, Rect gridRect) async {
+    final fullImage = _capturedImage;
+    if (fullImage == null || !_classifier.isReady) {
+      setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
       return;
     }
 
-    final viewSize = context.size;
-    if (viewSize == null) return;
+    setState(() {
+      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; }
+      _scoreResult = null;
+      _isNotWinning = false;
+      _errorMessage = null;
+    });
 
-    // Calculate how the camera preview is rendered within the view.
-    // CameraPreview uses BoxFit.cover-like behavior: the image fills
-    // the view, cropping the overflow. We need to account for this.
-    final imgW = fullImage.width.toDouble();
-    final imgH = fullImage.height.toDouble();
-    final viewW = viewSize.width;
-    final viewH = viewSize.height;
+    // Simple 1:1 mapping: displayed image fills the widget via BoxFit.contain
+    final scaleX = fullImage.width / imageDisplaySize.width;
+    final scaleY = fullImage.height / imageDisplaySize.height;
 
-    final imgAspect = imgW / imgH;
-    final viewAspect = viewW / viewH;
+    final slotW = gridRect.width / 14;
+    // Add 15% padding for better capture
+    final padX = slotW * 0.15;
+    final padY = gridRect.height * 0.15;
 
-    late final double scale, offsetX, offsetY;
-    if (imgAspect > viewAspect) {
-      // Image is wider than view: height fills, width is cropped
-      scale = imgH / viewH;
-      offsetX = (imgW - viewW * scale) / 2;
-      offsetY = 0;
-    } else {
-      // Image is taller than view: width fills, height is cropped
-      scale = imgW / viewW;
-      offsetX = 0;
-      offsetY = (imgH - viewH * scale) / 2;
-    }
-
-    final slotWidth = _slotAreaRect.width / 14;
-    final slotHeight = _slotAreaRect.height;
-
-    // Padding: crop 30% larger than the slot to capture full tile
-    final padX = slotWidth * 0.3;
-    final padY = slotHeight * 0.3;
-
-    debugPrint('DEBUG: fullImage=${fullImage.width}x${fullImage.height} viewSize=$viewSize');
-    debugPrint('DEBUG: scale=$scale offsetX=$offsetX offsetY=$offsetY slotRect=$_slotAreaRect');
-
-    final futures = <Future<void>>[];
     for (int i = 0; i < 14; i++) {
-      final slotLeft = _slotAreaRect.left + i * slotWidth;
-      final slotTop = _slotAreaRect.top;
+      final slotLeft = gridRect.left + i * slotW;
+      final slotTop = gridRect.top;
 
-      // Map screen coordinates to image coordinates with aspect ratio correction
-      final cropX = ((slotLeft - padX) * scale + offsetX).round().clamp(0, fullImage.width - 1);
-      final cropY = ((slotTop - padY) * scale + offsetY).round().clamp(0, fullImage.height - 1);
-      final cropW = ((slotWidth + padX * 2) * scale).round().clamp(1, fullImage.width - cropX);
-      final cropH = ((slotHeight + padY * 2) * scale).round().clamp(1, fullImage.height - cropY);
-
-      debugPrint('DEBUG: slot$i crop=($cropX,$cropY,${cropW}x$cropH)');
+      final cropX = ((slotLeft - padX) * scaleX).round().clamp(0, fullImage.width - 1);
+      final cropY = ((slotTop - padY) * scaleY).round().clamp(0, fullImage.height - 1);
+      final cropW = ((slotW + padX * 2) * scaleX).round().clamp(1, fullImage.width - cropX);
+      final cropH = ((gridRect.height + padY * 2) * scaleY).round().clamp(1, fullImage.height - cropY);
 
       final cropped = img.copyCrop(fullImage, x: cropX, y: cropY, width: cropW, height: cropH);
+      _croppedImages[i] = cropped;
 
       final idx = i;
-      _croppedImages[idx] = cropped;
-      futures.add(Future(() {
-        final results = _classifier.classify(cropped, topK: 1);
-        if (mounted) {
-          setState(() {
-            _tiles[idx] = results.isNotEmpty ? results.first.tileCode : null;
-            _isClassifying[idx] = false;
-          });
-        }
-      }));
+      final results = _classifier.classify(cropped, topK: 1);
+      setState(() {
+        _tiles[idx] = results.isNotEmpty ? results.first.tileCode : null;
+        _isClassifying[idx] = false;
+      });
     }
-    await Future.wait(futures);
+
+    setState(() => _phase = _ScanPhase.results);
   }
+
+  // ── Phase 3: Score ──
 
   Future<void> _calculateScore() async {
     final tiles = _tiles.whereType<String>().toList();
@@ -216,8 +209,11 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  void _reset() {
+  void _backToCamera() {
     setState(() {
+      _phase = _ScanPhase.camera;
+      _capturedBytes = null;
+      _capturedImage = null;
       for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = false; _croppedImages[i] = null; }
       _scoreResult = null;
       _isNotWinning = false;
@@ -225,58 +221,25 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
-  void _showCroppedDebug() {
-    final images = _croppedImages.where((i) => i != null).toList();
-    if (images.isEmpty) return;
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.grey[900],
-        title: const Text('トリミング結果', style: TextStyle(color: Colors.white, fontSize: 14)),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: GridView.builder(
-            shrinkWrap: true,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 7, crossAxisSpacing: 4, mainAxisSpacing: 4,
-              childAspectRatio: 0.75,
-            ),
-            itemCount: 14,
-            itemBuilder: (_, i) {
-              final cropped = _croppedImages[i];
-              if (cropped == null) {
-                return Container(color: Colors.grey[800], child: const Center(child: Text('?', style: TextStyle(color: Colors.white38))));
-              }
-              final bytes = img.encodeJpg(cropped);
-              return Column(
-                children: [
-                  Expanded(
-                    child: Image.memory(bytes, fit: BoxFit.contain),
-                  ),
-                  Text(
-                    '${cropped.width}x${cropped.height}',
-                    style: const TextStyle(color: Colors.white38, fontSize: 8),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('閉じる'),
-          ),
-        ],
-      ),
-    );
-  }
-
   bool get _allTilesReady => _tiles.every((t) => t != null);
-  bool get _anyTileReady => _tiles.any((t) => t != null);
 
   @override
   Widget build(BuildContext context) {
+    switch (_phase) {
+      case _ScanPhase.camera:
+        return _buildCameraPhase();
+      case _ScanPhase.align:
+        return _buildAlignPhase();
+      case _ScanPhase.results:
+        return _buildResultsPhase();
+    }
+  }
+
+  // ════════════════════════════════════════
+  // Phase 1: Camera
+  // ════════════════════════════════════════
+
+  Widget _buildCameraPhase() {
     if (_controller == null || !_controller!.value.isInitialized) {
       return const Scaffold(
         backgroundColor: Colors.black,
@@ -287,79 +250,216 @@ class _ScanScreenState extends State<ScanScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CameraPreview(_controller!),
+            // Simple instruction
+            Positioned(
+              top: 20, left: 0, right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    '牌14枚が映るように撮影してください',
+                    style: TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ),
+              ),
+            ),
+            // Capture button
+            Positioned(
+              bottom: 40, left: 0, right: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: _isCapturing ? null : _capture,
+                  child: Container(
+                    width: 72, height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 4),
+                      color: _isCapturing ? Colors.grey : Colors.white.withValues(alpha: 0.3),
+                    ),
+                    child: _isCapturing
+                        ? const Padding(
+                            padding: EdgeInsets.all(20),
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                          )
+                        : const Icon(Icons.camera_alt, color: Colors.white, size: 32),
+                  ),
+                ),
+              ),
+            ),
+            if (_errorMessage != null)
+              Positioned(
+                bottom: 130, left: 20, right: 20,
+                child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12), textAlign: TextAlign.center),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ════════════════════════════════════════
+  // Phase 2: Align grid on captured image
+  // ════════════════════════════════════════
+
+  Widget _buildAlignPhase() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
             final viewW = constraints.maxWidth;
             final viewH = constraints.maxHeight;
 
-            // Always lay out 14 slots along the LONGER axis
-            final longerAxis = viewW >= viewH ? viewW : viewH;
-            final isLandscape = viewW >= viewH;
+            // Display captured image with BoxFit.contain
+            // Calculate the actual displayed image size
+            final imgW = _capturedImage!.width.toDouble();
+            final imgH = _capturedImage!.height.toDouble();
+            final imgAspect = imgW / imgH;
+            final viewAspect = viewW / viewH;
 
-            // Slot dimensions: 14 tiles along the longer axis
-            final padding = 16.0;
-            final slotTotalLength = longerAxis - padding * 2;
-            final tileW = slotTotalLength / 14;
-            final tileH = tileW / 0.75;
-
-            // Position slots centered on screen
-            late final Rect slotRect;
-            if (isLandscape) {
-              // Landscape: slots horizontal, centered vertically at ~35%
-              final slotTop = (viewH * 0.35) - (tileH / 2);
-              slotRect = Rect.fromLTWH(padding, slotTop, slotTotalLength, tileH);
+            late final double dispW, dispH, dispLeft, dispTop;
+            if (imgAspect > viewAspect) {
+              dispW = viewW;
+              dispH = viewW / imgAspect;
+              dispLeft = 0;
+              dispTop = (viewH - dispH) / 2;
             } else {
-              // Portrait: slots still horizontal along the long axis? No.
-              // In portrait, longer axis is height.
-              // But user wants slots along the longer axis.
-              // However "枠の並び方向自体は今のやり方であっている" means horizontal.
-              // In portrait, we keep horizontal but use full width.
-              final slotTotalW = viewW - padding * 2;
-              final tw = slotTotalW / 14;
-              final th = tw / 0.75;
-              final slotTop = (viewH * 0.35) - (th / 2);
-              slotRect = Rect.fromLTWH(padding, slotTop, slotTotalW, th);
+              dispH = viewH;
+              dispW = viewH * imgAspect;
+              dispLeft = (viewW - dispW) / 2;
+              dispTop = 0;
             }
 
-            _slotAreaRect = slotRect;
+            // Default grid: 14 tiles across the displayed image width
+            final defaultSlotW = dispW * 0.9 / 14;
+            final defaultSlotH = defaultSlotW / 0.75;
+            final defaultGridW = defaultSlotW * 14;
+            final defaultGridH = defaultSlotH;
+            final defaultGridLeft = dispLeft + (dispW - defaultGridW) / 2;
+            final defaultGridTop = dispTop + (dispH - defaultGridH) / 2;
+
+            final gridW = defaultGridW * _gridScale;
+            final gridH = defaultGridH * _gridScale;
+            final gridLeft = defaultGridLeft + _gridOffset.dx;
+            final gridTop = defaultGridTop + _gridOffset.dy;
+
+            // Grid rect in the displayed image coordinate system (relative to dispLeft, dispTop)
+            final gridRectInImage = Rect.fromLTWH(
+              (gridLeft - dispLeft),
+              (gridTop - dispTop),
+              gridW,
+              gridH,
+            );
+            // Scale to actual image display size for cropping
+            final imageDisplaySize = Size(dispW, dispH);
 
             return Stack(
-              fit: StackFit.expand,
               children: [
-                // Camera preview - fill screen
-                SizedBox.expand(
-                  child: CameraPreview(_controller!),
+                // Captured image
+                Positioned(
+                  left: dispLeft, top: dispTop,
+                  width: dispW, height: dispH,
+                  child: Image.memory(_capturedBytes!, fit: BoxFit.fill),
                 ),
 
-                // Semi-transparent overlay with transparent slot cutouts
+                // Overlay with grid cutouts
                 ClipRect(
                   child: CustomPaint(
                     size: Size(viewW, viewH),
                     painter: _SlotOverlayPainter(
-                      slotRect: slotRect,
+                      slotRect: Rect.fromLTWH(gridLeft, gridTop, gridW, gridH),
                       slotCount: 14,
                     ),
                   ),
                 ),
 
-                // "和了牌" label next to last slot
+                // Drag gesture for grid
+                Positioned.fill(
+                  child: GestureDetector(
+                    onPanUpdate: (details) {
+                      setState(() {
+                        _gridOffset += details.delta;
+                      });
+                    },
+                    onScaleUpdate: (details) {
+                      if (details.pointerCount >= 2) {
+                        setState(() {
+                          _gridScale = (_gridScale * details.scale).clamp(0.3, 3.0);
+                        });
+                      }
+                    },
+                  ),
+                ),
+
+                // "和了牌" label
                 Positioned(
-                  left: slotRect.right - (slotRect.width / 14) / 2 - 20,
-                  top: slotRect.top - 20,
-                  child: const Text(
-                    '和了牌',
-                    style: TextStyle(
-                      color: Colors.greenAccent,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
+                  left: gridLeft + gridW - gridW / 14 / 2 - 20,
+                  top: gridTop - 18,
+                  child: const Text('和了牌',
+                    style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+
+                // Instructions
+                Positioned(
+                  top: 12, left: 0, right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.7),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: const Text(
+                        'ドラッグで枠を移動、ピンチでサイズ調整',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
                     ),
                   ),
                 ),
 
-                // Bottom controls
+                // Bottom buttons
                 Positioned(
                   left: 0, right: 0, bottom: 0,
-                  child: _buildBottomControls(),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    color: Colors.black.withValues(alpha: 0.7),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: _backToCamera,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white.withValues(alpha: 0.15),
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text('撮り直す'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _classifyFromGrid(imageDisplaySize, gridRectInImage),
+                            icon: const Icon(Icons.search, size: 20),
+                            label: const Text('識別開始'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green.withValues(alpha: 0.7),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             );
@@ -369,98 +469,108 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _buildBottomControls() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.75),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Tile results
-          TileSlotRow(tiles: _tiles, isClassifying: _isClassifying, onSlotTap: _onSlotTap),
-          const SizedBox(height: 8),
+  // ════════════════════════════════════════
+  // Phase 3: Results
+  // ════════════════════════════════════════
 
-          // Context input
-          ContextInputPanel(context_: _context, onChanged: (c) => setState(() => _context = c)),
-          const SizedBox(height: 8),
-
-          // Buttons
-          Row(
+  Widget _buildResultsPhase() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _isCapturing ? null : _capture,
-                  icon: _isCapturing
-                      ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.camera_alt, size: 20),
-                  label: Text(_isCapturing ? '撮影中...' : '撮影'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.2),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                  ),
+              // Tile results row
+              TileSlotRow(tiles: _tiles, isClassifying: _isClassifying, onSlotTap: _onSlotTap),
+              const SizedBox(height: 8),
+
+              // Cropped images preview
+              SizedBox(
+                height: 60,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: 14,
+                  itemBuilder: (_, i) {
+                    final cropped = _croppedImages[i];
+                    if (cropped == null) return const SizedBox(width: 40);
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 2),
+                      child: Image.memory(
+                        Uint8List.fromList(img.encodeJpg(cropped)),
+                        width: 40, height: 56, fit: BoxFit.cover,
+                      ),
+                    );
+                  },
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _allTilesReady && !_isScoring ? _calculateScore : null,
-                  icon: _isScoring
-                      ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.calculate, size: 20),
-                  label: const Text('点数計算'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _allTilesReady
-                        ? Colors.green.withValues(alpha: 0.6)
-                        : Colors.white.withValues(alpha: 0.1),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
+              const SizedBox(height: 12),
+
+              // Context input
+              ContextInputPanel(context_: _context, onChanged: (c) => setState(() => _context = c)),
+              const SizedBox(height: 12),
+
+              // Buttons
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _backToCamera,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white.withValues(alpha: 0.15),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('撮り直す'),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton.icon(
+                      onPressed: _allTilesReady && !_isScoring ? _calculateScore : null,
+                      icon: _isScoring
+                          ? const SizedBox(width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.calculate, size: 20),
+                      label: const Text('点数計算'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _allTilesReady
+                            ? Colors.green.withValues(alpha: 0.6)
+                            : Colors.white.withValues(alpha: 0.1),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              if (_anyTileReady) ...[
-                const SizedBox(width: 4),
-                IconButton(
-                  onPressed: _showCroppedDebug,
-                  icon: const Icon(Icons.grid_view, color: Colors.white54, size: 20),
-                  tooltip: 'トリミング確認',
+
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 8),
+                Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+              ],
+
+              if (_isNotWinning) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text('上がりの形になっていません',
+                      style: TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.bold)),
                 ),
-                IconButton(
-                  onPressed: _reset,
-                  icon: const Icon(Icons.refresh, color: Colors.white54, size: 20),
-                  tooltip: 'リセット',
-                ),
+              ],
+
+              if (_scoreResult != null) ...[
+                const SizedBox(height: 8),
+                ScoreResultPanel(scoreResponse: _scoreResult!),
               ],
             ],
           ),
-
-          if (_errorMessage != null) ...[
-            const SizedBox(height: 6),
-            Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-          ],
-
-          if (_isNotWinning) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Text('上がりの形になっていません',
-                  style: TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.bold)),
-            ),
-          ],
-
-          if (_scoreResult != null) ...[
-            const SizedBox(height: 6),
-            ScoreResultPanel(scoreResponse: _scoreResult!),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -475,16 +585,13 @@ class _SlotOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Save layer so BlendMode.clear works
     canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
 
-    // Draw full semi-transparent overlay
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
       Paint()..color = Colors.black.withValues(alpha: 0.5),
     );
 
-    // Cut out transparent windows
     final clearPaint = Paint()..blendMode = BlendMode.clear;
     final slotW = slotRect.width / slotCount;
     for (int i = 0; i < slotCount; i++) {
@@ -494,7 +601,6 @@ class _SlotOverlayPainter extends CustomPainter {
       );
     }
 
-    // Draw slot borders (white, thin)
     final borderPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.5)
       ..style = PaintingStyle.stroke
@@ -506,7 +612,6 @@ class _SlotOverlayPainter extends CustomPainter {
       );
     }
 
-    // Green border on last slot (win tile)
     canvas.drawRect(
       Rect.fromLTWH(slotRect.left + (slotCount - 1) * slotW, slotRect.top, slotW, slotRect.height),
       Paint()
