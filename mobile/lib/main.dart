@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:provider/provider.dart';
-import 'services/recognition_service.dart';
-import 'screens/camera_screen.dart';
+import 'screens/scan_screen.dart';
 
 late List<CameraDescription> cameras;
 
@@ -23,20 +21,17 @@ class TsumoAIApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => RecognitionService()..initOnDevice(),
-      child: MaterialApp(
-        title: 'TsumoAI',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.green,
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
+    return MaterialApp(
+      title: 'TsumoAI',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.green,
+          brightness: Brightness.dark,
         ),
-        home: CameraScreen(cameras: cameras),
+        useMaterial3: true,
       ),
+      home: ScanScreen(cameras: cameras),
     );
   }
 }
