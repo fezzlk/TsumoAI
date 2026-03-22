@@ -381,20 +381,16 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
 
-                // Drag gesture for grid
+                // Drag + pinch gesture for grid (scale is superset of pan)
                 Positioned.fill(
                   child: GestureDetector(
-                    onPanUpdate: (details) {
-                      setState(() {
-                        _gridOffset += details.delta;
-                      });
-                    },
                     onScaleUpdate: (details) {
-                      if (details.pointerCount >= 2) {
-                        setState(() {
+                      setState(() {
+                        _gridOffset += details.focalPointDelta;
+                        if (details.pointerCount >= 2) {
                           _gridScale = (_gridScale * details.scale).clamp(0.3, 3.0);
-                        });
-                      }
+                        }
+                      });
                     },
                   ),
                 ),
