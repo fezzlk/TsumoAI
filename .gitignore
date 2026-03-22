@@ -11,3 +11,7 @@ venv/*
 ml/tiles-resized/
 ml/output/*.keras
 .claude/
+
+# YOLO training data and runs
+ml/yolo/dataset/
+ml/yolo/runs/

@@ -1,5 +1,0 @@
-path: /Users/yusuketakizawa/repos/TsumoAI/ml/yolo/dataset
-train: train/images
-val: val/images
-nc: 1
-names: ['tile']
