@@ -33,9 +33,10 @@ class _ScanScreenState extends State<ScanScreen> {
   Uint8List? _capturedBytes;
   img.Image? _capturedImage;
 
-  // Grid position on the displayed image (user-adjustable)
-  Offset _gridOffset = Offset.zero;
-  double _gridScale = 1.0;
+  // Image position (user drags/pinches the image to align with fixed grid)
+  Offset _imageOffset = Offset.zero;
+  double _imageScale = 1.0;
+  double _lastScaleValue = 1.0;
 
   // Tile results
   final List<String?> _tiles = List.filled(14, null);
@@ -107,8 +108,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _capturedBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: 90));
         _capturedImage = decoded;
         _phase = _ScanPhase.align;
-        _gridOffset = Offset.zero;
-        _gridScale = 1.0;
+        _imageOffset = Offset.zero;
+        _imageScale = 1.0;
+        _lastScaleValue = 1.0;
         _errorMessage = null;
         for (int i = 0; i < 14; i++) {
           _tiles[i] = null;
@@ -318,77 +320,74 @@ class _ScanScreenState extends State<ScanScreen> {
             final viewW = constraints.maxWidth;
             final viewH = constraints.maxHeight;
 
-            // Display captured image with BoxFit.contain
-            // Calculate the actual displayed image size
+            // Fixed grid: centered, 80% of view width
+            final gridTotalW = viewW * 0.85;
+            final slotW = gridTotalW / 14;
+            final slotH = slotW / 0.75;
+            final gridLeft = (viewW - gridTotalW) / 2;
+            final gridTop = (viewH - slotH) / 2;
+            final gridRect = Rect.fromLTWH(gridLeft, gridTop, gridTotalW, slotH);
+
+            // Image: user moves/scales to align with fixed grid
             final imgW = _capturedImage!.width.toDouble();
             final imgH = _capturedImage!.height.toDouble();
             final imgAspect = imgW / imgH;
             final viewAspect = viewW / viewH;
 
-            late final double dispW, dispH, dispLeft, dispTop;
+            // Base size (contain)
+            late final double baseW, baseH;
             if (imgAspect > viewAspect) {
-              dispW = viewW;
-              dispH = viewW / imgAspect;
-              dispLeft = 0;
-              dispTop = (viewH - dispH) / 2;
+              baseW = viewW;
+              baseH = viewW / imgAspect;
             } else {
-              dispH = viewH;
-              dispW = viewH * imgAspect;
-              dispLeft = (viewW - dispW) / 2;
-              dispTop = 0;
+              baseH = viewH;
+              baseW = viewH * imgAspect;
             }
 
-            // Default grid: 14 tiles across the displayed image width
-            final defaultSlotW = dispW * 0.9 / 14;
-            final defaultSlotH = defaultSlotW / 0.75;
-            final defaultGridW = defaultSlotW * 14;
-            final defaultGridH = defaultSlotH;
-            final defaultGridLeft = dispLeft + (dispW - defaultGridW) / 2;
-            final defaultGridTop = dispTop + (dispH - defaultGridH) / 2;
+            final scaledW = baseW * _imageScale;
+            final scaledH = baseH * _imageScale;
+            final imgLeft = (viewW - scaledW) / 2 + _imageOffset.dx;
+            final imgTop = (viewH - scaledH) / 2 + _imageOffset.dy;
 
-            final gridW = defaultGridW * _gridScale;
-            final gridH = defaultGridH * _gridScale;
-            final gridLeft = defaultGridLeft + _gridOffset.dx;
-            final gridTop = defaultGridTop + _gridOffset.dy;
-
-            // Grid rect in the displayed image coordinate system (relative to dispLeft, dispTop)
+            // For cropping: grid position relative to displayed image
+            final gridInImgX = gridLeft - imgLeft;
+            final gridInImgY = gridTop - imgTop;
             final gridRectInImage = Rect.fromLTWH(
-              (gridLeft - dispLeft),
-              (gridTop - dispTop),
-              gridW,
-              gridH,
+              gridInImgX / _imageScale,
+              gridInImgY / _imageScale,
+              gridTotalW / _imageScale,
+              slotH / _imageScale,
             );
-            // Scale to actual image display size for cropping
-            final imageDisplaySize = Size(dispW, dispH);
+            final imageDisplaySize = Size(baseW, baseH);
 
             return Stack(
               children: [
-                // Captured image
+                // Movable/scalable image
                 Positioned(
-                  left: dispLeft, top: dispTop,
-                  width: dispW, height: dispH,
+                  left: imgLeft, top: imgTop,
+                  width: scaledW, height: scaledH,
                   child: Image.memory(_capturedBytes!, fit: BoxFit.fill),
                 ),
 
-                // Overlay with grid cutouts
+                // Fixed overlay with grid cutouts
                 ClipRect(
                   child: CustomPaint(
                     size: Size(viewW, viewH),
-                    painter: _SlotOverlayPainter(
-                      slotRect: Rect.fromLTWH(gridLeft, gridTop, gridW, gridH),
-                      slotCount: 14,
-                    ),
+                    painter: _SlotOverlayPainter(slotRect: gridRect, slotCount: 14),
                   ),
                 ),
 
-                // Drag + pinch gesture for grid (scale is superset of pan)
+                // Gesture: drag/pinch the IMAGE
                 Positioned.fill(
                   child: GestureDetector(
+                    onScaleStart: (_) {
+                      _lastScaleValue = _imageScale;
+                    },
                     onScaleUpdate: (details) {
                       setState(() {
-                        _gridOffset += details.focalPointDelta;
+                        _imageOffset += details.focalPointDelta;
                         if (details.pointerCount >= 2) {
-                          _gridScale = (_gridScale * details.scale).clamp(0.3, 3.0);
+                          _imageScale = (_lastScaleValue * details.scale).clamp(0.5, 5.0);
                         }
                       });
                     },
@@ -397,8 +396,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
                 // "和了牌" label
                 Positioned(
-                  left: gridLeft + gridW - gridW / 14 / 2 - 20,
-                  top: gridTop - 18,
+                  left: gridRect.right - slotW / 2 - 20,
+                  top: gridRect.top - 18,
                   child: const Text('和了牌',
                     style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold)),
                 ),
@@ -414,7 +413,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: const Text(
-                        'ドラッグで枠を移動、ピンチでサイズ調整',
+                        '画像をドラッグ/ピンチして牌を枠に合わせてください',
                         style: TextStyle(color: Colors.white70, fontSize: 12),
                       ),
                     ),

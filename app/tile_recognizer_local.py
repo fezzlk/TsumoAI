@@ -69,7 +69,7 @@ def _classify_tile(tile_img: np.ndarray) -> tuple[str, float]:
     # Resize to model input size (224x224)
     h, w = input_details[0]["shape"][1], input_details[0]["shape"][2]
     resized = cv2.resize(tile_img, (w, h))
-    input_data = np.expand_dims(resized, axis=0).astype(np.float32) / 255.0
+    input_data = np.expand_dims(resized, axis=0).astype(np.float32) / 127.5 - 1.0
 
     _interpreter.set_tensor(input_details[0]["index"], input_data)
     _interpreter.invoke()
