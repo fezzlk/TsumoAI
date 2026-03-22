@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
+import 'package:path_provider/path_provider.dart';
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../models/score_request.dart';
@@ -120,6 +121,17 @@ class _ScanScreenState extends State<ScanScreen> {
     final slotWidth = _slotAreaRect.width / 14;
     final slotHeight = _slotAreaRect.height;
 
+    // Debug: save full image and crop info
+    final debugDir = await getTemporaryDirectory();
+    final debugPath = '${debugDir.path}/tile_debug';
+    await Directory(debugPath).create(recursive: true);
+
+    // Save full captured image
+    final fullJpg = img.encodeJpg(fullImage, quality: 90);
+    await File('$debugPath/full.jpg').writeAsBytes(fullJpg);
+    debugPrint('DEBUG: fullImage=${fullImage.width}x${fullImage.height} viewSize=$viewSize');
+    debugPrint('DEBUG: scaleX=$scaleX scaleY=$scaleY slotRect=$_slotAreaRect');
+
     final futures = <Future<void>>[];
     for (int i = 0; i < 14; i++) {
       final slotLeft = _slotAreaRect.left + i * slotWidth;
@@ -130,7 +142,14 @@ class _ScanScreenState extends State<ScanScreen> {
       final cropW = (slotWidth * scaleX).round().clamp(1, fullImage.width - cropX);
       final cropH = (slotHeight * scaleY).round().clamp(1, fullImage.height - cropY);
 
+      debugPrint('DEBUG: slot$i crop=($cropX,$cropY,${cropW}x$cropH)');
+
       final cropped = img.copyCrop(fullImage, x: cropX, y: cropY, width: cropW, height: cropH);
+
+      // Save each cropped tile for debugging
+      final croppedJpg = img.encodeJpg(cropped, quality: 90);
+      await File('$debugPath/tile_$i.jpg').writeAsBytes(croppedJpg);
+
       final idx = i;
       futures.add(Future(() {
         final results = _classifier.classify(cropped, topK: 1);
@@ -143,6 +162,7 @@ class _ScanScreenState extends State<ScanScreen> {
       }));
     }
     await Future.wait(futures);
+    debugPrint('DEBUG: crops saved to $debugPath');
   }
 
   Future<void> _calculateScore() async {
