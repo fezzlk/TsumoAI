@@ -71,6 +71,48 @@ class ContextInput {
     this.kyotaku = 0,
   });
 
+  ContextInput copyWith({
+    String? winType,
+    bool? isDealer,
+    String? roundWind,
+    String? seatWind,
+    bool? riichi,
+    bool? doubleRiichi,
+    bool? ippatsu,
+    bool? haitei,
+    bool? houtei,
+    bool? rinshan,
+    bool? chankan,
+    bool? chiihou,
+    bool? tenhou,
+    List<String>? doraIndicators,
+    List<String>? uraDoraIndicators,
+    int? akaDora,
+    int? honba,
+    int? kyotaku,
+  }) {
+    return ContextInput(
+      winType: winType ?? this.winType,
+      isDealer: isDealer ?? this.isDealer,
+      roundWind: roundWind ?? this.roundWind,
+      seatWind: seatWind ?? this.seatWind,
+      riichi: riichi ?? this.riichi,
+      doubleRiichi: doubleRiichi ?? this.doubleRiichi,
+      ippatsu: ippatsu ?? this.ippatsu,
+      haitei: haitei ?? this.haitei,
+      houtei: houtei ?? this.houtei,
+      rinshan: rinshan ?? this.rinshan,
+      chankan: chankan ?? this.chankan,
+      chiihou: chiihou ?? this.chiihou,
+      tenhou: tenhou ?? this.tenhou,
+      doraIndicators: doraIndicators ?? this.doraIndicators,
+      uraDoraIndicators: uraDoraIndicators ?? this.uraDoraIndicators,
+      akaDora: akaDora ?? this.akaDora,
+      honba: honba ?? this.honba,
+      kyotaku: kyotaku ?? this.kyotaku,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'win_type': winType,
         'is_dealer': isDealer,
