@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -33,10 +34,12 @@ class _ScanScreenState extends State<ScanScreen> {
   Uint8List? _capturedBytes;
   img.Image? _capturedImage;
 
-  // Image position (user drags/pinches the image to align with fixed grid)
+  // Image transform (user drags/pinches/rotates the image to align with fixed grid)
   Offset _imageOffset = Offset.zero;
   double _imageScale = 1.0;
+  double _imageRotation = 0.0; // radians
   double _lastScaleValue = 1.0;
+  double _lastRotationValue = 0.0;
 
   // Tile results
   final List<String?> _tiles = List.filled(14, null);
@@ -110,7 +113,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _phase = _ScanPhase.align;
         _imageOffset = Offset.zero;
         _imageScale = 1.0;
+        _imageRotation = 0.0;
         _lastScaleValue = 1.0;
+        _lastRotationValue = 0.0;
         _errorMessage = null;
         for (int i = 0; i < 14; i++) {
           _tiles[i] = null;
@@ -128,7 +133,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // ── Phase 2: Align grid & classify ──
 
   Future<void> _classifyFromGrid(Size imageDisplaySize, Rect gridRect) async {
-    final fullImage = _capturedImage;
+    var fullImage = _capturedImage;
     if (fullImage == null || !_classifier.isReady) {
       setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
       return;
@@ -141,7 +146,12 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
     });
 
-    // Simple 1:1 mapping: displayed image fills the widget via BoxFit.contain
+    // Apply rotation to image if user rotated it
+    if (_imageRotation.abs() > 0.01) {
+      final degrees = _imageRotation * 180 / math.pi;
+      fullImage = img.copyRotate(fullImage, angle: -degrees);
+    }
+
     final scaleX = fullImage.width / imageDisplaySize.width;
     final scaleY = fullImage.height / imageDisplaySize.height;
 
@@ -362,11 +372,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
             return Stack(
               children: [
-                // Movable/scalable image
+                // Movable/scalable/rotatable image
                 Positioned(
                   left: imgLeft, top: imgTop,
                   width: scaledW, height: scaledH,
-                  child: Image.memory(_capturedBytes!, fit: BoxFit.fill),
+                  child: Transform.rotate(
+                    angle: _imageRotation,
+                    child: Image.memory(_capturedBytes!, fit: BoxFit.fill),
+                  ),
                 ),
 
                 // Fixed overlay with grid cutouts
@@ -377,17 +390,19 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
 
-                // Gesture: drag/pinch the IMAGE
+                // Gesture: drag/pinch/rotate the IMAGE
                 Positioned.fill(
                   child: GestureDetector(
                     onScaleStart: (_) {
                       _lastScaleValue = _imageScale;
+                      _lastRotationValue = _imageRotation;
                     },
                     onScaleUpdate: (details) {
                       setState(() {
                         _imageOffset += details.focalPointDelta;
                         if (details.pointerCount >= 2) {
                           _imageScale = (_lastScaleValue * details.scale).clamp(0.5, 5.0);
+                          _imageRotation = _lastRotationValue + details.rotation;
                         }
                       });
                     },
@@ -416,6 +431,21 @@ class _ScanScreenState extends State<ScanScreen> {
                         '画像をドラッグ/ピンチして牌を枠に合わせてください',
                         style: TextStyle(color: Colors.white70, fontSize: 12),
                       ),
+                    ),
+                  ),
+                ),
+
+                // 90° rotation button
+                Positioned(
+                  top: 12, right: 12,
+                  child: IconButton(
+                    onPressed: () => setState(() {
+                      _imageRotation += math.pi / 2;
+                    }),
+                    icon: const Icon(Icons.rotate_right, color: Colors.white70, size: 28),
+                    tooltip: '90°回転',
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black.withValues(alpha: 0.5),
                     ),
                   ),
                 ),
