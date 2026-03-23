@@ -159,11 +159,14 @@ class TileClassifier {
     if (label.startsWith('dots-')) return '${label.substring(5)}p';
     if (label.startsWith('bamboo-')) return '${label.substring(7)}s';
     if (label.startsWith('characters-')) return '${label.substring(11)}m';
-    const honorsMap = {
+    const map = {
       'honors-east': 'E', 'honors-south': 'S', 'honors-west': 'W', 'honors-north': 'N',
       'honors-red': 'C', 'honors-green': 'F', 'honors-white': 'P',
+      // Bonus tiles → not used in Japanese mahjong, map to short codes
+      'bonus-spring': '春', 'bonus-summer': '夏', 'bonus-autumn': '秋', 'bonus-winter': '冬',
+      'bonus-plum': '梅', 'bonus-orchid': '蘭', 'bonus-chrysanthemum': '菊', 'bonus-bamboo': '竹',
     };
-    return honorsMap[label] ?? label;
+    return map[label] ?? label;
   }
 
   void dispose() {
