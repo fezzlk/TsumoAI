@@ -12,6 +12,7 @@ import '../widgets/tile_slot_row.dart';
 import '../widgets/tile_keyboard.dart';
 import '../widgets/context_input_panel.dart';
 import '../widgets/score_result_panel.dart';
+import '../services/training_data_client.dart';
 
 class ScanScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -27,6 +28,7 @@ class _ScanScreenState extends State<ScanScreen> {
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
   final ApiClient _api = ApiClient();
+  final TrainingDataClient _trainingClient = TrainingDataClient();
 
   _ScanPhase _phase = _ScanPhase.camera;
 
@@ -152,8 +154,27 @@ class _ScanScreenState extends State<ScanScreen> {
       fullImage = img.copyRotate(fullImage, angle: -degrees);
     }
 
-    final scaleX = fullImage.width / imageDisplaySize.width;
-    final scaleY = fullImage.height / imageDisplaySize.height;
+    // After rotation, image dimensions may have changed.
+    // Recalculate display size based on the rotated image to maintain correct mapping.
+    final rotatedAspect = fullImage.width / fullImage.height;
+    final origAspect = imageDisplaySize.width / imageDisplaySize.height;
+    Size effectiveDisplaySize;
+    if ((rotatedAspect - origAspect).abs() > 0.1) {
+      // Aspect changed significantly (e.g. 90° rotation)
+      // Recalculate what the display size would be for the rotated image
+      final viewW = imageDisplaySize.width;
+      final viewH = imageDisplaySize.height;
+      if (rotatedAspect > viewW / viewH) {
+        effectiveDisplaySize = Size(viewW, viewW / rotatedAspect);
+      } else {
+        effectiveDisplaySize = Size(viewH * rotatedAspect, viewH);
+      }
+    } else {
+      effectiveDisplaySize = imageDisplaySize;
+    }
+
+    final scaleX = fullImage.width / effectiveDisplaySize.width;
+    final scaleY = fullImage.height / effectiveDisplaySize.height;
 
     final slotW = gridRect.width / 14;
     // Add 15% padding for better capture
@@ -234,6 +255,27 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   bool get _allTilesReady => _tiles.every((t) => t != null);
+
+  Future<void> _sendTrainingData() async {
+    final images = _croppedImages.whereType<img.Image>().toList();
+    final tiles = _tiles.whereType<String>().toList();
+    if (images.length != 14 || tiles.length != 14) {
+      setState(() => _errorMessage = '14枚すべての識別結果が必要です');
+      return;
+    }
+
+    setState(() => _errorMessage = null);
+    try {
+      final count = await _trainingClient.uploadBatch(images: images, tileCodes: tiles);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$count枚の学習データを送信しました')),
+        );
+      }
+    } catch (e) {
+      setState(() => _errorMessage = '送信エラー: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -592,6 +634,24 @@ class _ScanScreenState extends State<ScanScreen> {
               if (_scoreResult != null) ...[
                 const SizedBox(height: 8),
                 ScoreResultPanel(scoreResponse: _scoreResult!),
+              ],
+
+              // Training data send button
+              if (_allTilesReady) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _sendTrainingData,
+                    icon: const Icon(Icons.school, size: 18),
+                    label: const Text('学習データとして送信'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.withValues(alpha: 0.5),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
               ],
             ],
           ),

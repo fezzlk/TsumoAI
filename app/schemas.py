@@ -245,6 +245,25 @@ class DatasetUploadResponse(BaseModel):
     storage: dict
 
 
+class TrainingDataEntry(BaseModel):
+    id: str
+    tile_code: str
+    source: str
+    image_path: str
+    created_at: str
+
+
+class TrainingDataListResponse(BaseModel):
+    entries: list[TrainingDataEntry]
+    stats: dict
+
+
+class TrainingDataUploadResponse(BaseModel):
+    status: Literal["ok"]
+    id: str
+    image_path: str
+
+
 # --- Game session schemas ---
 
 

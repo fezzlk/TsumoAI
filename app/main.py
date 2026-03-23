@@ -87,6 +87,9 @@ gcs_feedback_store = GCSFeedbackStore()
 gcs_dataset_store = GCSFeedbackStore(prefix=settings.gcs_dataset_prefix)
 recognition_feedback_store = RecognitionFeedbackStore()
 
+from app.training_data_store import TrainingDataStore
+training_data_store = TrainingDataStore()
+
 
 @app.get("/")
 def root() -> dict[str, str]:
@@ -366,6 +369,69 @@ def download_dataset(name: str = Query(...)) -> JSONResponse:
         raise HTTPException(status_code=404, detail="file not found")
     data = json.loads(blob.download_as_text())
     return JSONResponse(content=data)
+
+
+# --- Training data endpoints ---
+
+from app.schemas import TrainingDataListResponse, TrainingDataUploadResponse
+
+
+@app.post("/api/v1/training-data/upload", response_model=TrainingDataUploadResponse)
+async def upload_training_data(
+    image: UploadFile = File(...),
+    tile_code: str = Form(...),
+    source: str = Form("user"),
+) -> TrainingDataUploadResponse:
+    validate_tile(tile_code)
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="image is required")
+    try:
+        result = training_data_store.upload(image_bytes, tile_code, source)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return TrainingDataUploadResponse(status="ok", **result)
+
+
+@app.get("/api/v1/training-data/list")
+def list_training_data(
+    tile_code: str | None = Query(None),
+    source: str | None = Query(None),
+    limit: int = Query(500),
+) -> dict:
+    try:
+        entries = training_data_store.list_entries(tile_code=tile_code, source=source, limit=limit)
+        stats = training_data_store.get_stats()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"entries": entries, "stats": stats}
+
+
+@app.get("/api/v1/training-data/image/{entry_id}")
+def get_training_image(entry_id: str) -> Response:
+    try:
+        data = training_data_store.get_image(entry_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if data is None:
+        raise HTTPException(status_code=404, detail="image not found")
+    return Response(content=data, media_type="image/jpeg")
+
+
+@app.delete("/api/v1/training-data/{entry_id}")
+def delete_training_data(entry_id: str) -> dict:
+    try:
+        deleted = training_data_store.delete_entry(entry_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="entry not found")
+    return {"status": "deleted", "id": entry_id}
+
+
+@app.get("/training-data")
+def training_data_viewer() -> FileResponse:
+    return FileResponse(STATIC_DIR / "training_data.html")
 
 
 # --- Game session endpoints ---

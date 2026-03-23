@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>学習データ一覧 - TsumoAI</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
+h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
+.stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.stat-card { background: #16213e; padding: 10px 16px; border-radius: 8px; }
+.stat-card .label { font-size: 11px; color: #999; }
+.stat-card .value { font-size: 22px; font-weight: bold; color: #4ecca3; }
+.filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.filters select, .filters input { background: #16213e; border: 1px solid #333; color: #e0e0e0; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+.tile-card { background: #16213e; border-radius: 8px; overflow: hidden; text-align: center; position: relative; }
+.tile-card img { width: 100%; aspect-ratio: 0.75; object-fit: cover; }
+.tile-card .label { padding: 4px; font-size: 13px; font-weight: bold; }
+.tile-card .source { font-size: 9px; color: #888; }
+.tile-card .delete-btn { position: absolute; top: 2px; right: 2px; background: rgba(255,0,0,0.6); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 12px; display: none; }
+.tile-card:hover .delete-btn { display: block; }
+.empty { text-align: center; color: #666; padding: 40px; }
+.tile-stats { margin-top: 16px; }
+.tile-stats-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+.tile-stat { background: #16213e; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+.tile-stat .count { color: #4ecca3; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>🀄 学習データ一覧</h1>
+<div class="stats" id="stats"></div>
+<div class="filters">
+  <select id="filterTile"><option value="">全ての牌</option></select>
+  <select id="filterSource">
+    <option value="">全ソース</option>
+    <option value="user">ユーザー撮影</option>
+    <option value="camerash">Camerash</option>
+    <option value="kaggle">Kaggle</option>
+  </select>
+  <button onclick="loadData()" style="background:#4ecca3;color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">更新</button>
+</div>
+<div class="grid" id="grid"></div>
+<div class="tile-stats" id="tileStats"></div>
+
+<script>
+const API = '';
+const TILES = [
+  ...Array.from({length:9},(_,i)=>`${i+1}m`),
+  ...Array.from({length:9},(_,i)=>`${i+1}p`),
+  ...Array.from({length:9},(_,i)=>`${i+1}s`),
+  'E','S','W','N','P','F','C'
+];
+
+async function loadData() {
+  const tile = document.getElementById('filterTile').value;
+  const source = document.getElementById('filterSource').value;
+  let url = `${API}/api/v1/training-data/list?limit=500`;
+  if (tile) url += `&tile_code=${tile}`;
+  if (source) url += `&source=${source}`;
+
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    renderStats(data.stats);
+    renderGrid(data.entries);
+    renderTileStats(data.stats);
+    populateFilter(data.stats);
+  } catch(e) {
+    document.getElementById('grid').innerHTML = `<div class="empty">データの読み込みに失敗: ${e.message}</div>`;
+  }
+}
+
+function renderStats(stats) {
+  const el = document.getElementById('stats');
+  el.innerHTML = `
+    <div class="stat-card"><div class="label">合計</div><div class="value">${stats.total || 0}</div></div>
+    ${Object.entries(stats.by_source || {}).map(([k,v]) =>
+      `<div class="stat-card"><div class="label">${k}</div><div class="value">${v}</div></div>`
+    ).join('')}
+  `;
+}
+
+function renderGrid(entries) {
+  const el = document.getElementById('grid');
+  if (!entries || entries.length === 0) {
+    el.innerHTML = '<div class="empty">学習データがありません</div>';
+    return;
+  }
+  el.innerHTML = entries.map(e => `
+    <div class="tile-card">
+      <img src="${API}/api/v1/training-data/image/${e.id}" loading="lazy" alt="${e.tile_code}">
+      <div class="label">${e.tile_code}</div>
+      <div class="source">${e.source}</div>
+      <button class="delete-btn" onclick="deleteEntry('${e.id}')" title="削除">×</button>
+    </div>
+  `).join('');
+}
+
+function renderTileStats(stats) {
+  const el = document.getElementById('tileStats');
+  const byTile = stats.by_tile_code || {};
+  el.innerHTML = '<div class="tile-stats-grid">' +
+    Object.entries(byTile).map(([k,v]) =>
+      `<div class="tile-stat">${k}: <span class="count">${v}</span></div>`
+    ).join('') + '</div>';
+}
+
+function populateFilter(stats) {
+  const sel = document.getElementById('filterTile');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">全ての牌</option>';
+  TILES.forEach(t => {
+    sel.innerHTML += `<option value="${t}" ${t===current?'selected':''}>${t}</option>`;
+  });
+}
+
+async function deleteEntry(id) {
+  if (!confirm('この学習データを削除しますか？')) return;
+  await fetch(`${API}/api/v1/training-data/${id}`, {method:'DELETE'});
+  loadData();
+}
+
+loadData();
+</script>
+</body>
+</html>
