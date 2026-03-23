@@ -89,67 +89,101 @@ class TileClassifier {
 
   /// Preprocess a camera crop to look more like training data.
   ///
-  /// 1. Replace green pixels with white (remove mat background)
-  /// 2. Find the tile face (largest white/bright region)
-  /// 3. Crop to tile face with small padding
+  /// 1. Edge detection (Sobel) to find tile face boundaries
+  /// 2. Crop to the detected tile face
+  /// 3. Replace green background with white
   /// 4. Normalize contrast
   img.Image _preprocessTile(img.Image src) {
     final w = src.width;
     final h = src.height;
+    if (w < 10 || h < 10) return src;
 
-    // Step 1: Replace green background with white
-    final cleaned = img.Image.from(src);
+    // Step 1: Edge detection to find tile face boundaries
+    final gray = img.grayscale(img.Image.from(src));
+    final edges = img.sobel(gray);
+
+    // Step 2: Horizontal projection (find top/bottom of tile face)
+    // Sum edge intensity per row
+    final hProj = List.filled(h, 0);
     for (int y = 0; y < h; y++) {
       for (int x = 0; x < w; x++) {
-        final p = cleaned.getPixel(x, y);
+        hProj[y] += edges.getPixel(x, y).r.toInt();
+      }
+    }
+    // Vertical projection (find left/right of tile face)
+    final vProj = List.filled(w, 0);
+    for (int x = 0; x < w; x++) {
+      for (int y = 0; y < h; y++) {
+        vProj[x] += edges.getPixel(x, y).r.toInt();
+      }
+    }
+
+    // Find bounds using edge concentration
+    int hPeak = 0, vPeak = 0;
+    for (final v in hProj) { if (v > hPeak) hPeak = v; }
+    for (final v in vProj) { if (v > vPeak) vPeak = v; }
+
+    final hThreshold = hPeak * 0.25;
+    final vThreshold = vPeak * 0.25;
+
+    int top = 0, bottom = h - 1, left = 0, right = w - 1;
+
+    // Find top edge (first row with significant edges)
+    for (int y = 0; y < h; y++) {
+      if (hProj[y] > hThreshold) { top = y; break; }
+    }
+    // Find bottom edge (last row with significant edges)
+    for (int y = h - 1; y >= 0; y--) {
+      if (hProj[y] > hThreshold) { bottom = y; break; }
+    }
+    // Find left edge
+    for (int x = 0; x < w; x++) {
+      if (vProj[x] > vThreshold) { left = x; break; }
+    }
+    // Find right edge
+    for (int x = w - 1; x >= 0; x--) {
+      if (vProj[x] > vThreshold) { right = x; break; }
+    }
+
+    // Validate bounds
+    if (right <= left + 5 || bottom <= top + 5) {
+      // Edge detection failed, use center crop
+      final margin = (w * 0.1).round();
+      left = margin;
+      right = w - margin;
+      top = (h * 0.05).round();
+      bottom = h - (h * 0.05).round();
+    }
+
+    // Add small padding inside
+    final padX = ((right - left) * 0.03).round();
+    final padY = ((bottom - top) * 0.03).round();
+    left = math.max(0, left + padX);
+    right = math.min(w - 1, right - padX);
+    top = math.max(0, top + padY);
+    bottom = math.min(h - 1, bottom - padY);
+
+    // Step 3: Crop to tile face
+    final cw = right - left;
+    final ch = bottom - top;
+    if (cw < 5 || ch < 5) return src;
+
+    var cropped = img.copyCrop(src, x: left, y: top, width: cw, height: ch);
+
+    // Step 4: Replace green pixels with white
+    for (int y = 0; y < cropped.height; y++) {
+      for (int x = 0; x < cropped.width; x++) {
+        final p = cropped.getPixel(x, y);
         final r = p.r.toInt();
         final g = p.g.toInt();
         final b = p.b.toInt();
-
-        // Detect green: G is dominant, G > R+20, G > B+20
-        if (g > r + 20 && g > b + 20 && g > 60) {
-          cleaned.setPixelRgb(x, y, 240, 240, 240); // light gray (near white)
+        if (g > r + 15 && g > b + 15 && g > 50) {
+          cropped.setPixelRgb(x, y, 245, 245, 245);
         }
       }
     }
 
-    // Step 2: Find tile face bounding box (bright region)
-    // Create brightness mask
-    int minX = w, minY = h, maxX = 0, maxY = 0;
-    bool found = false;
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        final p = cleaned.getPixel(x, y);
-        final brightness = (p.r.toInt() + p.g.toInt() + p.b.toInt()) ~/ 3;
-        if (brightness > 150) {
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-          found = true;
-        }
-      }
-    }
-
-    if (!found || maxX <= minX || maxY <= minY) {
-      return cleaned;
-    }
-
-    // Step 3: Crop to tile face with 5% padding
-    final cropW = maxX - minX;
-    final cropH = maxY - minY;
-    final padX = (cropW * 0.05).round();
-    final padY = (cropH * 0.05).round();
-    final cx = math.max(0, minX - padX);
-    final cy = math.max(0, minY - padY);
-    final cw = math.min(w - cx, cropW + padX * 2);
-    final ch = math.min(h - cy, cropH + padY * 2);
-
-    if (cw < 10 || ch < 10) return cleaned;
-
-    var cropped = img.copyCrop(cleaned, x: cx, y: cy, width: cw, height: ch);
-
-    // Step 4: Auto-contrast normalization
+    // Step 5: Auto-contrast
     cropped = img.normalize(cropped, min: 0, max: 255);
 
     return cropped;
