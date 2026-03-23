@@ -15,3 +15,6 @@ ml/output/*.keras
 # YOLO training data and runs
 ml/yolo/dataset/
 ml/yolo/runs/
+
+ml/training_data/
+ml/kaggle_mahjong/
