@@ -33,14 +33,13 @@ class _ScanScreenState extends State<ScanScreen> {
   _ScanPhase _phase = _ScanPhase.camera;
 
   // Captured image
-  img.Image? _capturedImage; // decoded for cropping
-  Uint8List? _displayBytes;  // rotated JPEG for display (matches _classifyFromGrid)
-  double _displayRotation = 0.0; // rotation baked into _displayBytes
+  Uint8List? _capturedBytes;
+  img.Image? _capturedImage;
 
-  // Image transform (user drags/pinches/rotates the image to align with fixed grid)
+  // Image transform
   Offset _imageOffset = Offset.zero;
   double _imageScale = 1.0;
-  double _imageRotation = 0.0; // radians
+  double _imageRotation = 0.0;
   double _lastScaleValue = 1.0;
   double _lastRotationValue = 0.0;
 
@@ -113,9 +112,8 @@ class _ScanScreenState extends State<ScanScreen> {
       if (decoded == null) throw Exception('画像のデコードに失敗');
 
       setState(() {
+        _capturedBytes = bytes;
         _capturedImage = decoded;
-        _displayBytes = bytes; // initially no rotation, use original
-        _displayRotation = 0.0;
         _phase = _ScanPhase.align;
         _imageOffset = Offset.zero;
         _imageScale = 1.0;
@@ -138,18 +136,37 @@ class _ScanScreenState extends State<ScanScreen> {
 
   // ── Phase 2: Align grid & classify ──
 
-  /// First finalize rotation, then crop from display image.
-  /// Uses the same image as displayed (_displayBytes) so no coordinate mismatch.
+  /// Map a screen point to original image pixel coordinates.
+  /// Accounts for offset, scale, and rotation (around image center).
+  Offset _screenToImagePixel(double screenX, double screenY,
+      double imgCenterX, double imgCenterY,
+      double origW, double origH, double scaledW, double scaledH) {
+    // 1. Translate to image center
+    final dx = screenX - imgCenterX;
+    final dy = screenY - imgCenterY;
+    // 2. Inverse rotate
+    final cosA = math.cos(-_imageRotation);
+    final sinA = math.sin(-_imageRotation);
+    final rx = dx * cosA - dy * sinA;
+    final ry = dx * sinA + dy * cosA;
+    // 3. Scale from display to image pixels
+    // then scaled by _imageScale. So pixel = (display_offset / _imageScale) * (origW / baseW) + origW/2
+    // But baseW/baseH = scaledW/_imageScale and scaledH/_imageScale
+    final baseW = scaledW / _imageScale;
+    final baseH = scaledH / _imageScale;
+    final imgX = (rx / _imageScale + baseW / 2) * (origW / baseW);
+    final imgY = (ry / _imageScale + baseH / 2) * (origH / baseH);
+    return Offset(imgX, imgY);
+  }
+
   Future<void> _classifyFromGrid(
       Rect gridScreenRect, double imgLeft, double imgTop,
-      double scaledW, double scaledH, Size viewSize) async {
-    if (_capturedImage == null || !_classifier.isReady) {
+      double scaledW, double scaledH) async {
+    final srcImage = _capturedImage;
+    if (srcImage == null || !_classifier.isReady) {
       setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
       return;
     }
-
-    // Finalize any pending rotation
-    _rebuildDisplayBytes();
 
     setState(() {
       for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; }
@@ -158,37 +175,39 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
     });
 
-    // Decode the exact same image that's displayed
-    final displayImage = img.decodeImage(_displayBytes!);
-    if (displayImage == null) {
-      setState(() => _errorMessage = '画像デコードエラー');
-      return;
-    }
-
-    // The display image is shown at (imgLeft, imgTop) with size (scaledW x scaledH)
-    // via BoxFit.fill in a Positioned widget.
-    // Scale factor from display pixels to image pixels:
-    final scaleX = displayImage.width / scaledW;
-    final scaleY = displayImage.height / scaledH;
+    // Image center in screen coordinates
+    final imgCenterX = imgLeft + scaledW / 2;
+    final imgCenterY = imgTop + scaledH / 2;
+    final origW = srcImage.width.toDouble();
+    final origH = srcImage.height.toDouble();
 
     final slotW = gridScreenRect.width / 14;
     final padX = slotW * 0.1;
     final padY = gridScreenRect.height * 0.1;
 
     for (int i = 0; i < 14; i++) {
-      // Grid slot in screen coordinates
-      final screenX = gridScreenRect.left + i * slotW - padX;
-      final screenY = gridScreenRect.top - padY;
-      final screenW = slotW + padX * 2;
-      final screenH = gridScreenRect.height + padY * 2;
+      // Grid slot corners in screen space
+      final slotLeft = gridScreenRect.left + i * slotW - padX;
+      final slotTop = gridScreenRect.top - padY;
+      final slotRight = slotLeft + slotW + padX * 2;
+      final slotBottom = slotTop + gridScreenRect.height + padY * 2;
 
-      // Convert to image pixel coordinates (relative to image's displayed position)
-      final cropX = ((screenX - imgLeft) * scaleX).round().clamp(0, displayImage.width - 1);
-      final cropY = ((screenY - imgTop) * scaleY).round().clamp(0, displayImage.height - 1);
-      final cropW = (screenW * scaleX).round().clamp(1, displayImage.width - cropX);
-      final cropH = (screenH * scaleY).round().clamp(1, displayImage.height - cropY);
+      // Map all 4 corners to image pixels
+      final tl = _screenToImagePixel(slotLeft, slotTop, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
+      final tr = _screenToImagePixel(slotRight, slotTop, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
+      final bl = _screenToImagePixel(slotLeft, slotBottom, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
+      final br = _screenToImagePixel(slotRight, slotBottom, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
 
-      final cropped = img.copyCrop(displayImage, x: cropX, y: cropY, width: cropW, height: cropH);
+      // Bounding box in image pixels
+      final minX = [tl.dx, tr.dx, bl.dx, br.dx].reduce(math.min).round().clamp(0, srcImage.width - 1);
+      final minY = [tl.dy, tr.dy, bl.dy, br.dy].reduce(math.min).round().clamp(0, srcImage.height - 1);
+      final maxX = [tl.dx, tr.dx, bl.dx, br.dx].reduce(math.max).round().clamp(0, srcImage.width - 1);
+      final maxY = [tl.dy, tr.dy, bl.dy, br.dy].reduce(math.max).round().clamp(0, srcImage.height - 1);
+
+      final cropW = (maxX - minX).clamp(1, srcImage.width - minX);
+      final cropH = (maxY - minY).clamp(1, srcImage.height - minY);
+
+      final cropped = img.copyCrop(srcImage, x: minX, y: minY, width: cropW, height: cropH);
       _croppedImages[i] = cropped;
 
       final idx = i;
@@ -243,8 +262,8 @@ class _ScanScreenState extends State<ScanScreen> {
   void _backToCamera() {
     setState(() {
       _phase = _ScanPhase.camera;
+      _capturedBytes = null;
       _capturedImage = null;
-      _displayBytes = null;
       for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = false; _croppedImages[i] = null; }
       _scoreResult = null;
       _isNotWinning = false;
@@ -252,20 +271,6 @@ class _ScanScreenState extends State<ScanScreen> {
       _isSendingTraining = false;
       _trainingDataSent = false;
     });
-  }
-
-  void _rebuildDisplayBytes() {
-    if (_capturedImage == null) return;
-    if ((_displayRotation - _imageRotation).abs() < 0.01 && _displayBytes != null) return;
-
-    var preview = img.Image.from(_capturedImage!);
-    if (_imageRotation.abs() > 0.01) {
-      final degrees = _imageRotation * 180 / math.pi;
-      preview = img.copyRotate(preview, angle: -degrees);
-    }
-    _displayBytes = Uint8List.fromList(img.encodeJpg(preview, quality: 92));
-    _displayRotation = _imageRotation;
-    if (mounted) setState(() {});
   }
 
   bool get _allTilesReady => _tiles.every((t) => t != null);
@@ -398,12 +403,10 @@ class _ScanScreenState extends State<ScanScreen> {
             final gridTop = (viewH - slotH) / 2;
             final gridRect = Rect.fromLTWH(gridLeft, gridTop, gridTotalW, slotH);
 
-            // Use the BAKED rotation (_displayRotation) for layout sizing.
-            // Live rotation delta is handled by Transform.rotate only.
             final srcW = _capturedImage!.width.toDouble();
             final srcH = _capturedImage!.height.toDouble();
-            final cosA = math.cos(_displayRotation).abs();
-            final sinA = math.sin(_displayRotation).abs();
+            final cosA = math.cos(_imageRotation).abs();
+            final sinA = math.sin(_imageRotation).abs();
             final rotW = srcW * cosA + srcH * sinA;
             final rotH = srcW * sinA + srcH * cosA;
             final rotAspect = rotW / rotH;
@@ -426,17 +429,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
             return Stack(
               children: [
-                // Image: baked rotation + live Transform.rotate for gesture delta
+                // Image with Transform.rotate for display
                 Positioned(
                   left: imgLeft, top: imgTop,
                   width: scaledW, height: scaledH,
-                  child: _displayBytes != null
-                      ? Transform.rotate(
-                          // Show live rotation delta on top of baked rotation
-                          angle: _imageRotation - _displayRotation,
-                          child: Image.memory(_displayBytes!, fit: BoxFit.fill, gaplessPlayback: true),
-                        )
-                      : const SizedBox(),
+                  child: Transform.rotate(
+                    angle: _imageRotation,
+                    child: Image.memory(_capturedBytes!, fit: BoxFit.cover, gaplessPlayback: true),
+                  ),
                 ),
 
                 // Fixed overlay with grid cutouts
@@ -463,7 +463,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         }
                       });
                     },
-                    onScaleEnd: (_) => _rebuildDisplayBytes(),
+                    onScaleEnd: (_) {},
                   ),
                 ),
 
@@ -497,10 +497,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 Positioned(
                   top: 12, right: 12,
                   child: IconButton(
-                    onPressed: () {
-                      setState(() => _imageRotation += math.pi / 2);
-                      _rebuildDisplayBytes();
-                    },
+                    onPressed: () => setState(() => _imageRotation += math.pi / 2),
                     icon: const Icon(Icons.rotate_right, color: Colors.white70, size: 28),
                     tooltip: '90°回転',
                     style: IconButton.styleFrom(
@@ -532,8 +529,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           flex: 2,
                           child: ElevatedButton.icon(
                             onPressed: () => _classifyFromGrid(
-                              gridRect, imgLeft, imgTop,
-                              scaledW, scaledH, Size(viewW, viewH),
+                              gridRect, imgLeft, imgTop, scaledW, scaledH,
                             ),
                             icon: const Icon(Icons.search, size: 20),
                             label: const Text('識別開始'),
