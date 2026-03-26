@@ -35,7 +35,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // Captured image
   img.Image? _capturedImage; // decoded for cropping
   Uint8List? _displayBytes;  // rotated JPEG for display (matches _classifyFromGrid)
-  double _displayRotation = double.nan;
+  double _displayRotation = 0.0; // rotation baked into _displayBytes
 
   // Image transform (user drags/pinches/rotates the image to align with fixed grid)
   Offset _imageOffset = Offset.zero;
@@ -431,12 +431,16 @@ class _ScanScreenState extends State<ScanScreen> {
 
             return Stack(
               children: [
-                // Movable/scalable image (rotation baked into _displayBytes)
+                // Image: baked rotation + live Transform.rotate for gesture delta
                 Positioned(
                   left: imgLeft, top: imgTop,
                   width: scaledW, height: scaledH,
                   child: _displayBytes != null
-                      ? Image.memory(_displayBytes!, fit: BoxFit.fill, gaplessPlayback: true)
+                      ? Transform.rotate(
+                          // Show live rotation delta on top of baked rotation
+                          angle: _imageRotation - _displayRotation,
+                          child: Image.memory(_displayBytes!, fit: BoxFit.fill, gaplessPlayback: true),
+                        )
                       : const SizedBox(),
                 ),
 
