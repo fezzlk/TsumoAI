@@ -33,7 +33,6 @@ class _ScanScreenState extends State<ScanScreen> {
   _ScanPhase _phase = _ScanPhase.camera;
 
   // Captured image
-  Uint8List? _capturedBytes;
   img.Image? _capturedImage;
 
   // Image transform (user drags/pinches/rotates the image to align with fixed grid)
@@ -112,7 +111,6 @@ class _ScanScreenState extends State<ScanScreen> {
       if (decoded == null) throw Exception('画像のデコードに失敗');
 
       setState(() {
-        _capturedBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: 90));
         _capturedImage = decoded;
         _phase = _ScanPhase.align;
         _imageOffset = Offset.zero;
@@ -120,6 +118,7 @@ class _ScanScreenState extends State<ScanScreen> {
         _imageRotation = 0.0;
         _lastScaleValue = 1.0;
         _lastRotationValue = 0.0;
+        _rotatedPreviewBytes = null;
         _errorMessage = null;
         for (int i = 0; i < 14; i++) {
           _tiles[i] = null;
@@ -162,6 +161,10 @@ class _ScanScreenState extends State<ScanScreen> {
     }
 
     // 2. Scale to the displayed size
+    // The UI uses OverflowBox + Transform.rotate on the ORIGINAL image,
+    // where the Positioned box is the rotated bounding box size.
+    // But img.copyRotate already produces the rotated bounding box,
+    // so we resize to fill that box.
     rendered = img.copyResize(rendered,
         width: scaledW.round().clamp(1, 4000),
         height: scaledH.round().clamp(1, 4000));
@@ -170,6 +173,9 @@ class _ScanScreenState extends State<ScanScreen> {
     final canvasW = viewSize.width.round();
     final canvasH = viewSize.height.round();
     final canvas = img.Image(width: canvasW, height: canvasH);
+
+    debugPrint('DEBUG classify: canvas=${canvasW}x$canvasH rendered=${rendered.width}x${rendered.height} pos=($imgLeft,$imgTop) grid=$gridScreenRect');
+
     img.compositeImage(canvas, rendered,
         dstX: imgLeft.round(), dstY: imgTop.round());
 
@@ -239,7 +245,6 @@ class _ScanScreenState extends State<ScanScreen> {
   void _backToCamera() {
     setState(() {
       _phase = _ScanPhase.camera;
-      _capturedBytes = null;
       _capturedImage = null;
       for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = false; _croppedImages[i] = null; }
       _scoreResult = null;
@@ -248,6 +253,34 @@ class _ScanScreenState extends State<ScanScreen> {
       _isSendingTraining = false;
       _trainingDataSent = false;
     });
+  }
+
+  // Cache the rotated preview so we don't rebuild every frame
+  Uint8List? _rotatedPreviewBytes;
+  double _rotatedPreviewRotation = double.nan;
+
+  Widget _buildRotatedImage() {
+    // Rebuild preview only when rotation changes significantly
+    if (_rotatedPreviewBytes == null ||
+        (_rotatedPreviewRotation - _imageRotation).abs() > 0.01) {
+      var preview = img.Image.from(_capturedImage!);
+      if (_imageRotation.abs() > 0.01) {
+        final degrees = _imageRotation * 180 / math.pi;
+        preview = img.copyRotate(preview, angle: -degrees);
+      }
+      // Downscale for preview performance
+      final maxDim = 800;
+      if (preview.width > maxDim || preview.height > maxDim) {
+        if (preview.width > preview.height) {
+          preview = img.copyResize(preview, width: maxDim);
+        } else {
+          preview = img.copyResize(preview, height: maxDim);
+        }
+      }
+      _rotatedPreviewBytes = Uint8List.fromList(img.encodeJpg(preview, quality: 80));
+      _rotatedPreviewRotation = _imageRotation;
+    }
+    return Image.memory(_rotatedPreviewBytes!, fit: BoxFit.fill, gaplessPlayback: true);
   }
 
   bool get _allTilesReady => _tiles.every((t) => t != null);
@@ -409,22 +442,11 @@ class _ScanScreenState extends State<ScanScreen> {
             return Stack(
               children: [
                 // Movable/scalable/rotatable image
-                // Use Transform for rotation around center of the scaled area
+                // Render pre-rotated image to match _classifyFromGrid exactly
                 Positioned(
                   left: imgLeft, top: imgTop,
                   width: scaledW, height: scaledH,
-                  child: OverflowBox(
-                    maxWidth: double.infinity,
-                    maxHeight: double.infinity,
-                    child: Transform.rotate(
-                      angle: _imageRotation,
-                      child: SizedBox(
-                        width: (srcW / rotW) * scaledW,
-                        height: (srcH / rotH) * scaledH,
-                        child: Image.memory(_capturedBytes!, fit: BoxFit.fill),
-                      ),
-                    ),
-                  ),
+                  child: _buildRotatedImage(),
                 ),
 
                 // Fixed overlay with grid cutouts
