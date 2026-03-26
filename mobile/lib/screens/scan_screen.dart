@@ -138,15 +138,18 @@ class _ScanScreenState extends State<ScanScreen> {
 
   // ── Phase 2: Align grid & classify ──
 
-  /// Render exactly what the user sees into a pixel buffer, then crop
-  /// each grid slot from it. No coordinate transformation needed.
-  Future<void> _classifyFromGrid(Size viewSize, Rect gridScreenRect,
-      double imgLeft, double imgTop, double scaledW, double scaledH) async {
-    final srcImage = _capturedImage;
-    if (srcImage == null || !_classifier.isReady) {
+  /// First finalize rotation, then crop from display image.
+  /// Uses the same image as displayed (_displayBytes) so no coordinate mismatch.
+  Future<void> _classifyFromGrid(
+      Rect gridScreenRect, double imgLeft, double imgTop,
+      double scaledW, double scaledH, Size viewSize) async {
+    if (_capturedImage == null || !_classifier.isReady) {
       setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
       return;
     }
+
+    // Finalize any pending rotation
+    _rebuildDisplayBytes();
 
     setState(() {
       for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; }
@@ -155,45 +158,37 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
     });
 
-    // Render the image as the user sees it:
-    // 1. Rotate the source image
-    var rendered = img.Image.from(srcImage);
-    if (_imageRotation.abs() > 0.01) {
-      final degrees = _imageRotation * 180 / math.pi;
-      rendered = img.copyRotate(rendered, angle: -degrees);
+    // Decode the exact same image that's displayed
+    final displayImage = img.decodeImage(_displayBytes!);
+    if (displayImage == null) {
+      setState(() => _errorMessage = '画像デコードエラー');
+      return;
     }
 
-    // 2. Scale to the displayed size
-    // The UI uses OverflowBox + Transform.rotate on the ORIGINAL image,
-    // where the Positioned box is the rotated bounding box size.
-    // But img.copyRotate already produces the rotated bounding box,
-    // so we resize to fill that box.
-    rendered = img.copyResize(rendered,
-        width: scaledW.round().clamp(1, 4000),
-        height: scaledH.round().clamp(1, 4000));
+    // The display image is shown at (imgLeft, imgTop) with size (scaledW x scaledH)
+    // via BoxFit.fill in a Positioned widget.
+    // Scale factor from display pixels to image pixels:
+    final scaleX = displayImage.width / scaledW;
+    final scaleY = displayImage.height / scaledH;
 
-    // 3. Place on a canvas matching the view size
-    final canvasW = viewSize.width.round();
-    final canvasH = viewSize.height.round();
-    final canvas = img.Image(width: canvasW, height: canvasH);
-
-    debugPrint('DEBUG classify: canvas=${canvasW}x$canvasH rendered=${rendered.width}x${rendered.height} pos=($imgLeft,$imgTop) grid=$gridScreenRect');
-
-    img.compositeImage(canvas, rendered,
-        dstX: imgLeft.round(), dstY: imgTop.round());
-
-    // 4. Crop each grid slot directly from the canvas (screen coordinates)
     final slotW = gridScreenRect.width / 14;
     final padX = slotW * 0.1;
     final padY = gridScreenRect.height * 0.1;
 
     for (int i = 0; i < 14; i++) {
-      final sx = (gridScreenRect.left + i * slotW - padX).round().clamp(0, canvasW - 1);
-      final sy = (gridScreenRect.top - padY).round().clamp(0, canvasH - 1);
-      final sw = (slotW + padX * 2).round().clamp(1, canvasW - sx);
-      final sh = (gridScreenRect.height + padY * 2).round().clamp(1, canvasH - sy);
+      // Grid slot in screen coordinates
+      final screenX = gridScreenRect.left + i * slotW - padX;
+      final screenY = gridScreenRect.top - padY;
+      final screenW = slotW + padX * 2;
+      final screenH = gridScreenRect.height + padY * 2;
 
-      final cropped = img.copyCrop(canvas, x: sx, y: sy, width: sw, height: sh);
+      // Convert to image pixel coordinates (relative to image's displayed position)
+      final cropX = ((screenX - imgLeft) * scaleX).round().clamp(0, displayImage.width - 1);
+      final cropY = ((screenY - imgTop) * scaleY).round().clamp(0, displayImage.height - 1);
+      final cropW = (screenW * scaleX).round().clamp(1, displayImage.width - cropX);
+      final cropH = (screenH * scaleY).round().clamp(1, displayImage.height - cropY);
+
+      final cropped = img.copyCrop(displayImage, x: cropX, y: cropY, width: cropW, height: cropH);
       _croppedImages[i] = cropped;
 
       final idx = i;
@@ -537,8 +532,8 @@ class _ScanScreenState extends State<ScanScreen> {
                           flex: 2,
                           child: ElevatedButton.icon(
                             onPressed: () => _classifyFromGrid(
-                              Size(viewW, viewH), gridRect,
-                              imgLeft, imgTop, scaledW, scaledH,
+                              gridRect, imgLeft, imgTop,
+                              scaledW, scaledH, Size(viewW, viewH),
                             ),
                             icon: const Icon(Icons.search, size: 20),
                             label: const Text('識別開始'),
