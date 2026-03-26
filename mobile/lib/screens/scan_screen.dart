@@ -403,23 +403,19 @@ class _ScanScreenState extends State<ScanScreen> {
             final gridTop = (viewH - slotH) / 2;
             final gridRect = Rect.fromLTWH(gridLeft, gridTop, gridTotalW, slotH);
 
+            // Box size based on ORIGINAL image aspect (no rotation distortion)
             final srcW = _capturedImage!.width.toDouble();
             final srcH = _capturedImage!.height.toDouble();
-            final cosA = math.cos(_imageRotation).abs();
-            final sinA = math.sin(_imageRotation).abs();
-            final rotW = srcW * cosA + srcH * sinA;
-            final rotH = srcW * sinA + srcH * cosA;
-            final rotAspect = rotW / rotH;
+            final imgAspect = srcW / srcH;
             final viewAspect = viewW / viewH;
 
-            // Base size for the rotated image (contain)
             late final double baseW, baseH;
-            if (rotAspect > viewAspect) {
+            if (imgAspect > viewAspect) {
               baseW = viewW;
-              baseH = viewW / rotAspect;
+              baseH = viewW / imgAspect;
             } else {
               baseH = viewH;
-              baseW = viewH * rotAspect;
+              baseW = viewH * imgAspect;
             }
 
             final scaledW = baseW * _imageScale;
@@ -428,6 +424,7 @@ class _ScanScreenState extends State<ScanScreen> {
             final imgTop = (viewH - scaledH) / 2 + _imageOffset.dy;
 
             return Stack(
+              clipBehavior: Clip.none,
               children: [
                 // Image with Transform.rotate for display
                 Positioned(
@@ -435,7 +432,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   width: scaledW, height: scaledH,
                   child: Transform.rotate(
                     angle: _imageRotation,
-                    child: Image.memory(_capturedBytes!, fit: BoxFit.cover, gaplessPlayback: true),
+                    child: Image.memory(_capturedBytes!, fit: BoxFit.fill, gaplessPlayback: true),
                   ),
                 ),
 
