@@ -136,9 +136,11 @@ class _ScanScreenState extends State<ScanScreen> {
 
   // ── Phase 2: Align grid & classify ──
 
-  Future<void> _classifyFromGrid(Size imageDisplaySize, Rect gridRect) async {
-    var fullImage = _capturedImage;
-    if (fullImage == null || !_classifier.isReady) {
+  /// Build the "as displayed" image: apply rotation, then render at the
+  /// base display size so grid coordinates map 1:1.
+  Future<void> _classifyFromGrid(Size baseDisplaySize, Rect gridRect) async {
+    final srcImage = _capturedImage;
+    if (srcImage == null || !_classifier.isReady) {
       setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
       return;
     }
@@ -150,36 +152,20 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
     });
 
-    // Apply rotation to image if user rotated it
+    // Step 1: Apply rotation to source image
+    var transformed = srcImage;
     if (_imageRotation.abs() > 0.01) {
       final degrees = _imageRotation * 180 / math.pi;
-      fullImage = img.copyRotate(fullImage, angle: -degrees);
+      transformed = img.copyRotate(transformed, angle: -degrees);
     }
 
-    // After rotation, image dimensions may have changed.
-    // Recalculate display size based on the rotated image to maintain correct mapping.
-    final rotatedAspect = fullImage.width / fullImage.height;
-    final origAspect = imageDisplaySize.width / imageDisplaySize.height;
-    Size effectiveDisplaySize;
-    if ((rotatedAspect - origAspect).abs() > 0.1) {
-      // Aspect changed significantly (e.g. 90° rotation)
-      // Recalculate what the display size would be for the rotated image
-      final viewW = imageDisplaySize.width;
-      final viewH = imageDisplaySize.height;
-      if (rotatedAspect > viewW / viewH) {
-        effectiveDisplaySize = Size(viewW, viewW / rotatedAspect);
-      } else {
-        effectiveDisplaySize = Size(viewH * rotatedAspect, viewH);
-      }
-    } else {
-      effectiveDisplaySize = imageDisplaySize;
-    }
-
-    final scaleX = fullImage.width / effectiveDisplaySize.width;
-    final scaleY = fullImage.height / effectiveDisplaySize.height;
+    // Step 2: Scale factor from the transformed image to the base display size.
+    // The base display size is what the image would occupy at scale=1.0
+    // with BoxFit.contain. The grid coordinates are in this space.
+    final scaleX = transformed.width / baseDisplaySize.width;
+    final scaleY = transformed.height / baseDisplaySize.height;
 
     final slotW = gridRect.width / 14;
-    // Add 15% padding for better capture
     final padX = slotW * 0.15;
     final padY = gridRect.height * 0.15;
 
@@ -187,12 +173,12 @@ class _ScanScreenState extends State<ScanScreen> {
       final slotLeft = gridRect.left + i * slotW;
       final slotTop = gridRect.top;
 
-      final cropX = ((slotLeft - padX) * scaleX).round().clamp(0, fullImage.width - 1);
-      final cropY = ((slotTop - padY) * scaleY).round().clamp(0, fullImage.height - 1);
-      final cropW = ((slotW + padX * 2) * scaleX).round().clamp(1, fullImage.width - cropX);
-      final cropH = ((gridRect.height + padY * 2) * scaleY).round().clamp(1, fullImage.height - cropY);
+      final cropX = ((slotLeft - padX) * scaleX).round().clamp(0, transformed.width - 1);
+      final cropY = ((slotTop - padY) * scaleY).round().clamp(0, transformed.height - 1);
+      final cropW = ((slotW + padX * 2) * scaleX).round().clamp(1, transformed.width - cropX);
+      final cropH = ((gridRect.height + padY * 2) * scaleY).round().clamp(1, transformed.height - cropY);
 
-      final cropped = img.copyCrop(fullImage, x: cropX, y: cropY, width: cropW, height: cropH);
+      final cropped = img.copyCrop(transformed, x: cropX, y: cropY, width: cropW, height: cropH);
       _croppedImages[i] = cropped;
 
       final idx = i;
@@ -388,20 +374,25 @@ class _ScanScreenState extends State<ScanScreen> {
             final gridTop = (viewH - slotH) / 2;
             final gridRect = Rect.fromLTWH(gridLeft, gridTop, gridTotalW, slotH);
 
-            // Image: user moves/scales to align with fixed grid
-            final imgW = _capturedImage!.width.toDouble();
-            final imgH = _capturedImage!.height.toDouble();
-            final imgAspect = imgW / imgH;
+            // Compute rotated image aspect ratio for correct base sizing
+            final srcW = _capturedImage!.width.toDouble();
+            final srcH = _capturedImage!.height.toDouble();
+            // After rotation, effective dimensions change
+            final cosA = math.cos(_imageRotation).abs();
+            final sinA = math.sin(_imageRotation).abs();
+            final rotW = srcW * cosA + srcH * sinA;
+            final rotH = srcW * sinA + srcH * cosA;
+            final rotAspect = rotW / rotH;
             final viewAspect = viewW / viewH;
 
-            // Base size (contain)
+            // Base size for the rotated image (contain)
             late final double baseW, baseH;
-            if (imgAspect > viewAspect) {
+            if (rotAspect > viewAspect) {
               baseW = viewW;
-              baseH = viewW / imgAspect;
+              baseH = viewW / rotAspect;
             } else {
               baseH = viewH;
-              baseW = viewH * imgAspect;
+              baseW = viewH * rotAspect;
             }
 
             final scaledW = baseW * _imageScale;
@@ -409,12 +400,13 @@ class _ScanScreenState extends State<ScanScreen> {
             final imgLeft = (viewW - scaledW) / 2 + _imageOffset.dx;
             final imgTop = (viewH - scaledH) / 2 + _imageOffset.dy;
 
-            // For cropping: grid position relative to displayed image
-            final gridInImgX = gridLeft - imgLeft;
-            final gridInImgY = gridTop - imgTop;
+            // Grid position relative to displayed (rotated+scaled) image,
+            // converted to base display coordinates (scale=1.0)
+            final gridInImgX = (gridLeft - imgLeft) / _imageScale;
+            final gridInImgY = (gridTop - imgTop) / _imageScale;
             final gridRectInImage = Rect.fromLTWH(
-              gridInImgX / _imageScale,
-              gridInImgY / _imageScale,
+              gridInImgX,
+              gridInImgY,
               gridTotalW / _imageScale,
               slotH / _imageScale,
             );
@@ -423,12 +415,21 @@ class _ScanScreenState extends State<ScanScreen> {
             return Stack(
               children: [
                 // Movable/scalable/rotatable image
+                // Use Transform for rotation around center of the scaled area
                 Positioned(
                   left: imgLeft, top: imgTop,
                   width: scaledW, height: scaledH,
-                  child: Transform.rotate(
-                    angle: _imageRotation,
-                    child: Image.memory(_capturedBytes!, fit: BoxFit.fill),
+                  child: OverflowBox(
+                    maxWidth: double.infinity,
+                    maxHeight: double.infinity,
+                    child: Transform.rotate(
+                      angle: _imageRotation,
+                      child: SizedBox(
+                        width: (srcW / rotW) * scaledW,
+                        height: (srcH / rotH) * scaledH,
+                        child: Image.memory(_capturedBytes!, fit: BoxFit.fill),
+                      ),
+                    ),
                   ),
                 ),
 
