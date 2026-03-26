@@ -1,8 +1,16 @@
-"""Training data store: GCS for user uploads + local files for public datasets."""
+"""Training data store: all data (user uploads + public datasets) served from GCS.
+
+GCS layout:
+  training-data/images/<source>/<tile_code>/<file>.jpg   (public datasets)
+  training-data/images/<date_path>/<id>.jpg              (user uploads)
+  training-data/meta/<source>/<tile_code>/<file>.json     (public datasets)
+  training-data/meta/<date_path>/<id>.json               (user uploads)
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -11,7 +19,9 @@ from google.cloud import storage
 
 from app.config import settings
 
-# Local training data directory (converted public datasets)
+logger = logging.getLogger(__name__)
+
+# Local fallback (development only)
 LOCAL_DATA_DIR = Path(__file__).resolve().parent.parent / "ml" / "training_data"
 
 
@@ -20,7 +30,7 @@ class TrainingDataStore:
         self.bucket_name = settings.gcs_bucket_name
         self.prefix = "training-data"
         self._client: storage.Client | None = None
-        self._local_cache: list[dict] | None = None
+        self._gcs_meta_cache: list[dict] | None = None
 
     def _get_client(self) -> storage.Client:
         if self._client is None:
@@ -32,7 +42,7 @@ class TrainingDataStore:
             raise ValueError("GCS bucket is not configured")
         return self._get_client().bucket(self.bucket_name)
 
-    # ── Upload (GCS only) ──
+    # ── Upload (GCS, user data) ──
 
     def upload(self, image_bytes: bytes, tile_code: str, source: str = "user") -> dict:
         now = datetime.now(timezone.utc)
@@ -59,86 +69,92 @@ class TrainingDataStore:
         )
         return {"id": entry_id, "image_path": image_name}
 
-    # ── List (GCS + local) ──
+    # ── List (GCS primary, local fallback) ──
 
     def list_entries(self, tile_code: str | None = None, source: str | None = None,
                      limit: int = 500) -> list[dict]:
         entries: list[dict] = []
 
-        # Local datasets
-        if source is None or source != "user":
+        try:
+            entries.extend(self._list_gcs(tile_code=tile_code, source=source))
+        except Exception as exc:
+            logger.warning("GCS list failed, falling back to local: %s", exc)
             entries.extend(self._list_local(tile_code=tile_code, source=source))
-
-        # GCS user uploads
-        if source is None or source == "user":
-            try:
-                entries.extend(self._list_gcs(tile_code=tile_code, source=source))
-            except Exception:
-                pass  # GCS not configured is ok
 
         entries.sort(key=lambda e: e.get("tile_code", ""))
         return entries[:limit]
 
-    def _list_local(self, tile_code: str | None = None, source: str | None = None) -> list[dict]:
-        """List entries from local ml/training_data/ directory."""
-        if self._local_cache is not None:
-            entries = self._local_cache
-        else:
-            entries = []
-            if LOCAL_DATA_DIR.exists():
-                for source_dir in sorted(LOCAL_DATA_DIR.iterdir()):
-                    if not source_dir.is_dir():
-                        continue
-                    src_name = source_dir.name
-                    for tile_dir in sorted(source_dir.iterdir()):
-                        if not tile_dir.is_dir():
-                            continue
-                        tc = tile_dir.name
-                        for img_file in sorted(tile_dir.iterdir()):
-                            if img_file.suffix.lower() in (".jpg", ".jpeg", ".png"):
-                                entry_id = f"local_{src_name}_{tc}_{img_file.stem}"
-                                entries.append({
-                                    "id": entry_id,
-                                    "tile_code": tc,
-                                    "source": src_name,
-                                    "image_path": str(img_file),
-                                    "created_at": "",
-                                })
-            self._local_cache = entries
+    def _list_gcs(self, tile_code: str | None = None, source: str | None = None) -> list[dict]:
+        if self._gcs_meta_cache is None:
+            bucket = self._bucket()
+            blobs = bucket.list_blobs(prefix=f"{self.prefix}/meta/")
+            cache: list[dict] = []
+            for blob in blobs:
+                if not blob.name.endswith(".json"):
+                    continue
+                try:
+                    meta = json.loads(blob.download_as_text())
+                    cache.append(meta)
+                except Exception:
+                    continue
+            self._gcs_meta_cache = cache
 
-        result = entries
+        result = self._gcs_meta_cache
         if tile_code:
-            result = [e for e in result if e["tile_code"] == tile_code]
+            result = [e for e in result if e.get("tile_code") == tile_code]
         if source:
-            result = [e for e in result if e["source"] == source]
+            result = [e for e in result if e.get("source") == source]
         return result
 
-    def _list_gcs(self, tile_code: str | None = None, source: str | None = None) -> list[dict]:
-        bucket = self._bucket()
-        blobs = bucket.list_blobs(prefix=f"{self.prefix}/meta/")
-        entries = []
-        for blob in blobs:
-            if not blob.name.endswith(".json"):
+    def _list_local(self, tile_code: str | None = None, source: str | None = None) -> list[dict]:
+        """Fallback: list from local ml/training_data/ (dev only)."""
+        entries: list[dict] = []
+        if not LOCAL_DATA_DIR.exists():
+            return entries
+        for source_dir in sorted(LOCAL_DATA_DIR.iterdir()):
+            if not source_dir.is_dir():
                 continue
-            try:
-                meta = json.loads(blob.download_as_text())
-            except Exception:
-                continue
-            if tile_code and meta.get("tile_code") != tile_code:
-                continue
-            if source and meta.get("source") != source:
-                continue
-            entries.append(meta)
+            src_name = source_dir.name
+            for tile_dir in sorted(source_dir.iterdir()):
+                if not tile_dir.is_dir():
+                    continue
+                tc = tile_dir.name
+                for img_file in sorted(tile_dir.iterdir()):
+                    if img_file.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                        entry_id = f"local_{src_name}_{tc}_{img_file.stem}"
+                        entries.append({
+                            "id": entry_id,
+                            "tile_code": tc,
+                            "source": src_name,
+                            "image_path": str(img_file),
+                            "created_at": "",
+                        })
+        if tile_code:
+            entries = [e for e in entries if e["tile_code"] == tile_code]
+        if source:
+            entries = [e for e in entries if e["source"] == source]
         return entries
 
     # ── Get image ──
 
     def get_image(self, entry_id: str) -> bytes | None:
-        # Local file
+        # Local fallback (dev)
         if entry_id.startswith("local_"):
             return self._get_local_image(entry_id)
-        # GCS
+
+        # GCS — look up image_path from meta cache, or scan blobs
         try:
+            # Try cached meta first for efficient lookup
+            if self._gcs_meta_cache:
+                for meta in self._gcs_meta_cache:
+                    if meta.get("id") == entry_id:
+                        image_path = meta.get("image_path", "")
+                        if image_path:
+                            blob = self._bucket().blob(image_path)
+                            if blob.exists():
+                                return blob.download_as_bytes()
+
+            # Fallback: scan blobs
             bucket = self._bucket()
             blobs = list(bucket.list_blobs(prefix=f"{self.prefix}/images/"))
             for blob in blobs:
@@ -157,11 +173,13 @@ class TrainingDataStore:
                     return path.read_bytes()
         return None
 
-    # ── Delete (GCS only) ──
+    # ── Delete ──
 
     def delete_entry(self, entry_id: str) -> bool:
         if entry_id.startswith("local_"):
-            return False  # Local datasets are read-only
+            return False
+        if entry_id.startswith("pub_"):
+            return False  # Public datasets are read-only
         try:
             bucket = self._bucket()
             deleted = False
@@ -171,6 +189,8 @@ class TrainingDataStore:
                     if entry_id in blob.name:
                         blob.delete()
                         deleted = True
+            # Invalidate cache
+            self._gcs_meta_cache = None
             return deleted
         except Exception:
             return False

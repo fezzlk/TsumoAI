@@ -50,6 +50,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
   bool _isCapturing = false;
   bool _isScoring = false;
+  bool _isSendingTraining = false;
+  bool _trainingDataSent = false;
   ScoreResponse? _scoreResult;
   bool _isNotWinning = false;
   String? _errorMessage;
@@ -251,12 +253,15 @@ class _ScanScreenState extends State<ScanScreen> {
       _scoreResult = null;
       _isNotWinning = false;
       _errorMessage = null;
+      _isSendingTraining = false;
+      _trainingDataSent = false;
     });
   }
 
   bool get _allTilesReady => _tiles.every((t) => t != null);
 
   Future<void> _sendTrainingData() async {
+    if (_isSendingTraining || _trainingDataSent) return;
     final images = _croppedImages.whereType<img.Image>().toList();
     final tiles = _tiles.whereType<String>().toList();
     if (images.length != 14 || tiles.length != 14) {
@@ -264,16 +269,19 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
 
-    setState(() => _errorMessage = null);
+    setState(() { _isSendingTraining = true; _errorMessage = null; });
     try {
       final count = await _trainingClient.uploadBatch(images: images, tileCodes: tiles);
       if (mounted) {
+        setState(() { _trainingDataSent = true; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('$count枚の学習データを送信しました')),
         );
       }
     } catch (e) {
       setState(() => _errorMessage = '送信エラー: $e');
+    } finally {
+      if (mounted) setState(() => _isSendingTraining = false);
     }
   }
 
@@ -642,11 +650,17 @@ class _ScanScreenState extends State<ScanScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _sendTrainingData,
-                    icon: const Icon(Icons.school, size: 18),
-                    label: const Text('学習データとして送信'),
+                    onPressed: _isSendingTraining || _trainingDataSent ? null : _sendTrainingData,
+                    icon: _isSendingTraining
+                        ? const SizedBox(width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : Icon(_trainingDataSent ? Icons.check : Icons.school, size: 18),
+                    label: Text(_isSendingTraining ? '送信中...'
+                        : _trainingDataSent ? '送信済み' : '学習データとして送信'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange.withValues(alpha: 0.5),
+                      backgroundColor: _trainingDataSent
+                          ? Colors.grey.withValues(alpha: 0.3)
+                          : Colors.orange.withValues(alpha: 0.5),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
