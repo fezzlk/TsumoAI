@@ -33,7 +33,9 @@ class _ScanScreenState extends State<ScanScreen> {
   _ScanPhase _phase = _ScanPhase.camera;
 
   // Captured image
-  img.Image? _capturedImage;
+  img.Image? _capturedImage; // decoded for cropping
+  Uint8List? _displayBytes;  // rotated JPEG for display (matches _classifyFromGrid)
+  double _displayRotation = double.nan;
 
   // Image transform (user drags/pinches/rotates the image to align with fixed grid)
   Offset _imageOffset = Offset.zero;
@@ -112,13 +114,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
       setState(() {
         _capturedImage = decoded;
+        _displayBytes = bytes; // initially no rotation, use original
+        _displayRotation = 0.0;
         _phase = _ScanPhase.align;
         _imageOffset = Offset.zero;
         _imageScale = 1.0;
         _imageRotation = 0.0;
         _lastScaleValue = 1.0;
         _lastRotationValue = 0.0;
-        _rotatedPreviewBytes = null;
         _errorMessage = null;
         for (int i = 0; i < 14; i++) {
           _tiles[i] = null;
@@ -246,6 +249,7 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() {
       _phase = _ScanPhase.camera;
       _capturedImage = null;
+      _displayBytes = null;
       for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = false; _croppedImages[i] = null; }
       _scoreResult = null;
       _isNotWinning = false;
@@ -255,32 +259,18 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
-  // Cache the rotated preview so we don't rebuild every frame
-  Uint8List? _rotatedPreviewBytes;
-  double _rotatedPreviewRotation = double.nan;
+  void _rebuildDisplayBytes() {
+    if (_capturedImage == null) return;
+    if ((_displayRotation - _imageRotation).abs() < 0.01 && _displayBytes != null) return;
 
-  Widget _buildRotatedImage() {
-    // Rebuild preview only when rotation changes significantly
-    if (_rotatedPreviewBytes == null ||
-        (_rotatedPreviewRotation - _imageRotation).abs() > 0.01) {
-      var preview = img.Image.from(_capturedImage!);
-      if (_imageRotation.abs() > 0.01) {
-        final degrees = _imageRotation * 180 / math.pi;
-        preview = img.copyRotate(preview, angle: -degrees);
-      }
-      // Downscale for preview performance
-      final maxDim = 800;
-      if (preview.width > maxDim || preview.height > maxDim) {
-        if (preview.width > preview.height) {
-          preview = img.copyResize(preview, width: maxDim);
-        } else {
-          preview = img.copyResize(preview, height: maxDim);
-        }
-      }
-      _rotatedPreviewBytes = Uint8List.fromList(img.encodeJpg(preview, quality: 80));
-      _rotatedPreviewRotation = _imageRotation;
+    var preview = img.Image.from(_capturedImage!);
+    if (_imageRotation.abs() > 0.01) {
+      final degrees = _imageRotation * 180 / math.pi;
+      preview = img.copyRotate(preview, angle: -degrees);
     }
-    return Image.memory(_rotatedPreviewBytes!, fit: BoxFit.fill, gaplessPlayback: true);
+    _displayBytes = Uint8List.fromList(img.encodeJpg(preview, quality: 92));
+    _displayRotation = _imageRotation;
+    if (mounted) setState(() {});
   }
 
   bool get _allTilesReady => _tiles.every((t) => t != null);
@@ -441,12 +431,13 @@ class _ScanScreenState extends State<ScanScreen> {
 
             return Stack(
               children: [
-                // Movable/scalable/rotatable image
-                // Render pre-rotated image to match _classifyFromGrid exactly
+                // Movable/scalable image (rotation baked into _displayBytes)
                 Positioned(
                   left: imgLeft, top: imgTop,
                   width: scaledW, height: scaledH,
-                  child: _buildRotatedImage(),
+                  child: _displayBytes != null
+                      ? Image.memory(_displayBytes!, fit: BoxFit.fill, gaplessPlayback: true)
+                      : const SizedBox(),
                 ),
 
                 // Fixed overlay with grid cutouts
@@ -473,6 +464,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         }
                       });
                     },
+                    onScaleEnd: (_) => _rebuildDisplayBytes(),
                   ),
                 ),
 
@@ -506,9 +498,10 @@ class _ScanScreenState extends State<ScanScreen> {
                 Positioned(
                   top: 12, right: 12,
                   child: IconButton(
-                    onPressed: () => setState(() {
-                      _imageRotation += math.pi / 2;
-                    }),
+                    onPressed: () {
+                      setState(() => _imageRotation += math.pi / 2);
+                      _rebuildDisplayBytes();
+                    },
                     icon: const Icon(Icons.rotate_right, color: Colors.white70, size: 28),
                     tooltip: '90°回転',
                     style: IconButton.styleFrom(
