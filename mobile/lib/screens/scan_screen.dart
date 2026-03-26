@@ -403,12 +403,12 @@ class _ScanScreenState extends State<ScanScreen> {
             final gridTop = (viewH - slotH) / 2;
             final gridRect = Rect.fromLTWH(gridLeft, gridTop, gridTotalW, slotH);
 
-            // Compute rotated image aspect ratio for correct base sizing
+            // Use the BAKED rotation (_displayRotation) for layout sizing.
+            // Live rotation delta is handled by Transform.rotate only.
             final srcW = _capturedImage!.width.toDouble();
             final srcH = _capturedImage!.height.toDouble();
-            // After rotation, effective dimensions change
-            final cosA = math.cos(_imageRotation).abs();
-            final sinA = math.sin(_imageRotation).abs();
+            final cosA = math.cos(_displayRotation).abs();
+            final sinA = math.sin(_displayRotation).abs();
             final rotW = srcW * cosA + srcH * sinA;
             final rotH = srcW * sinA + srcH * cosA;
             final rotAspect = rotW / rotH;
