@@ -67,6 +67,13 @@ class TrainingDataStore:
             json.dumps(meta, ensure_ascii=False),
             content_type="application/json",
         )
+        # Update index
+        try:
+            index = self._load_index()
+            index.append(meta)
+            self._save_index(index)
+        except Exception as exc:
+            logger.warning("Failed to update index on upload: %s", exc)
         return {"id": entry_id, "image_path": image_name}
 
     # ── List (GCS primary, local fallback) ──
@@ -84,22 +91,52 @@ class TrainingDataStore:
         entries.sort(key=lambda e: e.get("tile_code", ""))
         return entries[:limit]
 
-    def _list_gcs(self, tile_code: str | None = None, source: str | None = None) -> list[dict]:
-        if self._gcs_meta_cache is None:
-            bucket = self._bucket()
-            blobs = bucket.list_blobs(prefix=f"{self.prefix}/meta/")
-            cache: list[dict] = []
-            for blob in blobs:
-                if not blob.name.endswith(".json"):
-                    continue
-                try:
-                    meta = json.loads(blob.download_as_text())
-                    cache.append(meta)
-                except Exception:
-                    continue
-            self._gcs_meta_cache = cache
+    def _index_blob_name(self) -> str:
+        return f"{self.prefix}/index.json"
 
-        result = self._gcs_meta_cache
+    def _load_index(self) -> list[dict]:
+        """Load the index file from GCS (single HTTP request)."""
+        if self._gcs_meta_cache is not None:
+            return self._gcs_meta_cache
+        bucket = self._bucket()
+        blob = bucket.blob(self._index_blob_name())
+        if blob.exists():
+            self._gcs_meta_cache = json.loads(blob.download_as_text())
+        else:
+            # Index doesn't exist yet — rebuild from individual meta files
+            self._gcs_meta_cache = self._rebuild_index()
+        return self._gcs_meta_cache
+
+    def _save_index(self, entries: list[dict]) -> None:
+        """Save the index file to GCS."""
+        bucket = self._bucket()
+        blob = bucket.blob(self._index_blob_name())
+        blob.upload_from_string(
+            json.dumps(entries, ensure_ascii=False),
+            content_type="application/json",
+        )
+        self._gcs_meta_cache = entries
+
+    def _rebuild_index(self) -> list[dict]:
+        """One-time rebuild: scan all meta/*.json and create index.json."""
+        bucket = self._bucket()
+        blobs = bucket.list_blobs(prefix=f"{self.prefix}/meta/")
+        cache: list[dict] = []
+        for blob in blobs:
+            if not blob.name.endswith(".json"):
+                continue
+            try:
+                meta = json.loads(blob.download_as_text())
+                cache.append(meta)
+            except Exception:
+                continue
+        # Save so future requests are fast
+        self._save_index(cache)
+        logger.info("Rebuilt training data index: %d entries", len(cache))
+        return cache
+
+    def _list_gcs(self, tile_code: str | None = None, source: str | None = None) -> list[dict]:
+        result = self._load_index()
         if tile_code:
             result = [e for e in result if e.get("tile_code") == tile_code]
         if source:
@@ -189,8 +226,15 @@ class TrainingDataStore:
                     if entry_id in blob.name:
                         blob.delete()
                         deleted = True
-            # Invalidate cache
-            self._gcs_meta_cache = None
+            # Update index
+            if deleted:
+                try:
+                    index = self._load_index()
+                    index = [e for e in index if e.get("id") != entry_id]
+                    self._save_index(index)
+                except Exception as exc:
+                    logger.warning("Failed to update index on delete: %s", exc)
+                    self._gcs_meta_cache = None
             return deleted
         except Exception:
             return False
