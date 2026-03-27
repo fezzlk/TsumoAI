@@ -92,14 +92,35 @@ training_data_store = TrainingDataStore()
 
 
 @app.get("/")
-def root() -> dict[str, str]:
-    return {
-        "message": "Mahjong Hand Score PoC API",
-        "docs": "/docs",
-        "health": "/health",
-        "score_ui": "/score-ui",
-        "score_dataset": "/score-dataset",
-    }
+def root() -> HTMLResponse:
+    return HTMLResponse("""<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TsumoAI</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#1a1a2e;color:#e0e0e0;
+  display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:40px 16px}
+h1{font-size:28px;margin-bottom:8px;color:#fff}
+.subtitle{color:#888;margin-bottom:32px;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;width:100%;max-width:700px}
+a.card{display:flex;align-items:center;gap:12px;background:#16213e;padding:16px;border-radius:10px;
+  text-decoration:none;color:#e0e0e0;transition:background .15s}
+a.card:hover{background:#1a3055}
+.icon{font-size:28px;width:40px;text-align:center}
+.card-body .name{font-size:15px;font-weight:bold;color:#4ecca3}
+.card-body .desc{font-size:11px;color:#999;margin-top:2px}
+</style></head><body>
+<h1>TsumoAI</h1>
+<p class="subtitle">麻雀点数計算 &amp; 牌認識</p>
+<div class="grid">
+  <a class="card" href="/score-ui"><div class="icon">🀄</div><div class="card-body"><div class="name">点数計算UI</div><div class="desc">牌画像から点数を計算</div></div></a>
+  <a class="card" href="/training-data"><div class="icon">📚</div><div class="card-body"><div class="name">学習データ一覧</div><div class="desc">牌分類モデルの学習データ管理</div></div></a>
+  <a class="card" href="/score-dataset"><div class="icon">📊</div><div class="card-body"><div class="name">スコアデータセット</div><div class="desc">点数計算のデータセット管理</div></div></a>
+  <a class="card" href="/game"><div class="icon">🎮</div><div class="card-body"><div class="name">対戦記録</div><div class="desc">麻雀対戦の点数管理</div></div></a>
+  <a class="card" href="/docs"><div class="icon">📖</div><div class="card-body"><div class="name">API ドキュメント</div><div class="desc">FastAPI Swagger UI</div></div></a>
+  <a class="card" href="/health"><div class="icon">💚</div><div class="card-body"><div class="name">ヘルスチェック</div><div class="desc">サーバーの稼働状態</div></div></a>
+</div>
+</body></html>""")
 
 
 @app.get("/health")
