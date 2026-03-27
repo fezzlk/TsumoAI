@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -26,11 +27,15 @@ LOCAL_DATA_DIR = Path(__file__).resolve().parent.parent / "ml" / "training_data"
 
 
 class TrainingDataStore:
+    # Cache TTL in seconds
+    _CACHE_TTL = 60
+
     def __init__(self) -> None:
         self.bucket_name = settings.gcs_bucket_name
         self.prefix = "training-data"
         self._client: storage.Client | None = None
         self._gcs_meta_cache: list[dict] | None = None
+        self._cache_timestamp: float = 0.0
 
     def _get_client(self) -> storage.Client:
         if self._client is None:
@@ -91,12 +96,17 @@ class TrainingDataStore:
         entries.sort(key=lambda e: e.get("tile_code", ""))
         return entries[:limit]
 
+    def invalidate_cache(self) -> None:
+        self._gcs_meta_cache = None
+        self._cache_timestamp = 0.0
+
     def _index_blob_name(self) -> str:
         return f"{self.prefix}/index.json"
 
-    def _load_index(self) -> list[dict]:
+    def _load_index(self, force: bool = False) -> list[dict]:
         """Load the index file from GCS (single HTTP request)."""
-        if self._gcs_meta_cache is not None:
+        now = time.monotonic()
+        if not force and self._gcs_meta_cache is not None and (now - self._cache_timestamp) < self._CACHE_TTL:
             return self._gcs_meta_cache
         bucket = self._bucket()
         blob = bucket.blob(self._index_blob_name())
@@ -105,6 +115,7 @@ class TrainingDataStore:
         else:
             # Index doesn't exist yet — rebuild from individual meta files
             self._gcs_meta_cache = self._rebuild_index()
+        self._cache_timestamp = now
         return self._gcs_meta_cache
 
     def _save_index(self, entries: list[dict]) -> None:
@@ -116,6 +127,7 @@ class TrainingDataStore:
             content_type="application/json",
         )
         self._gcs_meta_cache = entries
+        self._cache_timestamp = time.monotonic()
 
     def _rebuild_index(self) -> list[dict]:
         """One-time rebuild: scan all meta/*.json and create index.json."""
@@ -179,24 +191,17 @@ class TrainingDataStore:
         if entry_id.startswith("local_"):
             return self._get_local_image(entry_id)
 
-        # GCS — look up image_path from meta cache, or scan blobs
+        # GCS — look up image_path from index
         try:
-            # Try cached meta first for efficient lookup
-            if self._gcs_meta_cache:
-                for meta in self._gcs_meta_cache:
-                    if meta.get("id") == entry_id:
-                        image_path = meta.get("image_path", "")
-                        if image_path:
-                            blob = self._bucket().blob(image_path)
-                            if blob.exists():
-                                return blob.download_as_bytes()
-
-            # Fallback: scan blobs
-            bucket = self._bucket()
-            blobs = list(bucket.list_blobs(prefix=f"{self.prefix}/images/"))
-            for blob in blobs:
-                if entry_id in blob.name:
-                    return blob.download_as_bytes()
+            index = self._load_index()
+            for meta in index:
+                if meta.get("id") == entry_id:
+                    image_path = meta.get("image_path", "")
+                    if image_path:
+                        blob = self._bucket().blob(image_path)
+                        if blob.exists():
+                            return blob.download_as_bytes()
+                    break
         except Exception:
             pass
         return None

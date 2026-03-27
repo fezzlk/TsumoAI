@@ -39,7 +39,7 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
     <option value="camerash">Camerash</option>
     <option value="kaggle">Kaggle</option>
   </select>
-  <button onclick="loadData()" style="background:#4ecca3;color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">更新</button>
+  <button onclick="loadData(true)" style="background:#4ecca3;color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">更新</button>
 </div>
 <div class="grid" id="grid"></div>
 <div class="tile-stats" id="tileStats"></div>
@@ -53,12 +53,13 @@ const TILES = [
   'E','S','W','N','P','F','C'
 ];
 
-async function loadData() {
+async function loadData(refresh = false) {
   const tile = document.getElementById('filterTile').value;
   const source = document.getElementById('filterSource').value;
   let url = `${API}/api/v1/training-data/list?limit=500`;
   if (tile) url += `&tile_code=${tile}`;
   if (source) url += `&source=${source}`;
+  if (refresh) url += `&refresh=true`;
 
   try {
     const res = await fetch(url);

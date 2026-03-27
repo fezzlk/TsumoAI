@@ -419,8 +419,11 @@ def list_training_data(
     tile_code: str | None = Query(None),
     source: str | None = Query(None),
     limit: int = Query(500),
+    refresh: bool = Query(False),
 ) -> dict:
     try:
+        if refresh:
+            training_data_store.invalidate_cache()
         entries = training_data_store.list_entries(tile_code=tile_code, source=source, limit=limit)
         stats = training_data_store.get_stats()
     except ValueError as exc:
