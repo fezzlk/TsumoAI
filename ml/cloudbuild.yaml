@@ -1,0 +1,18 @@
+steps:
+  - name: 'python:3.11-slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install --no-cache-dir tensorflow-cpu==2.15.1 scikit-learn>=1.3 Pillow>=10.0 google-cloud-storage>=2.0
+        cd ml
+        python train.py --epochs 50 --gcs-bucket ${_GCS_BUCKET} --upload
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '3600s'  # 1 hour max
+
+substitutions:
+  _GCS_BUCKET: 'correctdata'

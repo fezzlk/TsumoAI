@@ -794,3 +794,103 @@ async def room_websocket(websocket: WebSocket, room_code: str, player_name: str 
 @app.get("/game")
 def game_ui() -> FileResponse:
     return FileResponse(STATIC_DIR / "game.html")
+
+
+# --- Model retraining endpoints ---
+
+
+@app.get("/api/v1/model/latest")
+def get_latest_model_info() -> dict:
+    """Get info about the latest trained model on GCS."""
+    if not settings.gcs_bucket_name:
+        raise HTTPException(status_code=503, detail="GCS not configured")
+    try:
+        from google.cloud import storage
+        client = storage.Client(project=settings.gcp_project)
+        bucket = client.bucket(settings.gcs_bucket_name)
+        blob = bucket.blob("models/latest.json")
+        if not blob.exists():
+            return {"status": "no_model", "message": "学習済みモデルがありません"}
+        meta = json.loads(blob.download_as_text())
+        return {"status": "ok", **meta}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/model/retrain")
+def trigger_retrain() -> dict:
+    """Trigger model retraining via Cloud Build."""
+    if not settings.gcp_project:
+        raise HTTPException(status_code=503, detail="GCP project not configured")
+    try:
+        from google.cloud.devtools import cloudbuild_v1
+        client = cloudbuild_v1.CloudBuildClient()
+
+        build = cloudbuild_v1.Build(
+            steps=[
+                cloudbuild_v1.BuildStep(
+                    name="python:3.11-slim",
+                    entrypoint="bash",
+                    args=[
+                        "-c",
+                        "pip install --no-cache-dir tensorflow-cpu==2.15.1 'scikit-learn>=1.3' 'Pillow>=10.0' 'google-cloud-storage>=2.0' && "
+                        f"cd ml && python train.py --epochs 50 --gcs-bucket {settings.gcs_bucket_name} --upload",
+                    ],
+                )
+            ],
+            source=cloudbuild_v1.Source(
+                repo_source=cloudbuild_v1.RepoSource(
+                    project_id=settings.gcp_project,
+                    repo_name="TsumoAI",
+                    branch_name="main",
+                )
+            ),
+            options=cloudbuild_v1.BuildOptions(
+                machine_type=cloudbuild_v1.BuildOptions.MachineType.E2_HIGHCPU_8,
+                logging=cloudbuild_v1.BuildOptions.LoggingMode.CLOUD_LOGGING_ONLY,
+            ),
+            timeout={"seconds": 3600},
+        )
+
+        operation = client.create_build(project_id=settings.gcp_project, build=build)
+        build_id = operation.metadata.build.id
+        return {
+            "status": "started",
+            "build_id": build_id,
+            "message": "モデル再学習を開始しました（完了まで30〜60分）",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cloud Build起動エラー: {e}")
+
+
+@app.get("/api/v1/model/download/{filename}")
+def download_model_file(filename: str) -> Response:
+    """Download the latest model file (tflite or labels.txt) from GCS."""
+    if filename not in ("tile_classifier.tflite", "labels.txt"):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not settings.gcs_bucket_name:
+        raise HTTPException(status_code=503, detail="GCS not configured")
+    try:
+        from google.cloud import storage
+        client = storage.Client(project=settings.gcp_project)
+        bucket = client.bucket(settings.gcs_bucket_name)
+
+        # Get latest version
+        latest_blob = bucket.blob("models/latest.json")
+        if not latest_blob.exists():
+            raise HTTPException(status_code=404, detail="No model available")
+        meta = json.loads(latest_blob.download_as_text())
+        version = meta["version"]
+
+        blob = bucket.blob(f"models/{version}/{filename}")
+        if not blob.exists():
+            raise HTTPException(status_code=404, detail=f"{filename} not found")
+
+        data = blob.download_as_bytes()
+        content_type = "application/octet-stream" if filename.endswith(".tflite") else "text/plain"
+        return Response(content=data, media_type=content_type,
+                        headers={"X-Model-Version": version})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -40,7 +40,9 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
     <option value="kaggle">Kaggle</option>
   </select>
   <button onclick="loadData(true)" style="background:#4ecca3;color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">更新</button>
+  <button onclick="triggerRetrain()" id="retrainBtn" style="background:#e67e22;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;margin-left:auto;">モデル再学習</button>
 </div>
+<div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
 <div class="grid" id="grid"></div>
 <div class="tile-stats" id="tileStats"></div>
 
@@ -123,7 +125,48 @@ async function deleteEntry(id) {
   loadData();
 }
 
+async function loadModelInfo() {
+  try {
+    const res = await fetch(`${API}/api/v1/model/latest`);
+    const data = await res.json();
+    const el = document.getElementById('modelInfo');
+    if (data.status === 'ok') {
+      const date = new Date(data.created_at).toLocaleString('ja-JP');
+      el.innerHTML = `現在のモデル: v${data.version} | 精度: ${(data.val_accuracy * 100).toFixed(1)}% | ${date}`;
+      el.style.display = 'block';
+    } else if (data.status === 'no_model') {
+      el.innerHTML = 'GCS上に学習済みモデルがありません（アプリにバンドルされたモデルを使用中）';
+      el.style.display = 'block';
+    }
+  } catch(e) {}
+}
+
+async function triggerRetrain() {
+  const btn = document.getElementById('retrainBtn');
+  if (!confirm('モデルの再学習を開始しますか？（完了まで30〜60分かかります）')) return;
+  btn.disabled = true;
+  btn.textContent = '開始中...';
+  try {
+    const res = await fetch(`${API}/api/v1/model/retrain`, {method: 'POST'});
+    const data = await res.json();
+    if (res.ok) {
+      btn.textContent = '再学習中...';
+      btn.style.background = '#888';
+      alert(data.message);
+    } else {
+      alert('エラー: ' + (data.detail || '不明なエラー'));
+      btn.disabled = false;
+      btn.textContent = 'モデル再学習';
+    }
+  } catch(e) {
+    alert('エラー: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'モデル再学習';
+  }
+}
+
 loadData();
+loadModelInfo();
 </script>
 </body>
 </html>
