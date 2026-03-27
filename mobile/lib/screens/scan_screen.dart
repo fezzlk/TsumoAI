@@ -182,8 +182,8 @@ class _ScanScreenState extends State<ScanScreen> {
     final origH = srcImage.height.toDouble();
 
     final slotW = gridScreenRect.width / 14;
-    final padX = slotW * 0.1;
-    final padY = gridScreenRect.height * 0.1;
+    final padX = slotW * 0.2;
+    final padY = gridScreenRect.height * 0.2;
 
     for (int i = 0; i < 14; i++) {
       // Grid slot corners in screen space
