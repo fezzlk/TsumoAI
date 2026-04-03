@@ -9,7 +9,6 @@ steps:
         python train.py --epochs 50 --gcs-bucket ${_GCS_BUCKET} --upload
 
 options:
-  machineType: 'E2_HIGHCPU_8'
   logging: CLOUD_LOGGING_ONLY
 
 timeout: '3600s'  # 1 hour max

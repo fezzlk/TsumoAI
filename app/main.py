@@ -846,7 +846,6 @@ def trigger_retrain() -> dict:
                 )
             ),
             options=cloudbuild_v1.BuildOptions(
-                machine_type=cloudbuild_v1.BuildOptions.MachineType.E2_HIGHCPU_8,
                 logging=cloudbuild_v1.BuildOptions.LoggingMode.CLOUD_LOGGING_ONLY,
             ),
             timeout={"seconds": 3600},
