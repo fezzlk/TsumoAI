@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
+import 'services/auth_service.dart';
 import 'screens/scan_screen.dart';
 import 'screens/training_data_screen.dart';
 
-late List<CameraDescription> cameras;
+List<CameraDescription> cameras = const [];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await AuthService.initialize();
 
   try {
     cameras = await availableCameras();
@@ -57,13 +62,26 @@ class HomeScreen extends StatelessWidget {
               }),
               const SizedBox(height: 16),
               _menuButton(context, Icons.school, '学習データ作成（1枚）', () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => TrainingDataScreen(cameras: cameras)));
+                _openTrainingData(context);
               }),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _openTrainingData(BuildContext context) async {
+    try {
+      await AuthService.ensureSignedIn();
+      if (!context.mounted) return;
+      Navigator.push(context, MaterialPageRoute(builder: (_) => TrainingDataScreen(cameras: cameras)));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Googleログインが必要です: $error')),
+      );
+    }
   }
 
   Widget _menuButton(BuildContext context, IconData icon, String label, VoidCallback onTap) {

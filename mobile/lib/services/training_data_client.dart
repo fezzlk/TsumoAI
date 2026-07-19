@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:image/image.dart' as img;
 import '../config.dart';
+import 'auth_service.dart';
 
 /// Client for uploading training data to the backend.
 class TrainingDataClient {
@@ -22,6 +23,7 @@ class TrainingDataClient {
     required String tileCode,
     String source = 'user',
   }) async {
+    final token = await AuthService.idToken(interactive: true);
     final jpegBytes = Uint8List.fromList(img.encodeJpg(tileImage, quality: 90));
 
     final formData = FormData.fromMap({
@@ -33,6 +35,7 @@ class TrainingDataClient {
     final response = await _dio.post(
       '$_baseUrl/api/v1/training-data/upload',
       data: formData,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
 
     return response.data as Map<String, dynamic>;
