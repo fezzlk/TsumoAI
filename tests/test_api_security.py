@@ -1,0 +1,41 @@
+from fastapi.testclient import TestClient
+
+from app.auth import get_current_user, require_admin
+from app.main import app
+
+
+client = TestClient(app)
+
+
+def teardown_function():
+    app.dependency_overrides.clear()
+
+
+def test_feedback_requires_login():
+    response = client.post("/api/v1/score/feedback", json={"comment": "test"})
+    assert response.status_code == 401
+
+
+def test_training_data_list_requires_admin():
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "member"}
+    response = client.get("/api/v1/training-data/list")
+    assert response.status_code == 403
+
+
+def test_admin_dependency_allows_management_route(monkeypatch):
+    app.dependency_overrides[require_admin] = lambda: {"uid": "admin", "admin": True}
+    from app import main
+    monkeypatch.setattr(main.training_data_store, "list_entries", lambda **_: [])
+    monkeypatch.setattr(main.training_data_store, "get_stats", lambda: {})
+    response = client.get("/api/v1/training-data/list")
+    assert response.status_code == 200
+
+
+def test_oversized_recognition_image_is_rejected(monkeypatch):
+    from app import main
+    monkeypatch.setattr(main.settings, "max_image_bytes", 3)
+    response = client.post(
+        "/api/v1/recognize",
+        files={"image": ("hand.jpg", b"four", "image/jpeg")},
+    )
+    assert response.status_code == 413
