@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 class AuthService {
@@ -12,7 +13,12 @@ class AuthService {
       '1046222816103-es2vkl6tvapbqlkk8g3bfmeo21ps1rvm.apps.googleusercontent.com';
   static bool _initialized = false;
 
-  static User? get currentUser => FirebaseAuth.instance.currentUser;
+  static User? get currentUser =>
+      Firebase.apps.isEmpty ? null : FirebaseAuth.instance.currentUser;
+
+  static Stream<User?> authStateChanges() => Firebase.apps.isEmpty
+      ? Stream<User?>.value(null)
+      : FirebaseAuth.instance.authStateChanges();
 
   static Future<void> initialize() async {
     if (_initialized) return;
@@ -50,6 +56,7 @@ class AuthService {
   }
 
   static Future<void> signOut() async {
+    if (Firebase.apps.isEmpty) return;
     await FirebaseAuth.instance.signOut();
     await GoogleSignIn.instance.signOut();
   }

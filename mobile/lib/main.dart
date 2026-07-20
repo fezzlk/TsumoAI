@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
@@ -64,6 +65,35 @@ class HomeScreen extends StatelessWidget {
               _menuButton(context, Icons.school, '学習データ作成（1枚）', () {
                 _openTrainingData(context);
               }),
+              const SizedBox(height: 32),
+              StreamBuilder<User?>(
+                stream: AuthService.authStateChanges(),
+                initialData: AuthService.currentUser,
+                builder: (context, snapshot) {
+                  final user = snapshot.data;
+                  if (user == null) {
+                    return const Text(
+                      'ログインしていません',
+                      style: TextStyle(color: Colors.white54),
+                    );
+                  }
+
+                  return Column(
+                    children: [
+                      Text(
+                        user.email ?? 'Googleアカウントでログイン中',
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: () => _signOut(context),
+                        icon: const Icon(Icons.logout),
+                        label: const Text('ログアウト'),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),
@@ -80,6 +110,21 @@ class HomeScreen extends StatelessWidget {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Googleログインが必要です: $error')),
+      );
+    }
+  }
+
+  Future<void> _signOut(BuildContext context) async {
+    try {
+      await AuthService.signOut();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ログアウトしました')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('ログアウトに失敗しました: $error')),
       );
     }
   }
