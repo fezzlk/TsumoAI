@@ -14,6 +14,17 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.1046222816103-es2vkl6tvapbqlkk8g3bfmeo21ps1rvm</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleName</key>
 	<string>tsumoai_mobile</string>
 	<key>CFBundlePackageType</key>

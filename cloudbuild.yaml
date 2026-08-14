@@ -1,0 +1,32 @@
+steps:
+  - name: python:3.11-slim
+    entrypoint: bash
+    args: ["-c", "pip install --no-cache-dir -r requirements.txt && pytest -q"]
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA", "."]
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA"]
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --min-instances=0
+      - --max-instances=1
+      - --cpu-throttling
+      - --no-startup-cpu-boost
+      - --timeout=300
+      - --no-allow-unauthenticated
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+substitutions:
+  _REGION: asia-northeast1
+  _REPOSITORY: cloud-run-source-deploy
+  _SERVICE: tsumoai-api
+  _SERVICE_ACCOUNT: tsumoai-runner@$PROJECT_ID.iam.gserviceaccount.com
+options:
+  logging: CLOUD_LOGGING_ONLY

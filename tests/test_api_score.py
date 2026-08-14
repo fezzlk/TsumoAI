@@ -2,11 +2,20 @@ import json
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main as main_module
 from app.hand_extraction import RecognitionCancelledError
+from app.auth import get_current_user
 from app.main import app, gcs_feedback_store
+
+
+@pytest.fixture(autouse=True)
+def authenticated_feedback_user():
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "test-user"}
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 client = TestClient(app)

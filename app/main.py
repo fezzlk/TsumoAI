@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import time
+from collections import defaultdict, deque
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from app.config import settings
+from app.auth import get_current_user, require_admin
 from app.gcs_feedback_store import GCSFeedbackStore
 from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
 from app.recognition_feedback_store import RecognitionFeedbackStore
@@ -49,8 +52,8 @@ app = FastAPI(title="Mahjong Hand Score PoC", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -64,6 +67,26 @@ recognition_feedback_store = RecognitionFeedbackStore()
 
 from app.training_data_store import TrainingDataStore
 training_data_store = TrainingDataStore()
+_recognition_rate_windows: dict[str, deque[float]] = defaultdict(deque)
+
+
+@app.middleware("http")
+async def limit_anonymous_recognition(request: Request, call_next):
+    if request.method == "POST" and request.url.path in {
+        "/api/v1/recognize",
+        "/api/v1/recognize-only",
+        "/api/v1/recognize-only/jobs",
+        "/api/v1/recognize-and-score",
+    }:
+        key = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        window = _recognition_rate_windows[key]
+        while window and now - window[0] >= 60:
+            window.popleft()
+        if len(window) >= settings.anonymous_recognition_requests_per_minute:
+            return JSONResponse(status_code=429, content={"detail": "recognition rate limit exceeded"})
+        window.append(now)
+    return await call_next(request)
 
 
 @app.get("/")
@@ -132,6 +155,15 @@ def _to_recognition_image_bytes(upload: UploadFile, image_bytes: bytes) -> tuple
     return width, height, out.getvalue()
 
 
+async def _read_limited_image(upload: UploadFile) -> bytes:
+    image_bytes = await upload.read(settings.max_image_bytes + 1)
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="image is required")
+    if len(image_bytes) > settings.max_image_bytes:
+        raise HTTPException(status_code=413, detail="image is too large")
+    return image_bytes
+
+
 def _build_recognize_response(width: int, height: int, game_id: str | None, payload: dict) -> RecognizeResponse:
     model_name = payload.get("model_name", settings.openai_model)
     model_version = "local" if model_name == "tflite-mobilenetv2" else "api-current"
@@ -161,9 +193,7 @@ def _build_recognize_response(width: int, height: int, game_id: str | None, payl
 
 @app.post("/api/v1/recognize", response_model=RecognizeResponse)
 async def recognize(image: UploadFile = File(...), game_id: str | None = Form(None)) -> RecognizeResponse:
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="image is required")
+    image_bytes = await _read_limited_image(image)
 
     width, height, recognition_image_bytes = _to_recognition_image_bytes(image, image_bytes)
     payload = extract_hand_from_image(recognition_image_bytes)
@@ -178,9 +208,7 @@ async def recognize_only(image: UploadFile = File(...), game_id: str | None = Fo
 
 @app.post("/api/v1/recognize-only/jobs", response_model=RecognizeJobCreateResponse)
 async def create_recognize_job(image: UploadFile = File(...), game_id: str | None = Form(None)) -> RecognizeJobCreateResponse:
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="image is required")
+    image_bytes = await _read_limited_image(image)
     width, height, recognition_image_bytes = _to_recognition_image_bytes(image, image_bytes)
     job = recognition_jobs.create_job(
         image_bytes=recognition_image_bytes,
@@ -290,7 +318,7 @@ def get_result(item_id: UUID) -> ResultGetResponse:
 
 
 @app.post("/api/v1/score/feedback", response_model=ScoreFeedbackResponse)
-def score_feedback(req: ScoreFeedbackRequest) -> ScoreFeedbackResponse:
+def score_feedback(req: ScoreFeedbackRequest, _user: dict = Depends(get_current_user)) -> ScoreFeedbackResponse:
     payload = req.model_dump(mode="json")
     payload["comment"] = req.comment.strip()
     try:
@@ -303,7 +331,7 @@ def score_feedback(req: ScoreFeedbackRequest) -> ScoreFeedbackResponse:
 
 
 @app.post("/api/v1/recognition/feedback", response_model=RecognitionFeedbackResponse)
-def recognition_feedback(req: RecognitionFeedbackRequest) -> RecognitionFeedbackResponse:
+def recognition_feedback(req: RecognitionFeedbackRequest, _user: dict = Depends(get_current_user)) -> RecognitionFeedbackResponse:
     if len(req.corrected_tiles) != 14:
         raise HTTPException(status_code=422, detail="corrected_tiles must contain exactly 14 tiles")
     for tile in req.corrected_tiles:
@@ -316,7 +344,7 @@ def recognition_feedback(req: RecognitionFeedbackRequest) -> RecognitionFeedback
 
 
 @app.post("/api/v1/dataset/upload", response_model=DatasetUploadResponse)
-def upload_dataset(req: DatasetUploadRequest) -> DatasetUploadResponse:
+def upload_dataset(req: DatasetUploadRequest, _user: dict = Depends(get_current_user)) -> DatasetUploadResponse:
     if not req.entries:
         raise HTTPException(status_code=422, detail="entries must not be empty")
     try:
@@ -332,7 +360,7 @@ def upload_dataset(req: DatasetUploadRequest) -> DatasetUploadResponse:
 
 
 @app.get("/api/v1/dataset/list")
-def list_datasets() -> dict:
+def list_datasets(_admin: dict = Depends(require_admin)) -> dict:
     bucket_name = gcs_dataset_store.bucket_name
     prefix = gcs_dataset_store.prefix
     if not bucket_name:
@@ -353,12 +381,15 @@ def list_datasets() -> dict:
 
 
 @app.get("/api/v1/dataset/download")
-def download_dataset(name: str = Query(...)) -> JSONResponse:
+def download_dataset(name: str = Query(...), _admin: dict = Depends(require_admin)) -> JSONResponse:
     bucket_name = gcs_dataset_store.bucket_name
     if not bucket_name:
         raise HTTPException(status_code=503, detail="GCS bucket is not configured")
     client = gcs_dataset_store._get_client()
     bucket = client.bucket(bucket_name)
+    allowed_prefix = gcs_dataset_store.prefix.rstrip("/") + "/"
+    if not name.startswith(allowed_prefix) or not name.endswith(".json") or ".." in name:
+        raise HTTPException(status_code=400, detail="invalid dataset object name")
     blob = bucket.blob(name)
     if not blob.exists():
         raise HTTPException(status_code=404, detail="file not found")
@@ -376,11 +407,10 @@ async def upload_training_data(
     image: UploadFile = File(...),
     tile_code: str = Form(...),
     source: str = Form("user"),
+    _user: dict = Depends(get_current_user),
 ) -> TrainingDataUploadResponse:
     validate_tile(tile_code)
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="image is required")
+    image_bytes = await _read_limited_image(image)
     try:
         result = training_data_store.upload(image_bytes, tile_code, source)
     except ValueError as exc:
@@ -394,6 +424,7 @@ def list_training_data(
     source: str | None = Query(None),
     limit: int = Query(500),
     refresh: bool = Query(False),
+    _admin: dict = Depends(require_admin),
 ) -> dict:
     try:
         if refresh:
@@ -406,7 +437,7 @@ def list_training_data(
 
 
 @app.get("/api/v1/training-data/image/{entry_id}")
-def get_training_image(entry_id: str) -> Response:
+def get_training_image(entry_id: str, _admin: dict = Depends(require_admin)) -> Response:
     try:
         data = training_data_store.get_image(entry_id)
     except ValueError as exc:
@@ -417,7 +448,7 @@ def get_training_image(entry_id: str) -> Response:
 
 
 @app.delete("/api/v1/training-data/{entry_id}")
-def delete_training_data(entry_id: str) -> dict:
+def delete_training_data(entry_id: str, _admin: dict = Depends(require_admin)) -> dict:
     try:
         deleted = training_data_store.delete_entry(entry_id)
     except ValueError as exc:
@@ -456,13 +487,24 @@ def get_latest_model_info() -> dict:
 
 
 @app.post("/api/v1/model/retrain")
-def trigger_retrain() -> dict:
+def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
     """Trigger model retraining via Cloud Build."""
     if not settings.gcp_project:
         raise HTTPException(status_code=503, detail="GCP project not configured")
     try:
         from google.cloud.devtools import cloudbuild_v1
         client = cloudbuild_v1.CloudBuildClient()
+
+        active_statuses = {
+            cloudbuild_v1.Build.Status.QUEUED,
+            cloudbuild_v1.Build.Status.WORKING,
+        }
+        for existing in client.list_builds(project_id=settings.gcp_project, page_size=50):
+            if "tsumoai-model-training" in existing.tags and existing.status in active_statuses:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"model retraining is already active: {existing.id}",
+                )
 
         build = cloudbuild_v1.Build(
             steps=[
@@ -487,6 +529,7 @@ def trigger_retrain() -> dict:
                 logging=cloudbuild_v1.BuildOptions.LoggingMode.CLOUD_LOGGING_ONLY,
             ),
             timeout={"seconds": 3600},
+            tags=["tsumoai-model-training"],
         )
 
         operation = client.create_build(project_id=settings.gcp_project, build=build)
@@ -496,8 +539,35 @@ def trigger_retrain() -> dict:
             "build_id": build_id,
             "message": "モデル再学習を開始しました（完了まで30〜60分）",
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cloud Build起動エラー: {e}")
+
+
+@app.post("/api/v1/model/candidates/{version}/approve")
+def approve_model_candidate(version: str, _admin: dict = Depends(require_admin)) -> dict:
+    if not version.isdigit() or len(version) != 14:
+        raise HTTPException(status_code=400, detail="invalid model version")
+    if not settings.gcs_bucket_name:
+        raise HTTPException(status_code=503, detail="GCS not configured")
+    try:
+        from google.cloud import storage
+        client = storage.Client(project=settings.gcp_project)
+        bucket = client.bucket(settings.gcs_bucket_name)
+        candidate = bucket.blob(f"models/candidates/{version}.json")
+        if not candidate.exists():
+            raise HTTPException(status_code=404, detail="model candidate not found")
+        meta = json.loads(candidate.download_as_text())
+        bucket.blob("models/latest.json").upload_from_string(
+            json.dumps({**meta, "approved_by": _admin.get("uid")}),
+            content_type="application/json",
+        )
+        return {"status": "approved", **meta}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/model/download/{filename}")

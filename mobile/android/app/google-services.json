@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "1046222816103",
+    "project_id": "tsumoai",
+    "storage_bucket": "tsumoai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1046222816103:android:1a8e2318aa0bc2b315a5c2",
+        "android_client_info": {
+          "package_name": "com.tsumoai.tsumoai_mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1046222816103-aiqcmt4snprjaql579ekkdb32202755s.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.tsumoai.tsumoai_mobile",
+            "certificate_hash": "2165a1bd7c13999969859da79b48280bc5450cce"
+          }
+        },
+        {
+          "client_id": "1046222816103-ng2ftbh5iq3t332bedaome0nucnhqn5o.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHkjZeT0eoh1pXrPTW_89VXccG1BdF18s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1046222816103-ng2ftbh5iq3t332bedaome0nucnhqn5o.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1046222816103-es2vkl6tvapbqlkk8g3bfmeo21ps1rvm.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.fezzlk.tsumoai"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

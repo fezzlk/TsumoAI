@@ -372,12 +372,12 @@ def _upload_model_to_gcs(bucket_name: str, tflite_bytes: bytes, labels_txt: str,
     blob = bucket.blob(f"models/{version}/meta.json")
     blob.upload_from_string(json.dumps(meta), content_type="application/json")
 
-    # Update latest pointer
-    blob = bucket.blob("models/latest.json")
+    # Create a candidate. Production clients keep using the approved latest pointer.
+    blob = bucket.blob(f"models/candidates/{version}.json")
     blob.upload_from_string(json.dumps(meta), content_type="application/json")
 
     print(f"\nUploaded model to GCS: models/{version}/")
-    print(f"  Version: {version}, Accuracy: {val_acc:.4f}")
+    print(f"  Candidate version: {version}, Accuracy: {val_acc:.4f}")
 
 
 if __name__ == "__main__":

@@ -70,23 +70,9 @@ printf '%s' "${OPENAI_API_KEY}" | gcloud secrets versions add openai-api-key \
 
 ### 4. デプロイ実行
 
-```bash
-export PROJECT_ID="<your-gcp-project-id>"
-export REGION="asia-northeast1"
-export SERVICE_NAME="tsumoai-api"
-export GCS_BUCKET_NAME="<your-feedback-bucket>"
-export OPENAI_MODEL="gpt-4o-mini"
-
-./scripts/deploy_cloud_run.sh
-```
-
-スクリプトが実行する内容:
-
-- 必要 API の有効化
-- Cloud Run 実行用サービスアカウント作成
-- GCS 書き込み権限付与（`roles/storage.objectCreator`）
-- `openai-api-key` secret が存在する場合のみ `OPENAI_API_KEY` を注入
-- `gcloud run deploy --source .` によるビルドとデプロイ
+デプロイはレビュー済みの `cloudbuild.yaml` を参照する Cloud Build トリガーだけで行います。
+`gcloud run deploy --source` と Console のソースリポジトリ接続は、重複トリガーを作るため使用しません。
+既定では 1 リージョン、min instances 0、max instances 1、CPU boost 無効、非公開です。
 
 ### 5. 動作確認
 
@@ -95,7 +81,15 @@ SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" --region "${REGION
 curl "${SERVICE_URL}/health"
 ```
 
-`{"status":"ok"}` が返ればデプロイ成功です。
+サービスは非公開なので、確認時は権限を持つ ID トークンを使用してください。
+
+## Authentication and authorization
+
+- 点数計算と牌認識は匿名利用可能です（画像 10 MiB、認識 20 回/分/IP）。
+- フィードバック、データセット投稿、学習画像投稿は Firebase ID token が必要です。
+- データ閲覧・削除、再学習、モデル承認には Firebase custom claim `admin: true` が必要です。
+- `CORS_ORIGINS` は許可するオリジンをカンマ区切りで明示します。未設定時は cross-origin を許可しません。
+- 学習完了時はモデル候補だけが作られ、管理者が承認するまで `models/latest.json` は更新されません。
 
 ## Endpoints
 

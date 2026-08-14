@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     gcs_feedback_prefix: str = "score-feedback"
     gcs_dataset_prefix: str = "score-dataset"
     recognition_feedback_path: str = "data/recognition_feedback.jsonl"
+    firebase_project_id: str | None = None
+    cors_origins: str = ""
+    max_image_bytes: int = 10 * 1024 * 1024
+    anonymous_recognition_requests_per_minute: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

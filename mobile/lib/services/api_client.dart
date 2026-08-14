@@ -4,6 +4,7 @@ import '../config.dart';
 import '../models/recognize_result.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
+import 'auth_service.dart';
 
 class ApiClient {
   late final Dio _dio;
@@ -59,6 +60,7 @@ class ApiClient {
     required List<String> correctedTiles,
     String comment = '',
   }) async {
+    final token = await AuthService.idToken(interactive: true);
     await _dio.post(
       '$_baseUrl/api/v1/recognition/feedback',
       data: {
@@ -66,6 +68,7 @@ class ApiClient {
         'corrected_tiles': correctedTiles,
         'comment': comment,
       },
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }
 }
