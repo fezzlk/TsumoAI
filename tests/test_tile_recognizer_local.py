@@ -8,6 +8,8 @@ from app.tile_recognizer_local import _segment_tiles
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 CASE_001_IMAGE = BASE_DIR / "data" / "eval_images_cropped" / "case-001.jpg"
+CASE_003_IMAGE = BASE_DIR / "data" / "eval_images_cropped" / "case-003.jpg"
+CASE_006_IMAGE = BASE_DIR / "data" / "eval_images_cropped" / "case-006.jpg"
 
 
 def _draw_tiles(canvas: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> np.ndarray:
@@ -69,3 +71,45 @@ def test_segment_tiles_on_real_photo_is_close_to_fourteen():
     tiles = _segment_tiles(rgb)
 
     assert 13 <= len(tiles) <= 15
+
+
+def test_segment_tiles_drops_unrelated_blob_past_fourteen():
+    """A stray white blob disconnected from the tile run (e.g. a spare tile
+    left in frame) must not inflate the count past the known 13/14 hand
+    size; regression guard for the case-003 over-detection (a leftover tile
+    below the hand was previously force-counted as a 15th tile)."""
+    height, width = 5450, 600
+    canvas = _dark_background(height, width)
+    tile_w, tile_h, gap = 500, 340, 3
+    pitch = tile_h + gap
+    n_tiles = 14
+    boxes = [(25, 20 + i * pitch, tile_w, tile_h) for i in range(n_tiles)]
+    canvas = _draw_tiles(canvas, boxes)
+    stray_y = 20 + n_tiles * pitch + 150
+    canvas = _draw_tiles(canvas, [(40, stray_y, 400, 420)])
+
+    tiles = _segment_tiles(canvas)
+
+    assert len(tiles) == n_tiles
+
+
+def test_segment_tiles_case_003_real_photo_is_exactly_fourteen():
+    if not CASE_003_IMAGE.exists():
+        return  # eval fixture not present in this environment
+
+    with Image.open(CASE_003_IMAGE) as img:
+        img = ImageOps.exif_transpose(img)
+        rgb = np.array(img.convert("RGB"))
+
+    assert len(_segment_tiles(rgb)) == 14
+
+
+def test_segment_tiles_case_006_real_photo_is_exactly_fourteen():
+    if not CASE_006_IMAGE.exists():
+        return  # eval fixture not present in this environment
+
+    with Image.open(CASE_006_IMAGE) as img:
+        img = ImageOps.exif_transpose(img)
+        rgb = np.array(img.convert("RGB"))
+
+    assert len(_segment_tiles(rgb)) == 14

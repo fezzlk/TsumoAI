@@ -160,6 +160,99 @@ def _blob_pitch(
     return pitch, confidence, dim
 
 
+_HAND_SIZES = (13, 14)
+_DROP_MIN_COST = 0.3
+_DROP_COST_MULTIPLIER = 2.0
+_MAX_TOTAL_COST = 3.0
+
+
+def _pitch_count_costs(dim: float, pitches: list[float]) -> dict[int, float]:
+    """For a blob of extent `dim` along the run axis, return {n: cost} for
+    each tile count implied by each candidate pitch hypothesis (own pitch,
+    reference pitch, and harmonics of the own pitch), keeping the lowest
+    cost per n across hypotheses. A single blob's autocorrelation sometimes
+    locks onto a harmonic of the true pitch rather than the fundamental;
+    offering the divided hypotheses here (rather than committing to one via
+    a threshold) lets the 13/14-tile constraint in _resolve_tile_counts
+    pick the fundamental when it's the only one that reaches a valid total."""
+    costs: dict[int, float] = {}
+    for p in pitches:
+        if not p or p <= 0:
+            continue
+        n0 = max(0, round(dim / p))
+        for n in (n0 - 1, n0, n0 + 1):
+            if n <= 0:
+                continue
+            cost = abs(dim - n * p) / p
+            if n not in costs or cost < costs[n]:
+                costs[n] = cost
+    return costs
+
+
+def _resolve_tile_counts(
+    dims: list[float], blob_pitches: list[tuple[int | None, float, int]],
+) -> list[int]:
+    """Resolve each kept blob's tile count using the fact that a mahjong
+    hand has exactly 13 or 14 tiles. Per-blob periodicity alone is
+    sometimes ambiguous — a harmonic-locked autocorrelation, or a blob (a
+    single tile, or an unrelated object in frame) with no periodicity of
+    its own — and this joint constraint, unavailable to any blob in
+    isolation, resolves what no blob can resolve alone. Falls back to
+    independent per-blob resolution (pre-existing behavior) when no
+    combination reaches 13 or 14, so non-hand or already-unambiguous
+    inputs are unaffected."""
+    reference_confidence = 0.50
+    min_confidence = 0.30
+
+    own_pitches = [p for p, _c, _d in blob_pitches if p is not None]
+    confident_pitches = [p for p, c, _d in blob_pitches if p is not None and c >= reference_confidence]
+    reference_pitch = float(np.median(confident_pitches)) if confident_pitches else None
+    fallback_pitch = float(np.median(own_pitches)) if own_pitches else None
+
+    per_blob_costs: list[dict[int, float]] = []
+    for dim, (pitch, _confidence, _d) in zip(dims, blob_pitches):
+        hypotheses = [p for p in (reference_pitch, pitch, fallback_pitch) if p]
+        if pitch:
+            hypotheses += [pitch / 2, pitch / 3]
+        costs = _pitch_count_costs(dim, hypotheses)
+        if costs:
+            costs[0] = max(_DROP_MIN_COST, _DROP_COST_MULTIPLIER * min(costs.values()))
+        per_blob_costs.append(costs)
+
+    best_combo: list[int] | None = None
+    best_cost = float("inf")
+
+    def _search(i: int, chosen: list[int], cost_so_far: float) -> None:
+        nonlocal best_combo, best_cost
+        if cost_so_far >= best_cost:
+            return
+        if i == len(per_blob_costs):
+            if sum(chosen) in _HAND_SIZES:
+                best_combo, best_cost = list(chosen), cost_so_far
+            return
+        for n, cost in per_blob_costs[i].items():
+            if sum(chosen) + n > max(_HAND_SIZES):
+                continue
+            _search(i + 1, chosen + [n], cost_so_far + cost)
+
+    _search(0, [], 0.0)
+
+    if best_combo is not None and best_cost <= _MAX_TOTAL_COST:
+        return best_combo
+
+    resolved = []
+    for dim, (pitch, confidence, _d) in zip(dims, blob_pitches):
+        if pitch is not None and confidence >= reference_confidence:
+            resolved.append(max(1, round(dim / pitch)))
+        elif reference_pitch is not None:
+            resolved.append(max(1, round(dim / reference_pitch)))
+        elif pitch is not None and confidence >= min_confidence:
+            resolved.append(max(1, round(dim / pitch)))
+        else:
+            resolved.append(1)
+    return resolved
+
+
 def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
     """Segment individual tiles from a single linear run (horizontal row or
     vertical stack) using connected-component analysis plus pitch detection.
@@ -173,12 +266,12 @@ def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
        components (not any single component's own aspect ratio)
     5. Drop components that substantially overlap an already-kept larger
        component along the run axis (glare/reflection noise)
-    6. Estimate a per-blob tile pitch via autocorrelation; for blobs whose
-       own pitch estimate is low-confidence, fall back to the median pitch
-       of the image's confident blobs (same photo, same tile scale) instead
-       of treating the blob as a single tile
+    6. Estimate a per-blob tile pitch via autocorrelation, then resolve each
+       blob's tile count jointly across the whole image using the known
+       13/14-tile hand-size constraint (see _resolve_tile_counts) — this
+       disambiguates blobs no single blob's own signal can resolve alone
     7. Subdivide each kept component into individual tiles using the
-       resolved pitch
+       resolved count
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
@@ -250,28 +343,20 @@ def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
     # Restore reading order (top-to-bottom, left-to-right) for stable output.
     kept.sort(key=lambda c: (c[1], c[0]))
 
-    # Pass 1: estimate each blob's own pitch/confidence.
-    min_confidence = 0.30
-    reference_confidence = 0.50
+    # Estimate each blob's own pitch/confidence, then resolve tile counts
+    # jointly across all blobs using the known 13/14-tile hand-size
+    # constraint (see _resolve_tile_counts) — this disambiguates cases no
+    # single blob's own signal can resolve alone (harmonic-locked
+    # autocorrelation, or a blob with no periodicity of its own, e.g. an
+    # unrelated object in frame).
     blob_pitches = [_blob_pitch(mask_raw, x, y, w, h, vertical) for x, y, w, h, _area in kept]
-
-    # Blobs on the same photo share the same real-world tile scale. A blob
-    # whose own periodicity signal is weak/ambiguous (e.g. spans few tiles,
-    # or its autocorrelation is noisy) is better estimated from the pitch
-    # of the image's confident blobs than trusted on its own.
-    confident_pitches = [p for p, conf, _dim in blob_pitches if p is not None and conf >= reference_confidence]
-    reference_pitch = float(np.median(confident_pitches)) if confident_pitches else None
+    dims = [dim for _p, _c, dim in blob_pitches]
+    tile_counts = _resolve_tile_counts(dims, blob_pitches)
 
     tiles: list[np.ndarray] = []
-    for (x, y, w, h, _area), (pitch, confidence, dim) in zip(kept, blob_pitches):
-        if pitch is not None and confidence >= reference_confidence:
-            n_sub = max(1, round(dim / pitch))
-        elif reference_pitch is not None:
-            n_sub = max(1, round(dim / reference_pitch))
-        elif pitch is not None and confidence >= min_confidence:
-            n_sub = max(1, round(dim / pitch))
-        else:
-            n_sub = 1
+    for (x, y, w, h, _area), n_sub in zip(kept, tile_counts):
+        if n_sub <= 0:
+            continue
 
         if vertical:
             sub_h = h / n_sub
