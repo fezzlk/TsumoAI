@@ -99,7 +99,7 @@ List<img.Image>? _processInIsolate(_IsolateInput input) {
   final decoded = img.decodeImage(input.imageBytes);
   if (decoded == null) return null;
 
-  final rgb = decoded.convert(numChannels: 3);
+  final rgb = img.bakeOrientation(decoded).convert(numChannels: 3);
   final boxes = segmentTiles(rgb);
   if (boxes.length < 13) return null;
 

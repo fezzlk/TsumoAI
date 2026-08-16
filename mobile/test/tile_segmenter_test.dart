@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:flutter/material.dart' show Rect;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:tsumoai_mobile/services/tile_segmenter.dart';
@@ -18,6 +20,38 @@ img.Image? _loadCaseImage(String name) {
   final file = File('../data/eval_images_cropped/$name.jpg');
   if (!file.existsSync()) return null;
   return img.decodeImage(file.readAsBytesSync());
+}
+
+void _fillRotatedTile(img.Image image, double cx, double cy, double w, double h, double angleDeg) {
+  final rad = angleDeg * math.pi / 180.0;
+  final cosA = math.cos(rad), sinA = math.sin(rad);
+  final corners = [
+    (-w / 2, -h / 2),
+    (w / 2, -h / 2),
+    (w / 2, h / 2),
+    (-w / 2, h / 2),
+  ].map((c) {
+    final rx = c.$1 * cosA - c.$2 * sinA;
+    final ry = c.$1 * sinA + c.$2 * cosA;
+    return img.Point(cx + rx, cy + ry);
+  }).toList();
+  img.fillPolygon(image, vertices: corners, color: img.ColorRgb8(240, 240, 235));
+}
+
+double _whiteFraction(img.Image image) {
+  int white = 0, total = 0;
+  for (int y = 0; y < image.height; y++) {
+    for (int x = 0; x < image.width; x++) {
+      final px = image.getPixel(x, y);
+      final r = px.r.toInt(), g = px.g.toInt(), b = px.b.toInt();
+      final maxC = math.max(r, math.max(g, b));
+      final minC = math.min(r, math.min(g, b));
+      final sat = maxC > 0 ? ((maxC - minC) * 255) ~/ maxC : 0;
+      if (maxC >= 160 && sat <= 80) white++;
+      total++;
+    }
+  }
+  return total == 0 ? 0.0 : white / total;
 }
 
 void main() {
@@ -78,6 +112,40 @@ void main() {
     final boxes = segmentTiles(canvas);
 
     expect(boxes.length, nTiles);
+  });
+
+  test('refineTileCrop straightens a tilted tile and trims background', () {
+    const canvasW = 400, canvasH = 400;
+    const tileW = 160.0, tileH = 220.0;
+    const cx = 200.0, cy = 200.0;
+    const angleDeg = 15.0;
+    final canvas = _darkBackground(canvasW, canvasH);
+    _fillRotatedTile(canvas, cx, cy, tileW, tileH, angleDeg);
+
+    // Simulate a coarse per-slice detector's rough box: the axis-aligned
+    // bounding box of the tilted tile (includes dark-background triangles
+    // in its corners).
+    final rad = angleDeg * math.pi / 180.0;
+    final halfSpanX = (tileW / 2) * math.cos(rad).abs() + (tileH / 2) * math.sin(rad).abs();
+    final halfSpanY = (tileW / 2) * math.sin(rad).abs() + (tileH / 2) * math.cos(rad).abs();
+    final roughBox = Rect.fromLTWH(cx - halfSpanX, cy - halfSpanY, halfSpanX * 2, halfSpanY * 2);
+
+    final naive = img.copyCrop(
+      canvas,
+      x: roughBox.left.round(),
+      y: roughBox.top.round(),
+      width: roughBox.width.round(),
+      height: roughBox.height.round(),
+    );
+    final refined = refineTileCrop(canvas, roughBox);
+
+    final naiveFraction = _whiteFraction(naive);
+    final refinedFraction = _whiteFraction(refined);
+
+    expect(refinedFraction, greaterThan(naiveFraction + 0.1),
+        reason: 'straightened+tight crop should contain noticeably less background than the naive rough-box crop');
+    expect(refinedFraction, greaterThan(0.8),
+        reason: 'straightened+tight crop should be mostly tile, not background');
   });
 
   test('segmentTiles on real photos finds exactly fourteen', () {

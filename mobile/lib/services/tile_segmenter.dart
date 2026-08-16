@@ -186,8 +186,251 @@ List<Rect> segmentTiles(img.Image image) {
 List<Rect> segmentTilesFromBytes(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return [];
-  final rgb = decoded.numChannels == 3 ? decoded : decoded.convert(numChannels: 3);
+  // A no-op if the caller already baked orientation in (bakeOrientation
+  // clears the tag once applied); kept here defensively so this function is
+  // correct standalone, e.g. if called directly on a fresh capture.
+  final oriented = img.bakeOrientation(decoded);
+  final rgb = oriented.numChannels == 3 ? oriented : oriented.convert(numChannels: 3);
   return segmentTiles(rgb);
+}
+
+/// Given a rough (axis-aligned) detected bounding box for one tile, produce
+/// a straightened, tightly-cropped image suitable for classification —
+/// correcting that individual tile's own tilt and trimming background/
+/// neighboring-tile bleed that a naive equal-subdivision crop includes.
+/// This is a small, local, per-tile refinement; it does not touch (and
+/// cannot destabilize) the whole-row detection/counting in [segmentTiles].
+/// Falls back to a plain crop of [roughBox] if no clear tile blob is found.
+img.Image refineTileCrop(img.Image source, Rect roughBox) {
+  final srcW = source.width, srcH = source.height;
+  final fallback = _plainCrop(source, roughBox);
+
+  final marginX = roughBox.width * 0.20;
+  final marginY = roughBox.height * 0.20;
+  final px0 = (roughBox.left - marginX).round().clamp(0, srcW - 1);
+  final py0 = (roughBox.top - marginY).round().clamp(0, srcH - 1);
+  final px1 = (roughBox.right + marginX).round().clamp(px0 + 1, srcW);
+  final py1 = (roughBox.bottom + marginY).round().clamp(py0 + 1, srcH);
+  final padded = img.copyCrop(source, x: px0, y: py0, width: px1 - px0, height: py1 - py0);
+
+  final blob = _pickCentralBlob(_findLocalBlobs(padded), padded.width, padded.height);
+  if (blob == null) return fallback;
+
+  // Touching tiles can share a seam too faint to separate even in this
+  // small local (non-morphed) mask — the same low-contrast, white-on-white
+  // problem that motivated the periodicity-based approach in [segmentTiles]
+  // rather than seam/edge detection. If the "central" blob is much larger
+  // than the rough box already resolved for this tile, it has likely
+  // absorbed a neighbor; rather than straighten+trim that (which would
+  // actively make the crop worse), fall back to the safe naive crop.
+  final expectedArea = roughBox.width * roughBox.height;
+  if (expectedArea > 0 && _bboxArea(blob) > expectedArea * 1.6) {
+    return fallback;
+  }
+
+  final angle = _bestStraighteningAngleDegrees(blob.points);
+  if (angle.abs() < 0.05) {
+    return _tightCropToBlob(padded, blob) ?? fallback;
+  }
+
+  // The point-cloud search above gives the correction *magnitude* but not
+  // reliably its sign relative to copyRotate's rotation direction, and it
+  // can also be a false positive on an already-straight tile (a small
+  // spurious angle from mask noise). Resolve both by comparing three real
+  // candidates — no rotation, +angle, -angle — and keeping whichever
+  // actually yields the tightest (smallest-area) axis-aligned blob after
+  // rotating the real image, rather than trusting the estimate blindly.
+  // Cheap: the crop here is small, so this is only two extra rotations.
+  final rotatedPos = img.copyRotate(padded, angle: angle, interpolation: img.Interpolation.linear);
+  final rotatedNeg = img.copyRotate(padded, angle: -angle, interpolation: img.Interpolation.linear);
+  final blobPos = _pickCentralBlob(_findLocalBlobs(rotatedPos), rotatedPos.width, rotatedPos.height);
+  final blobNeg = _pickCentralBlob(_findLocalBlobs(rotatedNeg), rotatedNeg.width, rotatedNeg.height);
+
+  final areaOriginal = _bboxArea(blob);
+  final areaPos = blobPos == null ? double.infinity : _bboxArea(blobPos);
+  final areaNeg = blobNeg == null ? double.infinity : _bboxArea(blobNeg);
+
+  // A rotated candidate's bounding box can come out only marginally
+  // smaller than the unrotated original by noise alone (mask-detection
+  // jitter, interpolation), while actually looking worse (softened edges,
+  // a slightly different blob picked up). Require a clear improvement —
+  // not just "smaller" — before trusting a rotation over no rotation at
+  // all; otherwise keep the original framing.
+  const minImprovement = 0.90; // rotated area must be <= 90% of original
+  final bestRotatedArea = math.min(areaPos, areaNeg);
+
+  img.Image useImage;
+  _LocalBlob useBlob;
+  if (bestRotatedArea > areaOriginal * minImprovement) {
+    useImage = padded;
+    useBlob = blob;
+  } else if (areaPos <= areaNeg) {
+    useImage = rotatedPos;
+    useBlob = blobPos!;
+  } else {
+    useImage = rotatedNeg;
+    useBlob = blobNeg!;
+  }
+
+  if (expectedArea > 0 && _bboxArea(useBlob) > expectedArea * 1.6) {
+    return fallback;
+  }
+  return _tightCropToBlob(useImage, useBlob) ?? fallback;
+}
+
+img.Image _plainCrop(img.Image source, Rect box) {
+  final x = box.left.round().clamp(0, source.width - 1);
+  final y = box.top.round().clamp(0, source.height - 1);
+  final w = box.width.round().clamp(1, source.width - x);
+  final h = box.height.round().clamp(1, source.height - y);
+  return img.copyCrop(source, x: x, y: y, width: w, height: h);
+}
+
+int _bboxArea(_LocalBlob b) => (b.maxX - b.minX + 1) * (b.maxY - b.minY + 1);
+
+img.Image? _tightCropToBlob(img.Image image, _LocalBlob blob) {
+  const pad = 3;
+  final x = (blob.minX - pad).clamp(0, image.width - 1);
+  final y = (blob.minY - pad).clamp(0, image.height - 1);
+  final x1 = (blob.maxX + pad + 1).clamp(x + 1, image.width);
+  final y1 = (blob.maxY + pad + 1).clamp(y + 1, image.height);
+  return img.copyCrop(image, x: x, y: y, width: x1 - x, height: y1 - y);
+}
+
+/// A connected white-pixel blob found in a small local crop (full
+/// resolution, no morphological cleanup — unlike [segmentTiles]'s global
+/// mask, we want the seam to a touching neighbor tile to stay visible here
+/// so it can be excluded).
+class _LocalBlob {
+  final int minX, minY, maxX, maxY, area;
+  final List<(int, int)> points;
+  _LocalBlob(this.minX, this.minY, this.maxX, this.maxY, this.area, this.points);
+}
+
+List<_LocalBlob> _findLocalBlobs(img.Image local) {
+  final w = local.width, h = local.height;
+  final mask = Uint8List(w * h);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      if (_isWhitePixel(local, x, y)) mask[y * w + x] = 1;
+    }
+  }
+
+  final labels = Int32List(w * h);
+  int nextLabel = 0;
+  final blobs = <_LocalBlob>[];
+
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final idx = y * w + x;
+      if (mask[idx] == 0 || labels[idx] != 0) continue;
+
+      nextLabel++;
+      int minX = x, maxX = x, minY = y, maxY = y;
+      final points = <(int, int)>[];
+      final stack = <int>[idx];
+      labels[idx] = nextLabel;
+
+      while (stack.isNotEmpty) {
+        final ci = stack.removeLast();
+        final cx = ci % w, cy = ci ~/ w;
+        points.add((cx, cy));
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            final nx = cx + dx, ny = cy + dy;
+            if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+              final ni = ny * w + nx;
+              if (mask[ni] != 0 && labels[ni] == 0) {
+                labels[ni] = nextLabel;
+                stack.add(ni);
+              }
+            }
+          }
+        }
+      }
+
+      blobs.add(_LocalBlob(minX, minY, maxX, maxY, points.length, points));
+    }
+  }
+  return blobs;
+}
+
+_LocalBlob? _pickCentralBlob(List<_LocalBlob> blobs, int w, int h) {
+  final minArea = math.max(20, 0.03 * w * h);
+  final cx = w / 2.0, cy = h / 2.0;
+  _LocalBlob? best;
+  double bestDist = double.infinity;
+  for (final b in blobs) {
+    if (b.area < minArea) continue;
+    final bboxArea = _bboxArea(b);
+    if (bboxArea == 0 || b.area / bboxArea < 0.20) continue;
+    final bcx = (b.minX + b.maxX) / 2.0;
+    final bcy = (b.minY + b.maxY) / 2.0;
+    final dist = (bcx - cx) * (bcx - cx) + (bcy - cy) * (bcy - cy);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/// Search for the rotation angle (degrees) that minimizes the axis-aligned
+/// bounding-box area of [points] — an approximate minimum-area-rectangle
+/// search by brute-force angle sweep (cheap for the small point sets
+/// involved here; avoids implementing a full convex-hull/rotating-calipers
+/// or PCA/eigendecomposition routine).
+double _bestStraighteningAngleDegrees(List<(int, int)> points) {
+  if (points.isEmpty) return 0.0;
+  double sumX = 0, sumY = 0;
+  for (final p in points) {
+    sumX += p.$1;
+    sumY += p.$2;
+  }
+  final cx = sumX / points.length, cy = sumY / points.length;
+
+  double bestAngle = 0.0;
+  double bestArea = double.infinity;
+
+  double areaAt(double deg) {
+    final rad = deg * math.pi / 180.0;
+    final cosA = math.cos(rad), sinA = math.sin(rad);
+    double minRx = double.infinity, maxRx = -double.infinity;
+    double minRy = double.infinity, maxRy = -double.infinity;
+    for (final p in points) {
+      final dx = p.$1 - cx, dy = p.$2 - cy;
+      final rx = dx * cosA - dy * sinA;
+      final ry = dx * sinA + dy * cosA;
+      if (rx < minRx) minRx = rx;
+      if (rx > maxRx) maxRx = rx;
+      if (ry < minRy) minRy = ry;
+      if (ry > maxRy) maxRy = ry;
+    }
+    return (maxRx - minRx) * (maxRy - minRy);
+  }
+
+  for (double deg = -25; deg <= 25; deg += 2) {
+    final area = areaAt(deg);
+    if (area < bestArea) {
+      bestArea = area;
+      bestAngle = deg;
+    }
+  }
+  final coarseBest = bestAngle;
+  for (double deg = coarseBest - 2; deg <= coarseBest + 2; deg += 0.25) {
+    final area = areaAt(deg);
+    if (area < bestArea) {
+      bestArea = area;
+      bestAngle = deg;
+    }
+  }
+  return bestAngle;
 }
 
 // ───────── White-pixel test (RGB, low saturation / high value) ─────────

@@ -2,9 +2,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, debugPrint;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
+import 'package:path_provider/path_provider.dart';
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../models/score_request.dart';
@@ -112,9 +113,22 @@ class _ScanScreenState extends State<ScanScreen> {
     bool capturedOk = false;
     try {
       final xFile = await _controller!.takePicture();
-      final bytes = await File(xFile.path).readAsBytes();
-      final decoded = img.decodeImage(bytes);
-      if (decoded == null) throw Exception('画像のデコードに失敗');
+      final rawBytes = await File(xFile.path).readAsBytes();
+      final rawDecoded = img.decodeImage(rawBytes);
+      if (rawDecoded == null) throw Exception('画像のデコードに失敗');
+      // The `camera` plugin here writes no EXIF orientation tag at all
+      // (confirmed empirically: hasOrientation=false), so bakeOrientation is
+      // a no-op — it always delivers a fixed-shape portrait buffer
+      // regardless of how the phone is actually held. The UI is locked to
+      // portrait (see main.dart) and the user always physically turns the
+      // phone sideways to shoot a tile row along its long edge, so correct
+      // for that with a fixed rotation instead of relying on (absent)
+      // metadata. Re-encoding (rather than keeping the original file's
+      // bytes) keeps every downstream consumer (display, detection,
+      // per-tile crop/classify) working from the same already-rotated
+      // pixels.
+      final decoded = img.copyRotate(rawDecoded, angle: -90);
+      final bytes = Uint8List.fromList(img.encodeJpg(decoded));
       capturedOk = true;
 
       setState(() {
@@ -246,6 +260,20 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
     });
 
+    // TEMPORARY DEBUG: dump the source photo and each naive/refined crop to
+    // Documents so they can be pulled off-device for direct inspection
+    // (`xcrun devicectl device copy from ... /Documents/debug_crops`).
+    Directory? debugDir;
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      debugDir = Directory('${docs.path}/debug_crops');
+      if (debugDir.existsSync()) debugDir.deleteSync(recursive: true);
+      debugDir.createSync(recursive: true);
+      File('${debugDir.path}/full.jpg').writeAsBytesSync(img.encodeJpg(srcImage));
+    } catch (_) {
+      debugDir = null;
+    }
+
     for (int i = 0; i < boxes.length && i < 14; i++) {
       final box = boxes[i];
       final x = box.left.round().clamp(0, srcImage.width - 1);
@@ -253,7 +281,13 @@ class _ScanScreenState extends State<ScanScreen> {
       final w = box.width.round().clamp(1, srcImage.width - x);
       final h = box.height.round().clamp(1, srcImage.height - y);
 
-      final cropped = img.copyCrop(srcImage, x: x, y: y, width: w, height: h);
+      final cropped = refineTileCrop(srcImage, box);
+      if (debugDir != null) {
+        final naive = img.copyCrop(srcImage, x: x, y: y, width: w, height: h);
+        final idxStr = i.toString().padLeft(2, '0');
+        File('${debugDir.path}/tile${idxStr}_naive.jpg').writeAsBytesSync(img.encodeJpg(naive));
+        File('${debugDir.path}/tile${idxStr}_refined.jpg').writeAsBytesSync(img.encodeJpg(cropped));
+      }
       _croppedImages[i] = cropped;
       _tileBoxes[i] = Rect.fromLTWH(x.toDouble(), y.toDouble(), w.toDouble(), h.toDouble());
 
@@ -652,10 +686,13 @@ class _ScanScreenState extends State<ScanScreen> {
               TileSlotRow(tiles: _tiles, isClassifying: _isClassifying, onSlotTap: _onSlotTap),
               const SizedBox(height: 8),
 
-              // Full photo with detected-tile markers
+              // Full photo with detected-tile markers. Sized by the photo's
+              // own aspect ratio (not a fixed screen fraction) so a portrait
+              // capture gets a tall box and a landscape capture a short one
+              // — the scrolling column below absorbs whichever it is.
               if (_capturedBytes != null && _capturedImage != null) ...[
-                SizedBox(
-                  height: MediaQuery.of(context).size.height * 0.55,
+                AspectRatio(
+                  aspectRatio: _capturedImage!.width / _capturedImage!.height,
                   child: TileMarkerOverlay(
                     imageBytes: _capturedBytes!,
                     imageWidth: _capturedImage!.width,
