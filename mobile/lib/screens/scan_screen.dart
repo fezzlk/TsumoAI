@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import '../services/tile_classifier.dart';
@@ -12,7 +13,9 @@ import '../widgets/tile_slot_row.dart';
 import '../widgets/tile_keyboard.dart';
 import '../widgets/context_input_panel.dart';
 import '../widgets/score_result_panel.dart';
+import '../widgets/tile_marker_overlay.dart';
 import '../services/training_data_client.dart';
+import '../services/tile_segmenter.dart';
 
 class ScanScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -22,7 +25,7 @@ class ScanScreen extends StatefulWidget {
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-enum _ScanPhase { camera, align, results }
+enum _ScanPhase { camera, detecting, align, results }
 
 class _ScanScreenState extends State<ScanScreen> {
   CameraController? _controller;
@@ -47,6 +50,7 @@ class _ScanScreenState extends State<ScanScreen> {
   final List<String?> _tiles = List.filled(14, null);
   final List<bool> _isClassifying = List.filled(14, false);
   final List<img.Image?> _croppedImages = List.filled(14, null);
+  final List<Rect?> _tileBoxes = List.filled(14, null);
 
   bool _isCapturing = false;
   bool _isScoring = false;
@@ -105,16 +109,18 @@ class _ScanScreenState extends State<ScanScreen> {
     if (_controller == null || !_controller!.value.isInitialized || _isCapturing) return;
     setState(() => _isCapturing = true);
 
+    bool capturedOk = false;
     try {
       final xFile = await _controller!.takePicture();
       final bytes = await File(xFile.path).readAsBytes();
       final decoded = img.decodeImage(bytes);
       if (decoded == null) throw Exception('画像のデコードに失敗');
+      capturedOk = true;
 
       setState(() {
         _capturedBytes = bytes;
         _capturedImage = decoded;
-        _phase = _ScanPhase.align;
+        _phase = _ScanPhase.detecting;
         _imageOffset = Offset.zero;
         _imageScale = 1.0;
         _imageRotation = 0.0;
@@ -125,10 +131,29 @@ class _ScanScreenState extends State<ScanScreen> {
           _tiles[i] = null;
           _isClassifying[i] = false;
           _croppedImages[i] = null;
+          _tileBoxes[i] = null;
         }
       });
+
+      // Try automatic tile detection first; the manual grid-alignment phase
+      // is a fallback for when detection doesn't find a clean 13/14-tile
+      // hand (not the primary mechanism).
+      final detectedBoxes = await compute(segmentTilesFromBytes, bytes);
+      if (!mounted) return;
+
+      if (detectedBoxes.length == 13 || detectedBoxes.length == 14) {
+        await _classifyBoxesAndFinish(detectedBoxes);
+      } else {
+        setState(() => _phase = _ScanPhase.align);
+      }
     } catch (e) {
-      setState(() => _errorMessage = '撮影エラー: $e');
+      setState(() {
+        _errorMessage = '撮影エラー: $e';
+        // If capture/decode itself failed, stay on the camera phase; if it
+        // was detection that failed after a successful capture, fall back
+        // to manual alignment rather than getting stuck on the spinner.
+        if (capturedOk) _phase = _ScanPhase.align;
+      });
     } finally {
       setState(() => _isCapturing = false);
     }
@@ -163,17 +188,7 @@ class _ScanScreenState extends State<ScanScreen> {
       Rect gridScreenRect, double imgLeft, double imgTop,
       double scaledW, double scaledH) async {
     final srcImage = _capturedImage;
-    if (srcImage == null || !_classifier.isReady) {
-      setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
-      return;
-    }
-
-    setState(() {
-      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; }
-      _scoreResult = null;
-      _isNotWinning = false;
-      _errorMessage = null;
-    });
+    if (srcImage == null) return;
 
     // Image center in screen coordinates
     final imgCenterX = imgLeft + scaledW / 2;
@@ -185,6 +200,7 @@ class _ScanScreenState extends State<ScanScreen> {
     final padX = slotW * 0.2;
     final padY = gridScreenRect.height * 0.2;
 
+    final boxes = <Rect>[];
     for (int i = 0; i < 14; i++) {
       // Grid slot corners in screen space
       final slotLeft = gridScreenRect.left + i * slotW - padX;
@@ -206,9 +222,40 @@ class _ScanScreenState extends State<ScanScreen> {
 
       final cropW = (maxX - minX).clamp(1, srcImage.width - minX);
       final cropH = (maxY - minY).clamp(1, srcImage.height - minY);
+      boxes.add(Rect.fromLTWH(minX.toDouble(), minY.toDouble(), cropW.toDouble(), cropH.toDouble()));
+    }
 
-      final cropped = img.copyCrop(srcImage, x: minX, y: minY, width: cropW, height: cropH);
+    await _classifyBoxesAndFinish(boxes);
+  }
+
+  /// Crop and on-device-classify each of [boxes] (in `_capturedImage`'s pixel
+  /// coordinate space), populating `_tiles`/`_croppedImages`/`_tileBoxes`,
+  /// then move to the results phase. Shared by both the automatic-detection
+  /// path and the manual grid-alignment fallback.
+  Future<void> _classifyBoxesAndFinish(List<Rect> boxes) async {
+    final srcImage = _capturedImage;
+    if (srcImage == null || !_classifier.isReady) {
+      setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
+      return;
+    }
+
+    setState(() {
+      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; _tileBoxes[i] = null; }
+      _scoreResult = null;
+      _isNotWinning = false;
+      _errorMessage = null;
+    });
+
+    for (int i = 0; i < boxes.length && i < 14; i++) {
+      final box = boxes[i];
+      final x = box.left.round().clamp(0, srcImage.width - 1);
+      final y = box.top.round().clamp(0, srcImage.height - 1);
+      final w = box.width.round().clamp(1, srcImage.width - x);
+      final h = box.height.round().clamp(1, srcImage.height - y);
+
+      final cropped = img.copyCrop(srcImage, x: x, y: y, width: w, height: h);
       _croppedImages[i] = cropped;
+      _tileBoxes[i] = Rect.fromLTWH(x.toDouble(), y.toDouble(), w.toDouble(), h.toDouble());
 
       final idx = i;
       final results = _classifier.classify(cropped, topK: 1);
@@ -264,7 +311,12 @@ class _ScanScreenState extends State<ScanScreen> {
       _phase = _ScanPhase.camera;
       _capturedBytes = null;
       _capturedImage = null;
-      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = false; _croppedImages[i] = null; }
+      for (int i = 0; i < 14; i++) {
+        _tiles[i] = null;
+        _isClassifying[i] = false;
+        _croppedImages[i] = null;
+        _tileBoxes[i] = null;
+      }
       _scoreResult = null;
       _isNotWinning = false;
       _errorMessage = null;
@@ -305,11 +357,45 @@ class _ScanScreenState extends State<ScanScreen> {
     switch (_phase) {
       case _ScanPhase.camera:
         return _buildCameraPhase();
+      case _ScanPhase.detecting:
+        return _buildDetectingPhase();
       case _ScanPhase.align:
         return _buildAlignPhase();
       case _ScanPhase.results:
         return _buildResultsPhase();
     }
+  }
+
+  // ════════════════════════════════════════
+  // Phase: Detecting (automatic tile detection)
+  // ════════════════════════════════════════
+
+  Widget _buildDetectingPhase() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_capturedBytes != null)
+              Opacity(
+                opacity: 0.4,
+                child: Image.memory(_capturedBytes!, fit: BoxFit.contain, gaplessPlayback: true),
+              ),
+            const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.greenAccent),
+                  SizedBox(height: 12),
+                  Text('牌を検出中...', style: TextStyle(color: Colors.white70)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ════════════════════════════════════════
@@ -565,6 +651,22 @@ class _ScanScreenState extends State<ScanScreen> {
               // Tile results row
               TileSlotRow(tiles: _tiles, isClassifying: _isClassifying, onSlotTap: _onSlotTap),
               const SizedBox(height: 8),
+
+              // Full photo with detected-tile markers
+              if (_capturedBytes != null && _capturedImage != null) ...[
+                SizedBox(
+                  height: MediaQuery.of(context).size.height * 0.55,
+                  child: TileMarkerOverlay(
+                    imageBytes: _capturedBytes!,
+                    imageWidth: _capturedImage!.width,
+                    imageHeight: _capturedImage!.height,
+                    boxes: _tileBoxes,
+                    tiles: _tiles,
+                    onTap: _onSlotTap,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
 
               // Cropped images preview
               SizedBox(
