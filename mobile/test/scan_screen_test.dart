@@ -9,7 +9,7 @@ void main() {
     });
 
     test('returns the reference frame height unchanged at equal pixel density', () {
-      // previewSize.height == decodedImageHeight => 1:1 density, so the
+      // previewSize.height == decodedImageWidth => 1:1 density, so the
       // result should equal the on-screen reference frame's own height
       // (90.0, see _kReferenceFrameHeight in scan_screen.dart).
       final pitch = expectedPitchFromReferenceFrame(const Size(400, 800), 800);

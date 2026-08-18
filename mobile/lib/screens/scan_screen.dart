@@ -30,12 +30,18 @@ enum _ScanPhase { camera, detecting, align, results }
 
 // On-screen size (logical px) of the reference frame overlaid on the camera
 // preview during the `camera` phase — a rough visual guide, not a strict
-// alignment grid (see FEZ-94). Only the height matters functionally: this
-// app's fixed shooting convention (phone physically turned sideways,
-// corrected by the `-90` rotation in `_capture`) means the tile row runs
-// along the final captured image's height axis, so the frame's height is
-// what gets converted into an expected tile pitch. The width is cosmetic
-// (drawn to roughly resemble one tile's face).
+// alignment grid (see FEZ-94). Only the height matters functionally: the
+// raw camera buffer is always portrait-shaped, fixed to the (locked)
+// screen's own orientation regardless of how the phone is physically held
+// (see `_capture`'s comment on `hasOrientation=false`) — so the screen's
+// height axis is the same physical axis as the raw buffer's height axis.
+// This app's fixed shooting convention (phone physically turned sideways)
+// puts the tile row along that axis, and the `-90` rotation in `_capture`
+// swaps width/height, carrying it over to the *final* captured image's
+// width axis. So the frame's on-screen height is what gets converted into
+// an expected tile pitch, but against the final image's width. The
+// reference frame's own width is cosmetic (drawn to roughly resemble one
+// tile's face).
 const double _kReferenceFrameHeight = 90.0;
 const double _kReferenceFrameWidth = 58.0;
 
@@ -50,8 +56,10 @@ const double _kReferenceFrameWidth = 58.0;
 /// filling [previewSize] exactly, with the same framing the manual rotation
 /// in `_capture` restores for the still photo. Combined with this app's
 /// fixed shooting convention (see [_kReferenceFrameHeight]), the frame's
-/// on-screen height and the final image's height should refer to the same
-/// physical extent, just at different pixel densities.
+/// on-screen height and the final image's *width* (the `-90` rotation swaps
+/// width/height, so the screen/raw-buffer height axis lands on the final
+/// image's width axis — see [_kReferenceFrameHeight]) should refer to the
+/// same physical extent, just at different pixel densities.
 ///
 /// This mapping has not been validated against a real device's actual
 /// preview/capture pixel geometry; treat the result as an approximate prior
@@ -59,9 +67,9 @@ const double _kReferenceFrameWidth = 58.0;
 ///
 /// Returns null (no prior) if [previewSize] hasn't been measured yet.
 @visibleForTesting
-double? expectedPitchFromReferenceFrame(Size? previewSize, int decodedImageHeight) {
+double? expectedPitchFromReferenceFrame(Size? previewSize, int decodedImageWidth) {
   if (previewSize == null || previewSize.height <= 0) return null;
-  return _kReferenceFrameHeight * (decodedImageHeight / previewSize.height);
+  return _kReferenceFrameHeight * (decodedImageWidth / previewSize.height);
 }
 
 class _ScanScreenState extends State<ScanScreen> {
@@ -170,7 +178,7 @@ class _ScanScreenState extends State<ScanScreen> {
       final decoded = img.copyRotate(rawDecoded, angle: -90);
       final bytes = Uint8List.fromList(img.encodeJpg(decoded));
       capturedOk = true;
-      final expectedPitch = expectedPitchFromReferenceFrame(_cameraPreviewSize, decoded.height);
+      final expectedPitch = expectedPitchFromReferenceFrame(_cameraPreviewSize, decoded.width);
 
       setState(() {
         _capturedBytes = bytes;
