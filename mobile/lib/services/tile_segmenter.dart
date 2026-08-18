@@ -145,21 +145,33 @@ List<Rect> segmentTiles(img.Image image) {
   final tileCounts = _resolveTileCounts(dims, blobPitches);
 
   // Subdivide each kept component into individual tiles, scaling back up
-  // to the original image's pixel coordinate space.
+  // to the original image's pixel coordinate space. Each slot's cross-axis
+  // position/extent tracks the blob's local centerline (see
+  // `_blobCenterline`) rather than the blob's own fixed bbox, so a curved
+  // (non-straight) tile row doesn't drift slots away from the true tiles.
   final result = <Rect>[];
   for (int i = 0; i < kept.length; i++) {
     final n = tileCounts[i];
     if (n <= 0) continue;
     final c = kept[i];
+    final centerline = _blobCenterline(mask, mW, c.x, c.y, c.w, c.h, vertical);
+    final halfExtent = centerline.extent / 2;
     if (vertical) {
       final subH = c.h / n;
       for (int j = 0; j < n; j++) {
         final sy = c.y + (j * subH).toInt();
         final ey = c.y + ((j + 1) * subH).toInt();
+        final rel0 = sy - c.y;
+        final rel1 = math.min(centerline.centers.length, math.max(rel0 + 1, ey - c.y));
+        final sliceCenter = _median(centerline.centers.sublist(rel0, rel1));
+        var sx = (sliceCenter - halfExtent).round();
+        var ex = sx + centerline.extent.round();
+        sx = sx.clamp(0, mW);
+        ex = ex.clamp(sx, mW);
         result.add(Rect.fromLTWH(
-          (c.x * scale).toDouble(),
+          (sx * scale).toDouble(),
           (sy * scale).toDouble(),
-          (c.w * scale).toDouble(),
+          ((ex - sx) * scale).toDouble(),
           ((ey - sy) * scale).toDouble(),
         ));
       }
@@ -168,11 +180,18 @@ List<Rect> segmentTiles(img.Image image) {
       for (int j = 0; j < n; j++) {
         final sx = c.x + (j * subW).toInt();
         final ex = c.x + ((j + 1) * subW).toInt();
+        final rel0 = sx - c.x;
+        final rel1 = math.min(centerline.centers.length, math.max(rel0 + 1, ex - c.x));
+        final sliceCenter = _median(centerline.centers.sublist(rel0, rel1));
+        var sy = (sliceCenter - halfExtent).round();
+        var ey = sy + centerline.extent.round();
+        sy = sy.clamp(0, mH);
+        ey = ey.clamp(sy, mH);
         result.add(Rect.fromLTWH(
           (sx * scale).toDouble(),
-          (c.y * scale).toDouble(),
+          (sy * scale).toDouble(),
           ((ex - sx) * scale).toDouble(),
-          (c.h * scale).toDouble(),
+          ((ey - sy) * scale).toDouble(),
         ));
       }
     }
@@ -609,6 +628,87 @@ List<int> _findLocalMaxima(List<double> seg, {double prominence = 0.02}) {
   }
 
   return (lo + best, acNorm[lo + best]);
+}
+
+typedef _Centerline = ({List<double> centers, double extent});
+
+const double _centerlineRowCoverageThreshold = 0.15;
+const int _centerlineSmoothWindow = 5;
+
+/// Compute a local cross-axis "centerline" and a single typical per-slice
+/// extent for one blob, from the CLEANED (post-morphology) [mask] — kept
+/// consistent with the same shape that determined the blob's bbox and
+/// connectivity in the first place (unlike [_blobPitch], which deliberately
+/// reads the raw pre-morphology mask to see the thin seams between
+/// touching tiles).
+///
+/// For a [vertical] blob, `centers[ry]` (relative to the blob's own bbox)
+/// is the cross-axis (x) center of the mask pixels in row `ry`, gap-filled
+/// across rows with too little coverage to trust (the seam between tiles,
+/// or a thin cross-section at a sharp bend) and smoothed with a moving
+/// median to suppress single-row noise while preserving genuine curvature.
+/// `extent` is one typical width for the whole blob — the median row width
+/// across confidently-covered rows only — so a sharply-bent minority of
+/// rows doesn't inflate every slice's width the way the blob's raw bbox
+/// width does today (see [segmentTiles] doc on curved rows). Horizontal
+/// blobs mirror this with rows/columns and x/y swapped.
+///
+/// Falls back to a single centered value spanning [w]/[h] when no row (or
+/// column) anywhere in the blob has enough coverage to be trusted.
+_Centerline _blobCenterline(
+    Uint8List mask, int maskW, int x, int y, int w, int h, bool vertical) {
+  final crossDim = vertical ? w : h;
+  final runDim = vertical ? h : w;
+  final centers = List<double>.filled(runDim, double.nan);
+  final widths = <double>[];
+
+  for (int r = 0; r < runDim; r++) {
+    final xs = <int>[];
+    for (int c = 0; c < crossDim; c++) {
+      final mx = vertical ? x + c : x + r;
+      final my = vertical ? y + r : y + c;
+      if (mask[my * maskW + mx] != 0) xs.add(c);
+    }
+    if (xs.length >= _centerlineRowCoverageThreshold * crossDim) {
+      final localCenter = _median([for (final v in xs) v.toDouble()]);
+      centers[r] = (vertical ? x : y) + localCenter;
+      widths.add((xs.last - xs.first + 1).toDouble());
+    }
+  }
+
+  final extent = widths.isNotEmpty ? _median(widths) : crossDim.toDouble();
+
+  final validIdx = [for (int r = 0; r < runDim; r++) if (!centers[r].isNaN) r];
+  if (validIdx.isEmpty) {
+    // No signal anywhere in this blob; fall back to a single centered value
+    // for every slot, equivalent to today's fixed-position behavior.
+    final fallbackCenter = (vertical ? x : y) + crossDim / 2;
+    return (centers: List<double>.filled(runDim, fallbackCenter), extent: extent);
+  }
+  for (int r = 0; r < validIdx.first; r++) {
+    centers[r] = centers[validIdx.first];
+  }
+  for (int r = validIdx.last + 1; r < runDim; r++) {
+    centers[r] = centers[validIdx.last];
+  }
+  for (int k = 0; k < validIdx.length - 1; k++) {
+    final r0 = validIdx[k], r1 = validIdx[k + 1];
+    if (r1 - r0 <= 1) continue;
+    final v0 = centers[r0], v1 = centers[r1];
+    for (int r = r0 + 1; r < r1; r++) {
+      centers[r] = v0 + (v1 - v0) * (r - r0) / (r1 - r0);
+    }
+  }
+
+  final smoothed = List<double>.filled(runDim, 0.0);
+  final half = _centerlineSmoothWindow ~/ 2;
+  for (int r = 0; r < runDim; r++) {
+    final lo = math.max(0, r - half);
+    final hi = math.min(runDim - 1, r + half);
+    smoothed[r] = _median(centers.sublist(lo, hi + 1));
+  }
+
+  return (centers: smoothed, extent: extent);
 }
 
 /// Estimate tile pitch for one blob from the RAW (pre-morphology) mask

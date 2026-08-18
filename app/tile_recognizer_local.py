@@ -141,6 +141,73 @@ def _estimate_pitch(profile: np.ndarray, dim: int) -> tuple[int | None, float]:
     return lo + best, float(ac[lo + best])
 
 
+_CENTERLINE_ROW_COVERAGE_THRESHOLD = 0.15
+_CENTERLINE_SMOOTH_WINDOW = 5
+
+
+def _blob_centerline(
+    mask: np.ndarray, x: int, y: int, w: int, h: int, vertical: bool,
+) -> tuple[np.ndarray, float]:
+    """Compute a local cross-axis "centerline" and a single typical
+    per-slice extent for one blob, from the CLEANED (post-morphology)
+    mask — kept consistent with the same shape that determined the blob's
+    bbox and connectivity in the first place (unlike _blob_pitch, which
+    deliberately reads the raw pre-morphology mask to see the thin seams
+    between touching tiles).
+
+    For a vertical blob, centers[ry] (relative to the blob's own bbox) is
+    the cross-axis (x) center of the mask pixels in row ry, gap-filled
+    across rows with too little coverage to trust (the seam between tiles,
+    or a thin cross-section at a sharp bend) and smoothed with a moving
+    median to suppress single-row noise while preserving genuine curvature.
+    extent is one typical width for the whole blob — the median row width
+    across confidently-covered rows only — so a sharply-bent minority of
+    rows doesn't inflate every slice's width the way the blob's raw bbox
+    width does today (see _segment_tiles doc on curved rows). Horizontal
+    blobs mirror this with rows/columns and x/y swapped (achieved here by
+    transposing the sub-mask so axis 0 is always the run axis).
+
+    Falls back to a single centered value spanning the blob's own w/h when
+    no row (or column) anywhere in the blob has enough coverage to trust.
+    """
+    sub = mask[y:y + h, x:x + w] > 0
+    if not vertical:
+        sub = sub.T
+    run_dim, cross_dim = sub.shape
+
+    centers = np.full(run_dim, np.nan)
+    widths: list[float] = []
+    cross_idx = np.arange(cross_dim)
+    for r in range(run_dim):
+        xs = cross_idx[sub[r]]
+        if xs.size < _CENTERLINE_ROW_COVERAGE_THRESHOLD * cross_dim:
+            continue
+        centers[r] = (x if vertical else y) + float(np.median(xs))
+        widths.append(float(xs[-1] - xs[0] + 1))
+
+    extent = float(np.median(widths)) if widths else float(cross_dim)
+
+    valid_idx = np.flatnonzero(~np.isnan(centers))
+    if valid_idx.size == 0:
+        fallback = (x if vertical else y) + cross_dim / 2
+        return np.full(run_dim, fallback), extent
+
+    # np.interp clamps to the boundary value outside [valid_idx[0],
+    # valid_idx[-1]] by default, i.e. edge-hold before the first / after the
+    # last valid row, and linearly interpolates the gaps in between.
+    all_idx = np.arange(run_dim)
+    centers = np.interp(all_idx, valid_idx, centers[valid_idx])
+
+    half = _CENTERLINE_SMOOTH_WINDOW // 2
+    smoothed = np.empty(run_dim)
+    for r in range(run_dim):
+        lo = max(0, r - half)
+        hi = min(run_dim, r + half + 1)
+        smoothed[r] = np.median(centers[lo:hi])
+
+    return smoothed, extent
+
+
 def _blob_pitch(
     mask_raw: np.ndarray, x: int, y: int, w: int, h: int, vertical: bool,
 ) -> tuple[int | None, float, int]:
@@ -254,8 +321,23 @@ def _resolve_tile_counts(
 
 
 def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
+    """Crop each box from `_segment_tile_boxes(image)` out of `image`. See
+    that function for the segmentation algorithm itself; this thin wrapper
+    exists only so callers that just want classifiable tile images (the
+    only production use so far) don't have to do the cropping themselves."""
+    tiles: list[np.ndarray] = []
+    for sy, ey, sx, ex in _segment_tile_boxes(image):
+        tile_img = image[sy:ey, sx:ex]
+        if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
+            tiles.append(tile_img)
+    return tiles
+
+
+def _segment_tile_boxes(image: np.ndarray) -> list[tuple[int, int, int, int]]:
     """Segment individual tiles from a single linear run (horizontal row or
     vertical stack) using connected-component analysis plus pitch detection.
+    Returns each tile's box as (sy, ey, sx, ex) in `image`'s own pixel
+    coordinate space.
 
     Steps:
     1. HSV white-pixel mask (kept raw, pre-morphology, for later pitch
@@ -271,7 +353,10 @@ def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
        13/14-tile hand-size constraint (see _resolve_tile_counts) — this
        disambiguates blobs no single blob's own signal can resolve alone
     7. Subdivide each kept component into individual tiles using the
-       resolved count
+       resolved count; each slot's cross-axis position/extent tracks the
+       blob's local centerline (see _blob_centerline) rather than the
+       blob's fixed bbox, so a curved (non-straight, bent) row doesn't
+       drift slots away from the true tiles
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
@@ -353,29 +438,46 @@ def _segment_tiles(image: np.ndarray) -> list[np.ndarray]:
     dims = [dim for _p, _c, dim in blob_pitches]
     tile_counts = _resolve_tile_counts(dims, blob_pitches)
 
-    tiles: list[np.ndarray] = []
+    boxes: list[tuple[int, int, int, int]] = []
     for (x, y, w, h, _area), n_sub in zip(kept, tile_counts):
         if n_sub <= 0:
             continue
+
+        # Each slot's cross-axis position/extent tracks the blob's local
+        # centerline (see _blob_centerline) rather than the blob's own
+        # fixed bbox, so a curved (non-straight) tile row doesn't drift
+        # slots away from the true tiles.
+        centers, extent = _blob_centerline(mask, x, y, w, h, vertical)
+        half_extent = extent / 2
 
         if vertical:
             sub_h = h / n_sub
             for j in range(n_sub):
                 sy = y + int(j * sub_h)
                 ey = y + int((j + 1) * sub_h)
-                tile_img = image[sy:ey, x:x + w]
-                if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
-                    tiles.append(tile_img)
+                rel0 = sy - y
+                rel1 = min(len(centers), max(rel0 + 1, ey - y))
+                slice_center = float(np.median(centers[rel0:rel1]))
+                sx = int(round(slice_center - half_extent))
+                ex = sx + int(round(extent))
+                sx = max(0, min(sx, image_w))
+                ex = max(sx, min(ex, image_w))
+                boxes.append((sy, ey, sx, ex))
         else:
             sub_w = w / n_sub
             for j in range(n_sub):
                 sx = x + int(j * sub_w)
                 ex = x + int((j + 1) * sub_w)
-                tile_img = image[y:y + h, sx:ex]
-                if tile_img.shape[0] > 0 and tile_img.shape[1] > 0:
-                    tiles.append(tile_img)
+                rel0 = sx - x
+                rel1 = min(len(centers), max(rel0 + 1, ex - x))
+                slice_center = float(np.median(centers[rel0:rel1]))
+                sy = int(round(slice_center - half_extent))
+                ey = sy + int(round(extent))
+                sy = max(0, min(sy, image_h))
+                ey = max(sy, min(ey, image_h))
+                boxes.append((sy, ey, sx, ex))
 
-    return tiles
+    return boxes
 
 
 def recognize_tiles_local(image_bytes: bytes) -> dict[str, Any] | None:
