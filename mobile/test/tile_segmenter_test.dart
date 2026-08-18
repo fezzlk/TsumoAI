@@ -148,6 +148,25 @@ void main() {
         reason: 'straightened+tight crop should be mostly tile, not background');
   });
 
+  test('expectedPitch recovers a count that own-pitch detection cannot', () {
+    // A single solid, gap-free blob has zero internal periodicity signal
+    // (uniform brightness => zero autocorrelation variance => `_estimatePitch`
+    // always returns null for it), so without a prior it can only ever be
+    // reported as one undivided blob. An `expectedPitch` hint should let it
+    // be resolved into the correct tile count anyway (FEZ-94).
+    const width = 550, tileW = 500, tileH = 340, nTiles = 14;
+    final height = nTiles * tileH;
+    final canvas = _darkBackground(width, height);
+    _fillTile(canvas, 25, 0, tileW, height);
+
+    final withoutHint = segmentTiles(canvas);
+    final withHint = segmentTiles(canvas, expectedPitch: tileH.toDouble());
+
+    expect(withoutHint.length, isNot(nTiles),
+        reason: 'a single featureless blob has no periodicity signal to recover the count from');
+    expect(withHint.length, nTiles);
+  });
+
   test('segmentTiles on real photos finds exactly fourteen', () {
     for (final name in ['case-001', 'case-002', 'case-003', 'case-004', 'case-005', 'case-006']) {
       final image = _loadCaseImage(name);

@@ -19,7 +19,15 @@ typedef _Comp = ({int x, int y, int w, int h, int area});
 /// Detect individual tile bounding boxes in [image]. Returns boxes in
 /// [image]'s own pixel coordinate space (not downscaled). Empty if no
 /// plausible tile run is found.
-List<Rect> segmentTiles(img.Image image) {
+///
+/// [expectedPitch], if provided, is an approximate prior for the per-tile
+/// pitch (in [image]'s pixel space, same units as [Rect] dimensions),
+/// typically derived from an on-screen reference frame shown during capture.
+/// It is added as one more hypothesis alongside each blob's own detected
+/// pitch — it can only add candidate tile counts to the joint 13/14 search,
+/// never remove the existing ones, so an absent or inaccurate prior degrades
+/// gracefully to current behavior rather than actively worsening it.
+List<Rect> segmentTiles(img.Image image, {double? expectedPitch}) {
   const scale = 4;
   final w = image.width;
   final h = image.height;
@@ -142,7 +150,11 @@ List<Rect> segmentTiles(img.Image image) {
     for (final c in kept) _blobPitch(maskRaw, mW, c.x, c.y, c.w, c.h, vertical),
   ];
   final dims = [for (final bp in blobPitches) bp.$3.toDouble()];
-  final tileCounts = _resolveTileCounts(dims, blobPitches);
+  // blobPitches/dims are in the downscaled mask's units (see `scale` above);
+  // expectedPitch is given in original-image pixel units, so convert down to
+  // match before folding it in as a hypothesis.
+  final expectedPitchScaled = expectedPitch == null ? null : expectedPitch / scale;
+  final tileCounts = _resolveTileCounts(dims, blobPitches, expectedPitch: expectedPitchScaled);
 
   // Subdivide each kept component into individual tiles, scaling back up
   // to the original image's pixel coordinate space.
@@ -183,7 +195,20 @@ List<Rect> segmentTiles(img.Image image) {
 /// Decode [bytes] and run [segmentTiles]. Suitable as a top-level `compute()`
 /// isolate entry point (decoding happens inside the isolate to avoid
 /// transferring a decoded `img.Image` across the isolate boundary).
-List<Rect> segmentTilesFromBytes(Uint8List bytes) {
+List<Rect> segmentTilesFromBytes(Uint8List bytes) => _decodeAndSegment(bytes, null);
+
+/// Bundled args for [segmentTilesFromBytesWithPitch] — `compute()` isolate
+/// entry points take exactly one positional argument, so [bytes] and
+/// [expectedPitch] (see [segmentTiles]) must travel together as one record.
+typedef PitchedSegmentArgs = ({Uint8List bytes, double? expectedPitch});
+
+/// Same as [segmentTilesFromBytes], but also threads an [expectedPitch]
+/// prior through to [segmentTiles]. Suitable as a top-level `compute()`
+/// isolate entry point.
+List<Rect> segmentTilesFromBytesWithPitch(PitchedSegmentArgs args) =>
+    _decodeAndSegment(args.bytes, args.expectedPitch);
+
+List<Rect> _decodeAndSegment(Uint8List bytes, double? expectedPitch) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return [];
   // A no-op if the caller already baked orientation in (bakeOrientation
@@ -191,7 +216,7 @@ List<Rect> segmentTilesFromBytes(Uint8List bytes) {
   // correct standalone, e.g. if called directly on a fresh capture.
   final oriented = img.bakeOrientation(decoded);
   final rgb = oriented.numChannels == 3 ? oriented : oriented.convert(numChannels: 3);
-  return segmentTiles(rgb);
+  return segmentTiles(rgb, expectedPitch: expectedPitch);
 }
 
 /// Given a rough (axis-aligned) detected bounding box for one tile, produce
@@ -678,7 +703,11 @@ double _median(List<double> values) {
 /// Resolve each kept blob's tile count using the fact that a mahjong hand
 /// has exactly 13 or 14 tiles. See `_resolve_tile_counts` in
 /// `app/tile_recognizer_local.py` for the full rationale.
-List<int> _resolveTileCounts(List<double> dims, List<(int?, double, int)> blobPitches) {
+List<int> _resolveTileCounts(
+  List<double> dims,
+  List<(int?, double, int)> blobPitches, {
+  double? expectedPitch,
+}) {
   const referenceConfidence = 0.50;
   const minConfidence = 0.30;
 
@@ -699,6 +728,7 @@ List<int> _resolveTileCounts(List<double> dims, List<(int?, double, int)> blobPi
       ?fallbackPitch,
       if (pitch != null) pitch / 2,
       if (pitch != null) pitch / 3,
+      ?expectedPitch,
     ];
     final costs = _pitchCountCosts(dims[i], hypotheses);
     if (costs.isNotEmpty) {

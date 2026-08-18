@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show compute, debugPrint;
+import 'package:flutter/foundation.dart' show compute, debugPrint, visibleForTesting;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -28,6 +28,50 @@ class ScanScreen extends StatefulWidget {
 
 enum _ScanPhase { camera, detecting, align, results }
 
+// On-screen size (logical px) of the reference frame overlaid on the camera
+// preview during the `camera` phase — a rough visual guide, not a strict
+// alignment grid (see FEZ-94). Only the height matters functionally: the
+// raw camera buffer is always portrait-shaped, fixed to the (locked)
+// screen's own orientation regardless of how the phone is physically held
+// (see `_capture`'s comment on `hasOrientation=false`) — so the screen's
+// height axis is the same physical axis as the raw buffer's height axis.
+// This app's fixed shooting convention (phone physically turned sideways)
+// puts the tile row along that axis, and the `-90` rotation in `_capture`
+// swaps width/height, carrying it over to the *final* captured image's
+// width axis. So the frame's on-screen height is what gets converted into
+// an expected tile pitch, but against the final image's width. The
+// reference frame's own width is cosmetic (drawn to roughly resemble one
+// tile's face).
+const double _kReferenceFrameHeight = 90.0;
+const double _kReferenceFrameWidth = 58.0;
+
+/// Convert the on-screen reference frame's height into an expected tile
+/// pitch in the final captured (post-`-90`-rotation) image's pixel space,
+/// for use as [segmentTiles]'s `expectedPitch` prior.
+///
+/// Assumes the live preview maps proportionally (uniformly stretched, no
+/// letterboxing) onto the final image: `CameraPreview` sits directly inside
+/// a `Stack(fit: StackFit.expand)` here, so the tight constraints it hands
+/// down defeat `CameraPreview`'s internal `AspectRatio` and it ends up
+/// filling [previewSize] exactly, with the same framing the manual rotation
+/// in `_capture` restores for the still photo. Combined with this app's
+/// fixed shooting convention (see [_kReferenceFrameHeight]), the frame's
+/// on-screen height and the final image's *width* (the `-90` rotation swaps
+/// width/height, so the screen/raw-buffer height axis lands on the final
+/// image's width axis — see [_kReferenceFrameHeight]) should refer to the
+/// same physical extent, just at different pixel densities.
+///
+/// This mapping has not been validated against a real device's actual
+/// preview/capture pixel geometry; treat the result as an approximate prior
+/// (see [segmentTiles] doc) rather than a precise measurement.
+///
+/// Returns null (no prior) if [previewSize] hasn't been measured yet.
+@visibleForTesting
+double? expectedPitchFromReferenceFrame(Size? previewSize, int decodedImageWidth) {
+  if (previewSize == null || previewSize.height <= 0) return null;
+  return _kReferenceFrameHeight * (decodedImageWidth / previewSize.height);
+}
+
 class _ScanScreenState extends State<ScanScreen> {
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
@@ -35,6 +79,10 @@ class _ScanScreenState extends State<ScanScreen> {
   final TrainingDataClient _trainingClient = TrainingDataClient();
 
   _ScanPhase _phase = _ScanPhase.camera;
+
+  // Size (logical px) the camera-phase Stack last laid out at, captured via
+  // LayoutBuilder in `_buildCameraPhase`; used by `expectedPitchFromReferenceFrame`.
+  Size? _cameraPreviewSize;
 
   // Captured image
   Uint8List? _capturedBytes;
@@ -130,6 +178,7 @@ class _ScanScreenState extends State<ScanScreen> {
       final decoded = img.copyRotate(rawDecoded, angle: -90);
       final bytes = Uint8List.fromList(img.encodeJpg(decoded));
       capturedOk = true;
+      final expectedPitch = expectedPitchFromReferenceFrame(_cameraPreviewSize, decoded.width);
 
       setState(() {
         _capturedBytes = bytes;
@@ -152,7 +201,10 @@ class _ScanScreenState extends State<ScanScreen> {
       // Try automatic tile detection first; the manual grid-alignment phase
       // is a fallback for when detection doesn't find a clean 13/14-tile
       // hand (not the primary mechanism).
-      final detectedBoxes = await compute(segmentTilesFromBytes, bytes);
+      final detectedBoxes = await compute(
+        segmentTilesFromBytesWithPitch,
+        (bytes: bytes, expectedPitch: expectedPitch),
+      );
       if (!mounted) return;
 
       if (detectedBoxes.length == 13 || detectedBoxes.length == 14) {
@@ -447,56 +499,97 @@ class _ScanScreenState extends State<ScanScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            CameraPreview(_controller!),
-            // Simple instruction
-            Positioned(
-              top: 20, left: 0, right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    '牌14枚が映るように撮影してください',
-                    style: TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                ),
-              ),
-            ),
-            // Capture button
-            Positioned(
-              bottom: 40, left: 0, right: 0,
-              child: Center(
-                child: GestureDetector(
-                  onTap: _isCapturing ? null : _capture,
-                  child: Container(
-                    width: 72, height: 72,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
-                      color: _isCapturing ? Colors.grey : Colors.white.withValues(alpha: 0.3),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // `CameraPreview` below is stretched to exactly fill this Stack
+            // (see `expectedPitchFromReferenceFrame` doc), so this is also
+            // its rendered size.
+            _cameraPreviewSize = Size(constraints.maxWidth, constraints.maxHeight);
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                CameraPreview(_controller!),
+                // Reference frame: a rough visual guide for about how large
+                // one tile should look, not a strict alignment grid
+                // (FEZ-94). Its measured on-screen size feeds
+                // `expectedPitchFromReferenceFrame`.
+                IgnorePointer(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: _kReferenceFrameWidth,
+                          height: _kReferenceFrameHeight,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.greenAccent, width: 2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Text(
+                            '目安: 牌1枚',
+                            style: TextStyle(color: Colors.greenAccent, fontSize: 11),
+                          ),
+                        ),
+                      ],
                     ),
-                    child: _isCapturing
-                        ? const Padding(
-                            padding: EdgeInsets.all(20),
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-                          )
-                        : const Icon(Icons.camera_alt, color: Colors.white, size: 32),
                   ),
                 ),
-              ),
-            ),
-            if (_errorMessage != null)
-              Positioned(
-                bottom: 130, left: 20, right: 20,
-                child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12), textAlign: TextAlign.center),
-              ),
-          ],
+                // Simple instruction
+                Positioned(
+                  top: 20, left: 0, right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        '牌14枚が映るように撮影してください',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                    ),
+                  ),
+                ),
+                // Capture button
+                Positioned(
+                  bottom: 40, left: 0, right: 0,
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: _isCapturing ? null : _capture,
+                      child: Container(
+                        width: 72, height: 72,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 4),
+                          color: _isCapturing ? Colors.grey : Colors.white.withValues(alpha: 0.3),
+                        ),
+                        child: _isCapturing
+                            ? const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                              )
+                            : const Icon(Icons.camera_alt, color: Colors.white, size: 32),
+                      ),
+                    ),
+                  ),
+                ),
+                if (_errorMessage != null)
+                  Positioned(
+                    bottom: 130, left: 20, right: 20,
+                    child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12), textAlign: TextAlign.center),
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
