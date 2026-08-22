@@ -40,12 +40,13 @@ class _ScanScreenState extends State<ScanScreen> {
   Uint8List? _capturedBytes;
   img.Image? _capturedImage;
 
-  // Image transform
-  Offset _imageOffset = Offset.zero;
-  double _imageScale = 1.0;
-  double _imageRotation = 0.0;
-  double _lastScaleValue = 1.0;
-  double _lastRotationValue = 0.0;
+  // Image transform: pan/zoom/rotate combined into a single matrix so that
+  // scale and rotation always pivot around the gesture's own focal point
+  // instead of the image's center (see _buildAlignPhase for the composition).
+  Matrix4 _imageTransform = Matrix4.identity();
+  Matrix4? _gestureStartTransform;
+  Offset? _gestureStartFocalPoint;
+  double _gestureStartScale = 1.0;
 
   // Tile results
   final List<String?> _tiles = List.filled(14, null);
@@ -135,11 +136,7 @@ class _ScanScreenState extends State<ScanScreen> {
         _capturedBytes = bytes;
         _capturedImage = decoded;
         _phase = _ScanPhase.detecting;
-        _imageOffset = Offset.zero;
-        _imageScale = 1.0;
-        _imageRotation = 0.0;
-        _lastScaleValue = 1.0;
-        _lastRotationValue = 0.0;
+        _imageTransform = Matrix4.identity();
         _errorMessage = null;
         for (int i = 0; i < 14; i++) {
           _tiles[i] = null;
@@ -175,40 +172,23 @@ class _ScanScreenState extends State<ScanScreen> {
 
   // ── Phase 2: Align grid & classify ──
 
-  /// Map a screen point to original image pixel coordinates.
-  /// Accounts for offset, scale, and rotation (around image center).
-  Offset _screenToImagePixel(double screenX, double screenY,
-      double imgCenterX, double imgCenterY,
-      double origW, double origH, double scaledW, double scaledH) {
-    // 1. Translate to image center
-    final dx = screenX - imgCenterX;
-    final dy = screenY - imgCenterY;
-    // 2. Inverse rotate
-    final cosA = math.cos(-_imageRotation);
-    final sinA = math.sin(-_imageRotation);
-    final rx = dx * cosA - dy * sinA;
-    final ry = dx * sinA + dy * cosA;
-    // 3. Scale from display to image pixels
-    // then scaled by _imageScale. So pixel = (display_offset / _imageScale) * (origW / baseW) + origW/2
-    // But baseW/baseH = scaledW/_imageScale and scaledH/_imageScale
-    final baseW = scaledW / _imageScale;
-    final baseH = scaledH / _imageScale;
-    final imgX = (rx / _imageScale + baseW / 2) * (origW / baseW);
-    final imgY = (ry / _imageScale + baseH / 2) * (origH / baseH);
-    return Offset(imgX, imgY);
-  }
-
   Future<void> _classifyFromGrid(
-      Rect gridScreenRect, double imgLeft, double imgTop,
-      double scaledW, double scaledH) async {
+      Rect gridScreenRect, double baseLeft, double baseTop,
+      double baseW, double baseH) async {
     final srcImage = _capturedImage;
     if (srcImage == null) return;
 
-    // Image center in screen coordinates
-    final imgCenterX = imgLeft + scaledW / 2;
-    final imgCenterY = imgTop + scaledH / 2;
+    final origin = Offset(baseLeft, baseTop);
     final origW = srcImage.width.toDouble();
     final origH = srcImage.height.toDouble();
+    final inverse = Matrix4.inverted(_imageTransform);
+
+    // Map a screen point back through the (pan/zoom/rotate) display transform
+    // to a pixel coordinate in the original captured image.
+    Offset toImagePixel(Offset screenPoint) {
+      final content = MatrixUtils.transformPoint(inverse, screenPoint - origin);
+      return Offset(content.dx * (origW / baseW), content.dy * (origH / baseH));
+    }
 
     final slotW = gridScreenRect.width / 14;
     final padX = slotW * 0.2;
@@ -223,10 +203,10 @@ class _ScanScreenState extends State<ScanScreen> {
       final slotBottom = slotTop + gridScreenRect.height + padY * 2;
 
       // Map all 4 corners to image pixels
-      final tl = _screenToImagePixel(slotLeft, slotTop, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
-      final tr = _screenToImagePixel(slotRight, slotTop, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
-      final bl = _screenToImagePixel(slotLeft, slotBottom, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
-      final br = _screenToImagePixel(slotRight, slotBottom, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
+      final tl = toImagePixel(Offset(slotLeft, slotTop));
+      final tr = toImagePixel(Offset(slotRight, slotTop));
+      final bl = toImagePixel(Offset(slotLeft, slotBottom));
+      final br = toImagePixel(Offset(slotRight, slotBottom));
 
       // Bounding box in image pixels
       final minX = [tl.dx, tr.dx, bl.dx, br.dx].reduce(math.min).round().clamp(0, srcImage.width - 1);
@@ -538,20 +518,23 @@ class _ScanScreenState extends State<ScanScreen> {
               baseW = viewH * imgAspect;
             }
 
-            final scaledW = baseW * _imageScale;
-            final scaledH = baseH * _imageScale;
-            final imgLeft = (viewW - scaledW) / 2 + _imageOffset.dx;
-            final imgTop = (viewH - scaledH) / 2 + _imageOffset.dy;
+            // The image's own box never moves or resizes; all pan/zoom/rotate
+            // from user gestures lives entirely in `_imageTransform`, applied
+            // below via Transform. This keeps a single source of truth for
+            // the display transform instead of separate offset/scale/rotation
+            // variables that have to be kept in sync by hand.
+            final baseLeft = (viewW - baseW) / 2;
+            final baseTop = (viewH - baseH) / 2;
+            final origin = Offset(baseLeft, baseTop);
 
             return Stack(
               clipBehavior: Clip.none,
               children: [
-                // Image with Transform.rotate for display
                 Positioned(
-                  left: imgLeft, top: imgTop,
-                  width: scaledW, height: scaledH,
-                  child: Transform.rotate(
-                    angle: _imageRotation,
+                  left: baseLeft, top: baseTop,
+                  width: baseW, height: baseH,
+                  child: Transform(
+                    transform: _imageTransform,
                     child: Image.memory(_capturedBytes!, fit: BoxFit.fill, gaplessPlayback: true),
                   ),
                 ),
@@ -564,20 +547,34 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
 
-                // Gesture: drag/pinch/rotate the IMAGE
+                // Gesture: drag/pinch/rotate the IMAGE. Scale and rotation are
+                // cumulative-since-gesture-start values from Flutter's scale
+                // recognizer, so the whole current gesture's transform is
+                // rebuilt fresh each update, pivoting around the point that
+                // was under the fingers when the gesture began — that point
+                // stays under the fingers regardless of the image's current
+                // rotation, which is what a naive per-axis add of offset/
+                // scale/rotation could not guarantee.
                 Positioned.fill(
                   child: GestureDetector(
-                    onScaleStart: (_) {
-                      _lastScaleValue = _imageScale;
-                      _lastRotationValue = _imageRotation;
+                    onScaleStart: (details) {
+                      _gestureStartTransform = _imageTransform.clone();
+                      _gestureStartFocalPoint = details.localFocalPoint - origin;
+                      _gestureStartScale = _gestureStartTransform!.getMaxScaleOnAxis();
                     },
                     onScaleUpdate: (details) {
+                      final startFocal = _gestureStartFocalPoint;
+                      final startTransform = _gestureStartTransform;
+                      if (startFocal == null || startTransform == null) return;
                       setState(() {
-                        _imageOffset += details.focalPointDelta;
-                        if (details.pointerCount >= 2) {
-                          _imageScale = (_lastScaleValue * details.scale).clamp(0.5, 5.0);
-                          _imageRotation = _lastRotationValue + details.rotation;
-                        }
+                        _imageTransform = composeGestureTransform(
+                          startTransform: startTransform,
+                          startFocalLocal: startFocal,
+                          startScale: _gestureStartScale,
+                          currentFocalLocal: details.localFocalPoint - origin,
+                          scaleFactorSinceStart: details.scale,
+                          rotationSinceStart: details.rotation,
+                        );
                       });
                     },
                     onScaleEnd: (_) {},
@@ -614,7 +611,17 @@ class _ScanScreenState extends State<ScanScreen> {
                 Positioned(
                   top: 12, right: 12,
                   child: IconButton(
-                    onPressed: () => setState(() => _imageRotation += math.pi / 2),
+                    onPressed: () => setState(() {
+                      // Rotate the image 90° about its own center, then keep
+                      // applying whatever pan/zoom/rotation was already
+                      // dialed in on top of that.
+                      final center = Offset(baseW / 2, baseH / 2);
+                      final rotateAboutCenter = Matrix4.identity()
+                        ..translateByDouble(center.dx, center.dy, 0, 1)
+                        ..rotateZ(math.pi / 2)
+                        ..translateByDouble(-center.dx, -center.dy, 0, 1);
+                      _imageTransform = _imageTransform.multiplied(rotateAboutCenter);
+                    }),
                     icon: const Icon(Icons.rotate_right, color: Colors.white70, size: 28),
                     tooltip: '90°回転',
                     style: IconButton.styleFrom(
@@ -646,7 +653,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           flex: 2,
                           child: ElevatedButton.icon(
                             onPressed: () => _classifyFromGrid(
-                              gridRect, imgLeft, imgTop, scaledW, scaledH,
+                              gridRect, baseLeft, baseTop, baseW, baseH,
                             ),
                             icon: const Icon(Icons.search, size: 20),
                             label: const Text('識別開始'),
@@ -869,4 +876,35 @@ class _SlotOverlayPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SlotOverlayPainter old) =>
       slotRect != old.slotRect || slotCount != old.slotCount;
+}
+
+/// Composes the display transform for one pan/zoom/rotate gesture update.
+///
+/// [scaleFactorSinceStart] and [rotationSinceStart] are the cumulative values
+/// Flutter's scale gesture recognizer reports relative to gesture start (as
+/// in [ScaleUpdateDetails.scale]/[.rotation]), not per-frame deltas. The
+/// whole current gesture's transform is rebuilt from [startTransform] on
+/// every call, pivoting scale and rotation around [startFocalLocal] — the
+/// point that was under the fingers when the gesture began — so that point
+/// stays under [currentFocalLocal] regardless of any rotation already
+/// applied before the gesture started. Coordinates are all in the same
+/// "local" space (i.e. relative to the transformed widget's own origin).
+Matrix4 composeGestureTransform({
+  required Matrix4 startTransform,
+  required Offset startFocalLocal,
+  required double startScale,
+  required Offset currentFocalLocal,
+  required double scaleFactorSinceStart,
+  required double rotationSinceStart,
+  double minScale = 0.5,
+  double maxScale = 5.0,
+}) {
+  final targetScale = (startScale * scaleFactorSinceStart).clamp(minScale, maxScale);
+  final relativeScale = targetScale / startScale;
+  final delta = Matrix4.identity()
+    ..translateByDouble(currentFocalLocal.dx, currentFocalLocal.dy, 0, 1)
+    ..rotateZ(rotationSinceStart)
+    ..scaleByDouble(relativeScale, relativeScale, relativeScale, 1)
+    ..translateByDouble(-startFocalLocal.dx, -startFocalLocal.dy, 0, 1);
+  return delta.multiplied(startTransform);
 }
