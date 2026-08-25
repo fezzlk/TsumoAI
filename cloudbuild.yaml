@@ -21,6 +21,23 @@ steps:
       - --no-cpu-boost
       - --timeout=300
       - --no-allow-unauthenticated
+  # Scheduled accuracy-eval job (run via Cloud Scheduler, see README). Reuses the
+  # same image as the service above; `deploy` is idempotent and updates the job
+  # in place if it already exists, so this step doubles as first-time setup.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - deploy
+      - ${_ACCURACY_JOB}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --command=python
+      - --args=scripts/evaluate_recognition_set.py,--record
+      - --max-retries=0
+      - --task-timeout=300
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
 substitutions:
@@ -28,5 +45,6 @@ substitutions:
   _REPOSITORY: cloud-run-source-deploy
   _SERVICE: tsumoai-api
   _SERVICE_ACCOUNT: tsumoai-runner@tsumoai.iam.gserviceaccount.com
+  _ACCURACY_JOB: tsumoai-accuracy-eval
 options:
   logging: CLOUD_LOGGING_ONLY
