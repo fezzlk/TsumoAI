@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -15,6 +16,8 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     pass
 
+from app.config import settings
+from app.gcs_feedback_store import GCSFeedbackStore
 from app.hand_extraction import extract_hand_from_image
 from app.validators import validate_tile
 
@@ -23,6 +26,11 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate recognition accuracy on labeled eval set.")
     p.add_argument("--input", default="data/recognition_eval_set.jsonl", help="Eval JSONL path")
     p.add_argument("--top", type=int, default=20, help="Top confusion pairs to print")
+    p.add_argument(
+        "--record",
+        action="store_true",
+        help="Save the resulting metrics to GCS (recognition-accuracy) for the dashboard's accuracy-over-time chart.",
+    )
     return p.parse_args()
 
 
@@ -110,12 +118,26 @@ def main() -> int:
         print("evaluation failed: no successful cases")
         return 1
 
+    tile_accuracy = tile_correct / tile_total
+    exact_match_rate = exact_correct / exact_total
+
     print(f"cases_total={len(valid_rows)} cases_scored={exact_total} cases_failed={failed_cases}")
-    print(f"tile_accuracy={(tile_correct / tile_total) * 100:.2f}%")
-    print(f"exact_match_rate={(exact_correct / exact_total) * 100:.2f}%")
+    print(f"tile_accuracy={tile_accuracy * 100:.2f}%")
+    print(f"exact_match_rate={exact_match_rate * 100:.2f}%")
     print("top confusions (ground_truth -> predicted):")
     for (g, p), c in sorted(confusion.items(), key=lambda x: x[1], reverse=True)[: args.top]:
         print(f"{g:>3} -> {p:<3} : {c}")
+
+    if args.record:
+        store = GCSFeedbackStore(prefix=settings.gcs_accuracy_prefix)
+        result = store.save({
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "tile_accuracy": tile_accuracy,
+            "exact_match_rate": exact_match_rate,
+            "n": exact_total,
+        })
+        print(f"recorded: {result}")
+
     return 0
 
 

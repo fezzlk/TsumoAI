@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     gcs_bucket_name: str | None = None
     gcs_feedback_prefix: str = "score-feedback"
     gcs_dataset_prefix: str = "score-dataset"
+    gcs_accuracy_prefix: str = "recognition-accuracy"
     recognition_feedback_path: str = "data/recognition_feedback.jsonl"
     firebase_project_id: str | None = None
     cors_origins: str = ""
