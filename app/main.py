@@ -63,6 +63,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 gcs_feedback_store = GCSFeedbackStore()
 gcs_dataset_store = GCSFeedbackStore(prefix=settings.gcs_dataset_prefix)
+accuracy_store = GCSFeedbackStore(prefix=settings.gcs_accuracy_prefix)
 recognition_feedback_store = RecognitionFeedbackStore()
 
 from app.training_data_store import TrainingDataStore
@@ -431,9 +432,10 @@ def list_training_data(
             training_data_store.invalidate_cache()
         entries = training_data_store.list_entries(tile_code=tile_code, source=source, limit=limit)
         stats = training_data_store.get_stats()
+        timeline = training_data_store.get_daily_timeline()
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"entries": entries, "stats": stats}
+    return {"entries": entries, "stats": stats, "timeline": timeline}
 
 
 @app.get("/api/v1/training-data/image/{entry_id}")
@@ -461,6 +463,34 @@ def delete_training_data(entry_id: str, _admin: dict = Depends(require_admin)) -
 @app.get("/training-data")
 def training_data_viewer() -> FileResponse:
     return FileResponse(STATIC_DIR / "training_data.html")
+
+
+@app.get("/api/v1/metrics/accuracy-history")
+def get_accuracy_history(_admin: dict = Depends(require_admin)) -> dict:
+    bucket_name = accuracy_store.bucket_name
+    prefix = accuracy_store.prefix
+    if not bucket_name:
+        raise HTTPException(status_code=503, detail="GCS bucket is not configured")
+    client = accuracy_store._get_client()
+    bucket = client.bucket(bucket_name)
+    blobs = bucket.list_blobs(prefix=prefix + "/")
+    history = []
+    for blob in blobs:
+        if not blob.name.endswith(".json"):
+            continue
+        try:
+            data = json.loads(blob.download_as_text())
+        except Exception:
+            continue
+        payload = data.get("payload", {})
+        history.append({
+            "evaluated_at": payload.get("evaluated_at", data.get("saved_at")),
+            "tile_accuracy": payload.get("tile_accuracy"),
+            "exact_match_rate": payload.get("exact_match_rate"),
+            "n": payload.get("n"),
+        })
+    history.sort(key=lambda h: h["evaluated_at"] or "")
+    return {"history": history}
 
 
 

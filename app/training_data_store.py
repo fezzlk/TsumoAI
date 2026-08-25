@@ -260,3 +260,26 @@ class TrainingDataStore:
             "by_tile_code": dict(sorted(by_tile.items())),
             "by_source": dict(sorted(by_source.items())),
         }
+
+    def get_daily_timeline(self) -> list[dict]:
+        """Cumulative entry count by day, for a "data collected over time" chart.
+
+        Entries without a parseable `created_at` (e.g. local dev fallback,
+        bulk-imported public datasets) are excluded from the timeline but
+        still count toward `get_stats()`'s total.
+        """
+        entries = self.list_entries(limit=10000)
+        by_day: dict[str, int] = {}
+        for e in entries:
+            created_at = e.get("created_at", "")
+            if not created_at:
+                continue
+            day = created_at[:10]  # "YYYY-MM-DD" prefix of an ISO timestamp
+            by_day[day] = by_day.get(day, 0) + 1
+
+        timeline: list[dict] = []
+        cumulative = 0
+        for day in sorted(by_day):
+            cumulative += by_day[day]
+            timeline.append({"date": day, "count": by_day[day], "cumulative_count": cumulative})
+        return timeline

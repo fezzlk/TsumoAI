@@ -26,11 +26,43 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 .tile-stats-grid { display: flex; flex-wrap: wrap; gap: 4px; }
 .tile-stat { background: #16213e; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
 .tile-stat .count { color: #4ecca3; font-weight: bold; }
+.charts { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
+.chart-card { background: #16213e; border-radius: 8px; padding: 12px; flex: 1 1 320px; min-width: 280px; }
+.chart-card h2 { font-size: 13px; color: #999; margin-bottom: 8px; font-weight: normal; }
+.chart-empty { color: #666; font-size: 12px; padding: 30px 0; text-align: center; }
+.chart-card svg { width: 100%; height: auto; overflow: visible; }
+.chart-card svg text { fill: #888; font-size: 8px; }
+.chart-card svg .line { fill: none; stroke: #4ecca3; stroke-width: 2; }
+.chart-card svg .line.secondary { stroke: #e67e22; }
+.chart-card svg .dot { fill: #4ecca3; }
+.chart-card svg .dot.secondary { fill: #e67e22; }
+.chart-card svg .bar { fill: #4ecca3; }
+.chart-card svg .axis { stroke: #333; stroke-width: 1; }
+.chart-legend { font-size: 10px; color: #999; margin-top: 4px; }
+.chart-legend .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
 </style>
 </head>
 <body>
 <h1>🀄 学習データ一覧</h1>
 <div class="stats" id="stats"></div>
+<div class="charts">
+  <div class="chart-card">
+    <h2>累積件数の推移</h2>
+    <div id="timelineChart"></div>
+  </div>
+  <div class="chart-card">
+    <h2>牌種ごとの分布</h2>
+    <div id="distributionChart"></div>
+  </div>
+  <div class="chart-card">
+    <h2>認識精度の推移</h2>
+    <div id="accuracyChart"></div>
+    <div class="chart-legend">
+      <span class="swatch" style="background:#4ecca3;"></span>牌単位正解率
+      <span class="swatch" style="background:#e67e22;"></span>14枚完全一致率
+    </div>
+  </div>
+</div>
 <div class="filters">
   <select id="filterTile"><option value="">全ての牌</option></select>
   <select id="filterSource">
@@ -70,8 +102,116 @@ async function loadData(refresh = false) {
     renderGrid(data.entries);
     renderTileStats(data.stats);
     populateFilter(data.stats);
+    renderTimelineChart(data.timeline);
+    renderDistributionChart(data.stats.by_tile_code);
   } catch(e) {
     document.getElementById('grid').innerHTML = `<div class="empty">データの読み込みに失敗: ${e.message}</div>`;
+  }
+}
+
+// ── Charts (plain SVG, no external library) ──
+
+function lineChartSVG(labels, seriesArr, opts = {}) {
+  const w = 300, h = 110, padL = 28, padR = 8, padT = 8, padB = 20;
+  const innerW = w - padL - padR, innerH = h - padT - padB;
+  const allVals = seriesArr.flatMap(s => s.values).filter(v => v != null);
+  const yMax = opts.yMax != null ? opts.yMax : Math.max(...allVals, 1);
+  const yMin = opts.yMin != null ? opts.yMin : Math.min(...allVals, 0);
+  const range = (yMax - yMin) || 1;
+  const n = labels.length;
+  const xStep = n > 1 ? innerW / (n - 1) : 0;
+  const xAt = i => padL + xStep * i;
+  const yAt = v => padT + innerH - ((v - yMin) / range) * innerH;
+  const fmt = opts.yFormat || (v => Math.round(v));
+
+  let svg = `<svg viewBox="0 0 ${w} ${h}">`;
+  svg += `<line class="axis" x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + innerH}"/>`;
+  svg += `<line class="axis" x1="${padL}" y1="${padT + innerH}" x2="${padL + innerW}" y2="${padT + innerH}"/>`;
+  svg += `<text x="2" y="${padT + 6}">${fmt(yMax)}</text>`;
+  svg += `<text x="2" y="${padT + innerH + 2}">${fmt(yMin)}</text>`;
+
+  seriesArr.forEach(s => {
+    const pts = s.values.map((v, i) => (v == null ? null : `${xAt(i)},${yAt(v)}`)).filter(Boolean).join(' ');
+    svg += `<polyline class="line${s.className ? ' ' + s.className : ''}" points="${pts}"/>`;
+    s.values.forEach((v, i) => {
+      if (v != null) svg += `<circle class="dot${s.className ? ' ' + s.className : ''}" cx="${xAt(i)}" cy="${yAt(v)}" r="2"/>`;
+    });
+  });
+
+  if (n > 0) {
+    svg += `<text x="${xAt(0)}" y="${h - 2}" text-anchor="start">${labels[0]}</text>`;
+    if (n > 1) svg += `<text x="${xAt(n - 1)}" y="${h - 2}" text-anchor="end">${labels[n - 1]}</text>`;
+  }
+  svg += `</svg>`;
+  return svg;
+}
+
+function barChartSVG(labels, values) {
+  const w = 320, h = 140, padL = 4, padR = 4, padT = 8, padB = 26;
+  const innerW = w - padL - padR, innerH = h - padT - padB;
+  const n = labels.length;
+  const maxV = Math.max(...values, 1);
+  const barW = innerW / n;
+
+  let svg = `<svg viewBox="0 0 ${w} ${h}">`;
+  svg += `<line class="axis" x1="${padL}" y1="${padT + innerH}" x2="${padL + innerW}" y2="${padT + innerH}"/>`;
+  values.forEach((v, i) => {
+    const bh = (v / maxV) * innerH;
+    const x = padL + i * barW + barW * 0.15;
+    const bw = barW * 0.7;
+    const y = padT + innerH - bh;
+    svg += `<rect class="bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(bh, 0).toFixed(1)}"><title>${labels[i]}: ${v}</title></rect>`;
+  });
+  labels.forEach((l, i) => {
+    if (i % 3 === 0) {
+      const x = padL + i * barW + barW / 2;
+      svg += `<text x="${x.toFixed(1)}" y="${h - 4}" text-anchor="middle">${l}</text>`;
+    }
+  });
+  svg += `</svg>`;
+  return svg;
+}
+
+function renderTimelineChart(timeline) {
+  const el = document.getElementById('timelineChart');
+  if (!timeline || timeline.length === 0) {
+    el.innerHTML = '<div class="chart-empty">まだデータがありません</div>';
+    return;
+  }
+  const labels = timeline.map(t => t.date.slice(5));
+  const values = timeline.map(t => t.cumulative_count);
+  el.innerHTML = lineChartSVG(labels, [{ values }], { yMin: 0 });
+}
+
+function renderDistributionChart(byTile) {
+  const el = document.getElementById('distributionChart');
+  if (!byTile || Object.keys(byTile).length === 0) {
+    el.innerHTML = '<div class="chart-empty">まだデータがありません</div>';
+    return;
+  }
+  const values = TILES.map(t => byTile[t] || 0);
+  el.innerHTML = barChartSVG(TILES, values);
+}
+
+async function loadAccuracyHistory() {
+  const el = document.getElementById('accuracyChart');
+  try {
+    const res = await fetch(`${API}/api/v1/metrics/accuracy-history`);
+    const data = await res.json();
+    const history = data.history || [];
+    if (!res.ok || history.length === 0) {
+      el.innerHTML = '<div class="chart-empty">まだ測定データがありません</div>';
+      return;
+    }
+    const labels = history.map(h => (h.evaluated_at || '').slice(5, 10));
+    const tileAcc = history.map(h => (h.tile_accuracy != null ? h.tile_accuracy * 100 : null));
+    const exactAcc = history.map(h => (h.exact_match_rate != null ? h.exact_match_rate * 100 : null));
+    el.innerHTML = lineChartSVG(labels, [
+      { values: tileAcc },
+      { values: exactAcc, className: 'secondary' },
+    ], { yMin: 0, yMax: 100, yFormat: v => `${Math.round(v)}%` });
+  } catch (e) {
+    el.innerHTML = '<div class="chart-empty">読み込みに失敗しました</div>';
   }
 }
 
@@ -167,6 +307,7 @@ async function triggerRetrain() {
 
 loadData();
 loadModelInfo();
+loadAccuracyHistory();
 </script>
 </body>
 </html>

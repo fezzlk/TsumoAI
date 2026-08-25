@@ -83,6 +83,37 @@ curl "${SERVICE_URL}/health"
 
 サービスは非公開なので、確認時は権限を持つ ID トークンを使用してください。
 
+### 6. 精度の定期測定（Cloud Run Job）
+
+`cloudbuild.yaml` は上記デプロイと同じビルドで、認識精度を評価する Cloud Run Job（`tsumoai-accuracy-eval`、既定名）も更新します。**現時点では Cloud Scheduler による自動実行は設定していません** — 必要なタイミングで以下のコマンドを手動実行してください（1回の実行で `/training-data` の精度推移グラフに1点データが追加されます）。
+
+```bash
+gcloud run jobs execute tsumoai-accuracy-eval --region="${REGION}" --wait
+```
+
+自動化したくなった場合は、以下の手順で Cloud Scheduler ジョブを追加すれば同じ Job を定期実行できます（未実施・任意）。追加すると Cloud Scheduler の課金（月3ジョブまで無料）と OpenAI API 呼び出しが定期的に発生するようになるため、実施前に費用を確認してください。
+
+```bash
+gcloud scheduler jobs create http tsumoai-accuracy-eval-trigger \
+  --location="${REGION}" \
+  --schedule="0 9 * * 1" \
+  --time-zone="Asia/Tokyo" \
+  --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/tsumoai-accuracy-eval:run" \
+  --http-method=POST \
+  --oauth-service-account-email="${SERVICE_ACCOUNT}"
+```
+
+`${SERVICE_ACCOUNT}` に Job を実行する権限（`roles/run.invoker`、不足する場合は `roles/run.developer`）が無ければ付与してください:
+
+```bash
+gcloud run jobs add-iam-policy-binding tsumoai-accuracy-eval \
+  --region="${REGION}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/run.invoker"
+```
+
+**費用の目安（週1回実行を想定）**: Cloud Scheduler は月3ジョブまで無料枠（他にスケジューラジョブが無ければ実質¥0、`gcloud scheduler jobs list` で事前確認推奨）。Cloud Run Job の実行時間はごく短く無料枠内。評価セット（`data/recognition_eval_set.jsonl`、8件）の画像を OpenAI (`gpt-4o-mini`) に送るコストは月あたり数円〜十数円程度。**合計で月100円は超えない見込み**ですが、評価セットを大きく増やす場合は比例して増加します。頻度を上げる（毎日等）場合も同様に確認してください。
+
 ## Authentication and authorization
 
 - 点数計算と牌認識は匿名利用可能です（画像 10 MiB、認識 20 回/分/IP）。
