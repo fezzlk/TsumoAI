@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     max_image_bytes: int = 10 * 1024 * 1024
     anonymous_recognition_requests_per_minute: int = 20
     anonymous_ai_chat_requests_per_minute: int = 5
+    service_provider_name: str = "fezzlk"
+    contact_form_url: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
