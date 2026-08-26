@@ -20,6 +20,7 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 .tile-card { background: #16213e; border-radius: 8px; overflow: hidden; text-align: center; position: relative; }
 .tile-card img { width: 100%; aspect-ratio: 0.75; object-fit: cover; }
 .tile-card .label { padding: 4px; font-size: 13px; font-weight: bold; }
+.tile-card .label-select { margin: 4px; width: calc(100% - 8px); background: #0f3460; border: 1px solid #4ecca3; color: #fff; border-radius: 4px; padding: 4px; }
 .tile-card .source { font-size: 9px; color: #888; }
 .tile-card .delete-btn { position: absolute; top: 2px; right: 2px; background: rgba(255,0,0,0.6); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 12px; display: none; }
 .tile-card:hover .delete-btn { display: block; }
@@ -293,7 +294,9 @@ function renderGrid(entries) {
   el.innerHTML = entries.map(e => `
     <div class="tile-card">
       <img data-id="${e.id}" alt="${e.tile_code}">
-      <div class="label">${e.tile_code}</div>
+      <select class="label-select" aria-label="正解牌" onchange="updateTileCode('${e.id}', this.value, '${e.tile_code}', this)">
+        ${TILES.map(t => `<option value="${t}" ${t === e.tile_code ? 'selected' : ''}>${t}</option>`).join('')}
+      </select>
       <div class="source">${e.source}</div>
       <button class="delete-btn" onclick="deleteEntry('${e.id}')" title="削除">×</button>
     </div>
@@ -331,6 +334,21 @@ async function deleteEntry(id) {
   if (!confirm('この学習データを削除しますか？')) return;
   await authFetch(`${API}/api/v1/training-data/${id}`, {method:'DELETE'});
   loadData();
+}
+
+async function updateTileCode(id, tileCode, previousTileCode, select) {
+  if (tileCode === previousTileCode) return;
+  select.disabled = true;
+  try {
+    const res = await authFetch(`${API}/api/v1/training-data/${id}?tile_code=${encodeURIComponent(tileCode)}`, {method:'PATCH'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '更新に失敗しました');
+    await loadData(true);
+  } catch (e) {
+    select.value = previousTileCode;
+    select.disabled = false;
+    alert('エラー: ' + e.message);
+  }
 }
 
 async function loadModelInfo() {

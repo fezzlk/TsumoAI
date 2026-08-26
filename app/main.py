@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from app.config import settings
+from app.config import resolve_gcp_project, settings
 from app.auth import get_current_user, require_admin
 from app.gcs_feedback_store import GCSFeedbackStore
 from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
@@ -460,6 +460,22 @@ def delete_training_data(entry_id: str, _admin: dict = Depends(require_admin)) -
     return {"status": "deleted", "id": entry_id}
 
 
+@app.patch("/api/v1/training-data/{entry_id}")
+def update_training_data_label(
+    entry_id: str,
+    tile_code: str = Query(...),
+    _admin: dict = Depends(require_admin),
+) -> dict:
+    validate_tile(tile_code)
+    try:
+        updated = training_data_store.update_tile_code(entry_id, tile_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="entry not found")
+    return {"status": "updated", "id": entry_id, "tile_code": tile_code}
+
+
 @app.get("/training-data")
 def training_data_viewer() -> FileResponse:
     return FileResponse(STATIC_DIR / "training_data.html")
@@ -519,8 +535,11 @@ def get_latest_model_info() -> dict:
 @app.post("/api/v1/model/retrain")
 def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
     """Trigger model retraining via Cloud Build."""
-    if not settings.gcp_project:
+    project_id = resolve_gcp_project()
+    if not project_id:
         raise HTTPException(status_code=503, detail="GCP project not configured")
+    if not settings.gcs_bucket_name:
+        raise HTTPException(status_code=503, detail="GCS not configured")
     try:
         from google.cloud.devtools import cloudbuild_v1
         client = cloudbuild_v1.CloudBuildClient()
@@ -529,7 +548,7 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
             cloudbuild_v1.Build.Status.QUEUED,
             cloudbuild_v1.Build.Status.WORKING,
         }
-        for existing in client.list_builds(project_id=settings.gcp_project, page_size=50):
+        for existing in client.list_builds(project_id=project_id, page_size=50):
             if "tsumoai-model-training" in existing.tags and existing.status in active_statuses:
                 raise HTTPException(
                     status_code=409,
@@ -550,7 +569,7 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
             ],
             source=cloudbuild_v1.Source(
                 repo_source=cloudbuild_v1.RepoSource(
-                    project_id=settings.gcp_project,
+                    project_id=project_id,
                     repo_name="TsumoAI",
                     branch_name="main",
                 )
@@ -562,7 +581,7 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
             tags=["tsumoai-model-training"],
         )
 
-        operation = client.create_build(project_id=settings.gcp_project, build=build)
+        operation = client.create_build(project_id=project_id, build=build)
         build_id = operation.metadata.build.id
         return {
             "status": "started",

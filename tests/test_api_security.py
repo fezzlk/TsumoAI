@@ -31,6 +31,21 @@ def test_admin_dependency_allows_management_route(monkeypatch):
     assert response.status_code == 200
 
 
+def test_admin_can_update_training_data_label(monkeypatch):
+    app.dependency_overrides[require_admin] = lambda: {"uid": "admin", "admin": True}
+    from app import main
+    monkeypatch.setattr(main.training_data_store, "update_tile_code", lambda entry_id, tile: True)
+    response = client.patch("/api/v1/training-data/example?tile_code=9s")
+    assert response.status_code == 200
+    assert response.json() == {"status": "updated", "id": "example", "tile_code": "9s"}
+
+
+def test_training_data_label_rejects_invalid_tile():
+    app.dependency_overrides[require_admin] = lambda: {"uid": "admin", "admin": True}
+    response = client.patch("/api/v1/training-data/example?tile_code=10m")
+    assert response.status_code == 422
+
+
 def test_oversized_recognition_image_is_rejected(monkeypatch):
     from app import main
     monkeypatch.setattr(main.settings, "max_image_bytes", 3)

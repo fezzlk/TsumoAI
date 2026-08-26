@@ -215,6 +215,31 @@ class TrainingDataStore:
                     return path.read_bytes()
         return None
 
+    def update_tile_code(self, entry_id: str, tile_code: str) -> bool:
+        """Update the label used by the next model training run."""
+        if entry_id.startswith("local_"):
+            return False
+        index = self._load_index(force=True)
+        entry = next((item for item in index if item.get("id") == entry_id), None)
+        if entry is None:
+            return False
+        if entry.get("tile_code") == tile_code:
+            return True
+        updated_entry = {**entry, "tile_code": tile_code}
+        image_path = entry.get("image_path", "")
+        if image_path.startswith(f"{self.prefix}/images/"):
+            meta_path = image_path.replace(
+                f"{self.prefix}/images/", f"{self.prefix}/meta/", 1
+            )
+            meta_path = str(Path(meta_path).with_suffix(".json"))
+            self._bucket().blob(meta_path).upload_from_string(
+                json.dumps(updated_entry, ensure_ascii=False),
+                content_type="application/json",
+            )
+        updated_index = [updated_entry if item.get("id") == entry_id else item for item in index]
+        self._save_index(updated_index)
+        return True
+
     # ── Delete ──
 
     def delete_entry(self, entry_id: str) -> bool:
