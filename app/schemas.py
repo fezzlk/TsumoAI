@@ -262,3 +262,11 @@ class TrainingDataUploadResponse(BaseModel):
     status: Literal["ok"]
     id: str
     image_path: str
+
+
+class MyDataDeletionResponse(BaseModel):
+    status: Literal["ok"]
+    deleted_training_data: int
+    deleted_score_feedback: int
+    deleted_recognition_feedback: int
+    deleted_dataset_uploads: int
