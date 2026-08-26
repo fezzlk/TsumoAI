@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>学習データ一覧 - TsumoAI</title>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
@@ -40,9 +42,25 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 .chart-card svg .axis { stroke: #333; stroke-width: 1; }
 .chart-legend { font-size: 10px; color: #999; margin-top: 4px; }
 .chart-legend .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.auth-gate { max-width: 360px; margin: 80px auto; text-align: center; }
+.auth-gate button { background: #4ecca3; color: #000; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.auth-gate .error { color: #e67e22; font-size: 12px; margin-top: 12px; }
+.user-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: #999; }
+.user-bar button { background: none; border: 1px solid #444; color: #999; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; margin-left: auto; }
 </style>
 </head>
 <body>
+<div class="auth-gate" id="authGate">
+  <h1>🀄 学習データ一覧</h1>
+  <p style="color:#999;font-size:13px;margin:12px 0;">管理者アカウントでログインしてください</p>
+  <button onclick="signIn()">Googleでログイン</button>
+  <div class="error" id="authError"></div>
+</div>
+<div id="appContent" style="display:none;">
+<div class="user-bar">
+  <span id="userInfo"></span>
+  <button onclick="signOutUser()">ログアウト</button>
+</div>
 <h1>🀄 学習データ一覧</h1>
 <div class="stats" id="stats"></div>
 <div class="charts">
@@ -77,6 +95,7 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 <div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
 <div class="grid" id="grid"></div>
 <div class="tile-stats" id="tileStats"></div>
+</div>
 
 <script>
 const API = '';
@@ -87,6 +106,45 @@ const TILES = [
   'E','S','W','N','P','F','C'
 ];
 
+// ── Auth (Firebase Google sign-in; the admin APIs below require the
+// resulting ID token, verified server-side via app/auth.py) ──
+
+firebase.initializeApp({
+  apiKey: "AIzaSyCDpbHBTH3kz2yrZL2tchFgznkr_TZfbC8",
+  authDomain: "tsumoai.firebaseapp.com",
+  projectId: "tsumoai",
+  appId: "1:1046222816103:web:a2bd096c9a191d5015a5c2",
+});
+const auth = firebase.auth();
+
+function signIn() {
+  document.getElementById('authError').textContent = '';
+  auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())
+    .catch(e => { document.getElementById('authError').textContent = 'ログイン失敗: ' + e.message; });
+}
+
+function signOutUser() {
+  auth.signOut();
+}
+
+async function authFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (auth.currentUser) {
+    headers['Authorization'] = `Bearer ${await auth.currentUser.getIdToken()}`;
+  }
+  return fetch(url, { ...options, headers });
+}
+
+auth.onAuthStateChanged(user => {
+  document.getElementById('authGate').style.display = user ? 'none' : '';
+  document.getElementById('appContent').style.display = user ? '' : 'none';
+  if (!user) return;
+  document.getElementById('userInfo').textContent = user.email;
+  loadData();
+  loadModelInfo();
+  loadAccuracyHistory();
+});
+
 async function loadData(refresh = false) {
   const tile = document.getElementById('filterTile').value;
   const source = document.getElementById('filterSource').value;
@@ -96,8 +154,9 @@ async function loadData(refresh = false) {
   if (refresh) url += `&refresh=true`;
 
   try {
-    const res = await fetch(url);
+    const res = await authFetch(url);
     const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     renderStats(data.stats);
     renderGrid(data.entries);
     renderTileStats(data.stats);
@@ -196,7 +255,7 @@ function renderDistributionChart(byTile) {
 async function loadAccuracyHistory() {
   const el = document.getElementById('accuracyChart');
   try {
-    const res = await fetch(`${API}/api/v1/metrics/accuracy-history`);
+    const res = await authFetch(`${API}/api/v1/metrics/accuracy-history`);
     const data = await res.json();
     const history = data.history || [];
     if (!res.ok || history.length === 0) {
@@ -233,12 +292,21 @@ function renderGrid(entries) {
   }
   el.innerHTML = entries.map(e => `
     <div class="tile-card">
-      <img src="${API}/api/v1/training-data/image/${e.id}" loading="lazy" alt="${e.tile_code}">
+      <img data-id="${e.id}" alt="${e.tile_code}">
       <div class="label">${e.tile_code}</div>
       <div class="source">${e.source}</div>
       <button class="delete-btn" onclick="deleteEntry('${e.id}')" title="削除">×</button>
     </div>
   `).join('');
+  // <img src> can't carry an Authorization header, so each thumbnail is
+  // fetched via authFetch and swapped in as a blob: URL instead.
+  el.querySelectorAll('img[data-id]').forEach(async img => {
+    try {
+      const res = await authFetch(`${API}/api/v1/training-data/image/${img.dataset.id}`);
+      if (!res.ok) return;
+      img.src = URL.createObjectURL(await res.blob());
+    } catch (e) {}
+  });
 }
 
 function renderTileStats(stats) {
@@ -261,13 +329,13 @@ function populateFilter(stats) {
 
 async function deleteEntry(id) {
   if (!confirm('この学習データを削除しますか？')) return;
-  await fetch(`${API}/api/v1/training-data/${id}`, {method:'DELETE'});
+  await authFetch(`${API}/api/v1/training-data/${id}`, {method:'DELETE'});
   loadData();
 }
 
 async function loadModelInfo() {
   try {
-    const res = await fetch(`${API}/api/v1/model/latest`);
+    const res = await authFetch(`${API}/api/v1/model/latest`);
     const data = await res.json();
     const el = document.getElementById('modelInfo');
     if (data.status === 'ok') {
@@ -287,7 +355,7 @@ async function triggerRetrain() {
   btn.disabled = true;
   btn.textContent = '開始中...';
   try {
-    const res = await fetch(`${API}/api/v1/model/retrain`, {method: 'POST'});
+    const res = await authFetch(`${API}/api/v1/model/retrain`, {method: 'POST'});
     const data = await res.json();
     if (res.ok) {
       btn.textContent = '再学習中...';
@@ -305,9 +373,6 @@ async function triggerRetrain() {
   }
 }
 
-loadData();
-loadModelInfo();
-loadAccuracyHistory();
 </script>
 </body>
 </html>
