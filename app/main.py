@@ -548,7 +548,9 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
             cloudbuild_v1.Build.Status.QUEUED,
             cloudbuild_v1.Build.Status.WORKING,
         }
-        for existing in client.list_builds(project_id=project_id, page_size=50):
+        for existing in client.list_builds(
+            request={"project_id": project_id, "page_size": 50}
+        ):
             if "tsumoai-model-training" in existing.tags and existing.status in active_statuses:
                 raise HTTPException(
                     status_code=409,
