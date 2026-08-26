@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+
+import google.auth
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,3 +26,17 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def resolve_gcp_project() -> str | None:
+    """Resolve the project explicitly or from the active GCP runtime credentials."""
+    if settings.gcp_project:
+        return settings.gcp_project
+    for variable in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"):
+        if project := os.getenv(variable):
+            return project
+    try:
+        _, project = google.auth.default()
+        return project
+    except google.auth.exceptions.DefaultCredentialsError:
+        return None
