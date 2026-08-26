@@ -114,6 +114,32 @@ def test_upload_without_prediction_omits_correction_fields(store):
     assert "was_corrected" not in meta
 
 
+def test_delete_by_uid_removes_only_the_owners_training_data(store):
+    first = store.upload(b"first", tile_code="1m", uid="user-1")
+    second = store.upload(b"second", tile_code="2m", uid="user-2")
+    first_meta_path = first["image_path"].replace("images/", "meta/").replace(".jpg", ".json")
+    second_meta_path = second["image_path"].replace("images/", "meta/").replace(".jpg", ".json")
+
+    assert store.delete_by_uid("user-1") == 1
+    assert first["image_path"] not in store._gcs.objects
+    assert first_meta_path not in store._gcs.objects
+    assert second["image_path"] in store._gcs.objects
+    assert second_meta_path in store._gcs.objects
+    index = json.loads(store._gcs.objects["training-data/index.json"].decode("utf-8"))
+    assert [entry["id"] for entry in index] == [second["id"]]
+
+
+def test_delete_by_uid_propagates_index_read_failure(store, monkeypatch):
+    monkeypatch.setattr(
+        store,
+        "_load_index",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("gcs down")),
+    )
+
+    with pytest.raises(RuntimeError, match="gcs down"):
+        store.delete_by_uid("user-1")
+
+
 def test_load_index_rebuilds_from_meta_when_index_missing(store):
     store._gcs.objects["training-data/meta/user/1m/a.json"] = json.dumps(
         {"id": "a", "tile_code": "1m"}

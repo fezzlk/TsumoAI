@@ -15,6 +15,12 @@ class _FakeBlob:
     def upload_from_string(self, data: str, content_type: str) -> None:
         self._sink[self.name] = {"data": data, "content_type": content_type}
 
+    def download_as_text(self) -> str:
+        return self._sink[self.name]["data"]
+
+    def delete(self) -> None:
+        del self._sink[self.name]
+
 
 class _FakeBucket:
     def __init__(self, name: str, sink: dict):
@@ -23,6 +29,13 @@ class _FakeBucket:
 
     def blob(self, object_name: str) -> _FakeBlob:
         return _FakeBlob(object_name, self._sink)
+
+    def list_blobs(self, prefix: str):
+        return [
+            _FakeBlob(name, self._sink)
+            for name in sorted(self._sink)
+            if name.startswith(prefix)
+        ]
 
 
 class _FakeClient:
@@ -98,3 +111,26 @@ def test_get_client_is_constructed_lazily_and_cached(monkeypatch):
     store.save({"a": 2})
 
     assert _FakeClient.instances == 1
+
+
+def test_delete_by_uid_removes_only_matching_feedback(monkeypatch):
+    monkeypatch.setattr("app.gcs_feedback_store.storage.Client", _FakeClient)
+    store = GCSFeedbackStore(bucket_name="my-bucket", prefix="feedback")
+    first = store.save({"uid": "user-1", "comment": "delete me"})
+    second = store.save({"uid": "user-2", "comment": "keep me"})
+
+    assert store.delete_by_uid("user-1") == 1
+    assert first["object_name"] not in store._client.uploaded
+    assert second["object_name"] in store._client.uploaded
+
+
+def test_delete_by_uid_propagates_unreadable_feedback(monkeypatch):
+    monkeypatch.setattr("app.gcs_feedback_store.storage.Client", _FakeClient)
+    store = GCSFeedbackStore(bucket_name="my-bucket", prefix="feedback")
+    store._get_client().uploaded["feedback/invalid.json"] = {
+        "data": "not-json",
+        "content_type": "application/json",
+    }
+
+    with pytest.raises(json.JSONDecodeError):
+        store.delete_by_uid("user-1")
