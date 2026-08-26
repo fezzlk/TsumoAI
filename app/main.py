@@ -543,13 +543,18 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
     try:
         from google.cloud.devtools import cloudbuild_v1
         client = cloudbuild_v1.CloudBuildClient()
+        location = "asia-northeast1"
+        parent = f"projects/{project_id}/locations/{location}"
+        repository = (
+            f"{parent}/connections/tsumoai-github/repositories/tsumoai-repo"
+        )
 
         active_statuses = {
             cloudbuild_v1.Build.Status.QUEUED,
             cloudbuild_v1.Build.Status.WORKING,
         }
         for existing in client.list_builds(
-            request={"project_id": project_id, "page_size": 50}
+            request={"project_id": project_id, "parent": parent, "page_size": 50}
         ):
             if "tsumoai-model-training" in existing.tags and existing.status in active_statuses:
                 raise HTTPException(
@@ -570,10 +575,9 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
                 )
             ],
             source=cloudbuild_v1.Source(
-                repo_source=cloudbuild_v1.RepoSource(
-                    project_id=project_id,
-                    repo_name="TsumoAI",
-                    branch_name="main",
+                connected_repository=cloudbuild_v1.ConnectedRepository(
+                    repository=repository,
+                    revision="refs/heads/main",
                 )
             ),
             options=cloudbuild_v1.BuildOptions(
@@ -583,7 +587,9 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
             tags=["tsumoai-model-training"],
         )
 
-        operation = client.create_build(project_id=project_id, build=build)
+        operation = client.create_build(
+            request={"project_id": project_id, "parent": parent, "build": build}
+        )
         build_id = operation.metadata.build.id
         return {
             "status": "started",
