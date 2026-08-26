@@ -575,10 +575,10 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
                 )
             ],
             source=cloudbuild_v1.Source(
-                connected_repository=cloudbuild_v1.ConnectedRepository(
-                    repository=repository,
-                    revision="refs/heads/main",
-                )
+                connected_repository={
+                    "repository": repository,
+                    "revision": "refs/heads/main",
+                }
             ),
             options=cloudbuild_v1.BuildOptions(
                 logging=cloudbuild_v1.BuildOptions.LoggingMode.CLOUD_LOGGING_ONLY,
