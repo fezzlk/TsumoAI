@@ -8,4 +8,7 @@ __pycache__
 *.pyd
 .DS_Store
 tests
-data
+# Personal eval photos, not for the image (Docker can't re-include a file
+# under an excluded parent dir, so this must stay narrow — not `data`).
+data/eval_images
+data/eval_images_cropped
