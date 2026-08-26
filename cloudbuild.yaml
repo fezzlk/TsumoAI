@@ -20,7 +20,7 @@ steps:
       - --cpu-throttling
       - --no-cpu-boost
       - --timeout=300
-      - --no-allow-unauthenticated
+      - --allow-unauthenticated
   # Scheduled accuracy-eval job (run via Cloud Scheduler, see README). Reuses the
   # same image as the service above; `deploy` is idempotent and updates the job
   # in place if it already exists, so this step doubles as first-time setup.
