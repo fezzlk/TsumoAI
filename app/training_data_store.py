@@ -49,7 +49,7 @@ class TrainingDataStore:
 
     # ── Upload (GCS, user data) ──
 
-    def upload(self, image_bytes: bytes, tile_code: str, source: str = "user") -> dict:
+    def upload(self, image_bytes: bytes, tile_code: str, source: str = "user", uid: str | None = None) -> dict:
         now = datetime.now(timezone.utc)
         entry_id = uuid4().hex[:12]
         date_path = now.strftime("%Y/%m/%d")
@@ -65,6 +65,7 @@ class TrainingDataStore:
             "source": source,
             "image_path": image_name,
             "created_at": now.isoformat(),
+            "uid": uid,
         }
         meta_name = f"{self.prefix}/meta/{date_path}/{entry_id}.json"
         meta_blob = bucket.blob(meta_name)
@@ -268,6 +269,15 @@ class TrainingDataStore:
             return deleted
         except Exception:
             return False
+
+    def delete_by_uid(self, uid: str) -> int:
+        """Delete every entry uploaded by this uid. Best-effort."""
+        try:
+            index = self._load_index(force=True)
+        except Exception:
+            return 0
+        matching_ids = [e.get("id") for e in index if e.get("uid") == uid]
+        return sum(1 for entry_id in matching_ids if entry_id and self.delete_entry(entry_id))
 
     # ── Stats ──
 

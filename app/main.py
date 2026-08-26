@@ -25,6 +25,7 @@ from app.schemas import (
     ContextInput,
     DatasetUploadRequest,
     DatasetUploadResponse,
+    MyDataDeletionResponse,
     RecognizeJobCreateResponse,
     RecognizeJobStatusResponse,
     RecognitionFeedbackRequest,
@@ -117,8 +118,123 @@ a.card:hover{background:#1a3055}
   <a class="card" href="/score-dataset"><div class="icon">📊</div><div class="card-body"><div class="name">スコアデータセット</div><div class="desc">点数計算のデータセット管理</div></div></a>
   <a class="card" href="/docs"><div class="icon">📖</div><div class="card-body"><div class="name">API ドキュメント</div><div class="desc">FastAPI Swagger UI</div></div></a>
   <a class="card" href="/health"><div class="icon">💚</div><div class="card-body"><div class="name">ヘルスチェック</div><div class="desc">サーバーの稼働状態</div></div></a>
+  <a class="card" href="/terms"><div class="icon">📜</div><div class="card-body"><div class="name">利用規約</div><div class="desc">サービスの利用条件</div></div></a>
+  <a class="card" href="/privacy"><div class="icon">🔒</div><div class="card-body"><div class="name">プライバシーポリシー</div><div class="desc">データの取り扱い</div></div></a>
 </div>
 </body></html>""")
+
+
+_LEGAL_STYLE = """
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#1a1a2e;color:#e0e0e0;
+  display:flex;justify-content:center;min-height:100vh;padding:40px 16px}
+main{max-width:680px;width:100%;line-height:1.7}
+h1{font-size:24px;margin-bottom:4px;color:#fff}
+.updated{color:#888;font-size:13px;margin-bottom:24px}
+h2{font-size:17px;color:#4ecca3;margin-top:24px;margin-bottom:8px}
+p,li{font-size:14px;color:#e0e0e0}
+ul{padding-left:20px;margin:4px 0}
+a{color:#4ecca3}
+code{background:#16213e;padding:1px 5px;border-radius:4px;font-size:12px}
+"""
+
+
+def _contact_html() -> str:
+    if settings.contact_form_url:
+        return f'<a href="{settings.contact_form_url}">こちらのフォーム</a>'
+    return "本サービスのお問い合わせ窓口"
+
+
+@app.get("/terms")
+def terms() -> HTMLResponse:
+    provider = settings.service_provider_name
+    contact = _contact_html()
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>利用規約 - TsumoAI</title><style>{_LEGAL_STYLE}</style></head><body><main>
+<h1>利用規約</h1>
+<p class="updated">最終更新日: 2026-08-26</p>
+
+<h2>1. サービス概要</h2>
+<p>TsumoAI（以下「本サービス」）は、{provider}（以下「運営者」）が提供する、麻雀の手牌画像をAIで認識し、点数計算を行うツールです。</p>
+
+<h2>2. 利用条件</h2>
+<p>本サービスは現時点で無料で提供しています。牌画像の認識・点数計算は未ログインでも利用できますが、
+認識結果へのフィードバック投稿・学習データ提供には認証（Firebaseログイン）が必要です。
+料金体系を変更する場合は、本規約の改定として事前に告知します。</p>
+
+<h2>3. 認識結果に関する免責事項</h2>
+<p>牌の認識・点数計算はAI（機械学習モデル・外部の画像認識API）により行われており、
+撮影条件や牌の状態によっては誤認識・誤判定が発生することがあります。本サービスは認識結果・点数計算結果の
+正確性を保証しません。実際の対局における点数の確定や精算は、必ずご自身で最終確認のうえ行ってください。
+運営者は、認識結果の誤りに起因して生じた損害（対局結果・精算に関する紛争等を含む）について、
+故意または重過失による場合を除き責任を負いません。</p>
+
+<h2>4. 禁止事項</h2>
+<ul>
+<li>法令または公序良俗に違反する内容の画像を送信する行為</li>
+<li>他者の権利（著作権・肖像権等）を侵害する画像を送信する行為</li>
+<li>本サービスに過度な負荷をかける行為、不正アクセスや脆弱性を悪用する行為</li>
+</ul>
+
+<h2>5. 規約の変更・サービスの終了</h2>
+<p>運営者は、本サービスの内容を予告なく変更・終了することがあります。本規約は必要に応じて改定し、本ページで告知します。</p>
+
+<h2>6. 準拠法</h2>
+<p>本規約は日本法に準拠します。</p>
+
+<h2>7. お問い合わせ</h2>
+<p>本サービスに関するお問い合わせは、{contact}からご連絡ください。</p>
+</main></body></html>""")
+
+
+@app.get("/privacy")
+def privacy() -> HTMLResponse:
+    provider = settings.service_provider_name
+    contact = _contact_html()
+    ttl = settings.image_ttl_hours
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>プライバシーポリシー - TsumoAI</title><style>{_LEGAL_STYLE}</style></head><body><main>
+<h1>プライバシーポリシー</h1>
+<p class="updated">最終更新日: 2026-08-26</p>
+
+<h2>1. 収集する情報と保存方針</h2>
+<p>{provider}（以下「運営者」）は、TsumoAI（以下「本サービス」）の提供にあたり、利用方法に応じて次のように情報を取り扱います。</p>
+<ul>
+<li><b>未ログインでの牌認識・点数計算</b>: 送信された手牌画像・対局データはサーバーのメモリ上に一時保存され、
+送信から{ttl}時間後に自動的に削除されます。永続的なストレージには保存されません。</li>
+<li><b>ログインしての投稿（認識結果へのフィードバック・学習データの提供）</b>: Firebase認証のユーザーIDと、
+投稿された画像・修正内容・コメントをGoogle Cloud Storageに保存し、認識モデルの改善に利用します。
+この情報は「5. 削除」の方法でご自身が削除するまで保持されます。</li>
+</ul>
+
+<h2>2. 利用目的</h2>
+<p>収集した情報は、本サービスの牌認識・点数計算機能の提供、および認識モデルの精度改善のためにのみ利用します。</p>
+
+<h2>3. 第三者提供</h2>
+<p>本サービスは牌認識のために外部のAI画像認識API（OpenAI Vision）を、認証にFirebase Authenticationを、
+保存先としてGoogle Cloud Storageを利用しています。これらの外部サービスへの情報提供は本サービスの提供に
+必要な範囲に限られ、法令に基づく場合を除き、それ以外の第三者への提供は行いません。</p>
+
+<h2>4. 保存期間</h2>
+<p>未ログイン利用時のデータは{ttl}時間で自動削除されます。ログインして投稿したデータは、
+ユーザーが削除しない限り、本サービスの提供に必要な期間保存します。</p>
+
+<h2>5. 削除</h2>
+<p>ログインして投稿したフィードバック・学習データ・データセットは、認証済みで
+<code>DELETE /api/v1/me/data</code> を呼び出すことでご自身のデータをすべて削除できます（取り消しはできません）。
+API呼び出しが難しい場合は、下記のお問い合わせ窓口からご依頼いただければ運営者が代行して削除します。</p>
+
+<h2>6. 収益化について</h2>
+<p>本サービスは現在無料で提供しています。将来的に収益化を検討する場合も、本ページで告知します。</p>
+
+<h2>7. 変更</h2>
+<p>本ポリシーは必要に応じて改定し、本ページで告知します。</p>
+
+<h2>8. お問い合わせ</h2>
+<p>本サービスの情報の取り扱いに関するお問い合わせは、{contact}からご連絡ください。</p>
+</main></body></html>""")
 
 
 @app.get("/health")
@@ -322,6 +438,7 @@ def get_result(item_id: UUID) -> ResultGetResponse:
 def score_feedback(req: ScoreFeedbackRequest, _user: dict = Depends(get_current_user)) -> ScoreFeedbackResponse:
     payload = req.model_dump(mode="json")
     payload["comment"] = req.comment.strip()
+    payload["uid"] = _user.get("uid")
     try:
         storage_info = gcs_feedback_store.save(payload)
     except ValueError as exc:
@@ -340,6 +457,7 @@ def recognition_feedback(req: RecognitionFeedbackRequest, _user: dict = Depends(
 
     payload = req.model_dump(mode="json")
     payload["comment"] = req.comment.strip()
+    payload["uid"] = _user.get("uid")
     storage_info = recognition_feedback_store.save(payload)
     return RecognitionFeedbackResponse(status="ok", storage=storage_info)
 
@@ -349,7 +467,7 @@ def upload_dataset(req: DatasetUploadRequest, _user: dict = Depends(get_current_
     if not req.entries:
         raise HTTPException(status_code=422, detail="entries must not be empty")
     try:
-        payload = {"entries": req.entries}
+        payload = {"entries": req.entries, "uid": _user.get("uid")}
         if req.contributor:
             payload["contributor"] = req.contributor
         storage_info = gcs_dataset_store.save(payload, contributor=req.contributor)
@@ -413,7 +531,7 @@ async def upload_training_data(
     validate_tile(tile_code)
     image_bytes = await _read_limited_image(image)
     try:
-        result = training_data_store.upload(image_bytes, tile_code, source)
+        result = training_data_store.upload(image_bytes, tile_code, source, uid=_user.get("uid"))
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return TrainingDataUploadResponse(status="ok", **result)
@@ -479,6 +597,27 @@ def update_training_data_label(
 @app.get("/training-data")
 def training_data_viewer() -> FileResponse:
     return FileResponse(STATIC_DIR / "training_data.html")
+
+
+# --- Privacy: self-service deletion of contributed data ---
+# Anonymous recognize/score calls are never persisted beyond the in-memory
+# repository's TTL (settings.image_ttl_hours), so there is nothing to delete
+# for them. This endpoint only covers data a signed-in user opted to
+# contribute (feedback, dataset uploads, training-data images).
+
+
+@app.delete("/api/v1/me/data", response_model=MyDataDeletionResponse)
+def delete_my_data(_user: dict = Depends(get_current_user)) -> MyDataDeletionResponse:
+    uid = _user.get("uid")
+    if not uid:
+        raise HTTPException(status_code=400, detail="token has no uid")
+    return MyDataDeletionResponse(
+        status="ok",
+        deleted_training_data=training_data_store.delete_by_uid(uid),
+        deleted_score_feedback=gcs_feedback_store.delete_by_uid(uid),
+        deleted_recognition_feedback=recognition_feedback_store.delete_by_uid(uid),
+        deleted_dataset_uploads=gcs_dataset_store.delete_by_uid(uid),
+    )
 
 
 @app.get("/api/v1/metrics/accuracy-history")

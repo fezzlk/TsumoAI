@@ -39,3 +39,21 @@ class GCSFeedbackStore:
         blob = bucket.blob(object_name)
         blob.upload_from_string(data, content_type="application/json")
         return {"bucket": self.bucket_name, "object_name": object_name}
+
+    def delete_by_uid(self, uid: str) -> int:
+        """Delete every object whose payload was saved with this uid. Best-effort."""
+        if not self.bucket_name:
+            return 0
+        bucket = self._get_client().bucket(self.bucket_name)
+        deleted = 0
+        for blob in bucket.list_blobs(prefix=self.prefix + "/"):
+            if not blob.name.endswith(".json"):
+                continue
+            try:
+                record = json.loads(blob.download_as_text())
+            except Exception:
+                continue
+            if record.get("payload", {}).get("uid") == uid:
+                blob.delete()
+                deleted += 1
+        return deleted
