@@ -48,6 +48,25 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 .auth-gate .error { color: #e67e22; font-size: 12px; margin-top: 12px; }
 .user-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: #999; }
 .user-bar button { background: none; border: 1px solid #444; color: #999; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; margin-left: auto; }
+.ranking-board, .accuracy-panel { background: #16213e; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+.ranking-board h2, .accuracy-panel h2 { color: #fff; font-size: 15px; margin-bottom: 10px; }
+.ranking-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
+.ranking-item { display: flex; align-items: center; gap: 8px; background: #0f3460; border-radius: 6px; padding: 7px 9px; }
+.ranking-position { width: 24px; color: #999; font-size: 11px; text-align: right; }
+.ranking-tile { flex: 1; color: #fff; font-weight: bold; }
+.ranking-count { color: #4ecca3; font-weight: bold; white-space: nowrap; }
+.ranking-count.zero { color: #ff7675; }
+.accuracy-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.accuracy-card { background: #0f3460; border-radius: 6px; padding: 8px 12px; min-width: 105px; }
+.accuracy-card .label { color: #999; font-size: 10px; }
+.accuracy-card .value { color: #4ecca3; font-size: 18px; font-weight: bold; }
+.accuracy-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.accuracy-group h3 { font-size: 12px; color: #bbb; margin-bottom: 6px; }
+.accuracy-rows { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.accuracy-row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 7px; font-size: 11px; }
+.accuracy-bar { height: 7px; background: #0b2545; border-radius: 4px; overflow: hidden; }
+.accuracy-bar span { display: block; height: 100%; background: #4ecca3; }
+.accuracy-empty { color: #777; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -94,6 +113,14 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
   <button onclick="triggerRetrain()" id="retrainBtn" style="background:#e67e22;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;margin-left:auto;">モデル再学習</button>
 </div>
 <div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
+<section class="accuracy-panel" aria-labelledby="accuracyTitle">
+  <h2 id="accuracyTitle">モバイル認識精度（訂正実績）</h2>
+  <div id="accuracyContent"></div>
+</section>
+<section class="ranking-board" aria-labelledby="rankingTitle">
+  <h2 id="rankingTitle">画像枚数が少ない牌ランキング</h2>
+  <div class="ranking-list" id="rankingList"></div>
+</section>
 <div class="grid" id="grid"></div>
 <div class="tile-stats" id="tileStats"></div>
 </div>
@@ -159,6 +186,8 @@ async function loadData(refresh = false) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     renderStats(data.stats);
+    renderAccuracy(data.stats);
+    renderRanking(data.stats);
     renderGrid(data.entries);
     renderTileStats(data.stats);
     populateFilter(data.stats);
@@ -167,6 +196,59 @@ async function loadData(refresh = false) {
   } catch(e) {
     document.getElementById('grid').innerHTML = `<div class="empty">データの読み込みに失敗: ${e.message}</div>`;
   }
+}
+
+function percent(correct, total) {
+  return total ? `${(correct / total * 100).toFixed(1)}%` : '—';
+}
+
+function renderAccuracy(stats) {
+  const accuracy = stats.recognition_accuracy || {};
+  const total = Number(accuracy.total || 0);
+  const el = document.getElementById('accuracyContent');
+  if (!total) {
+    el.innerHTML = '<div class="accuracy-empty">訂正前ラベルを含む新しい学習データがまだありません</div>';
+    return;
+  }
+  const tileRows = TILES.map(tile => {
+    const item = (accuracy.by_actual_tile || {})[tile];
+    if (!item) return '';
+    const rate = item.correct / item.total * 100;
+    return `<div class="accuracy-row"><span>${tile}</span><div class="accuracy-bar"><span style="width:${rate}%"></span></div><span>${rate.toFixed(1)}% (${item.correct}/${item.total})</span></div>`;
+  }).join('');
+  const dayRows = Object.entries(accuracy.by_day || {}).slice(-14).map(([day, item]) => {
+    const rate = item.correct / item.total * 100;
+    return `<div class="accuracy-row"><span>${day.slice(5)}</span><div class="accuracy-bar"><span style="width:${rate}%"></span></div><span>${rate.toFixed(1)}% (${item.total}枚)</span></div>`;
+  }).join('');
+  const confusionRows = (accuracy.top_confusions || []).map(item =>
+    `<div class="accuracy-row"><span>${item.predicted}→${item.actual}</span><div></div><span>${item.count}枚</span></div>`
+  ).join('');
+  el.innerHTML = `
+    <div class="accuracy-summary">
+      <div class="accuracy-card"><div class="label">集計対象</div><div class="value">${total}枚</div></div>
+      <div class="accuracy-card"><div class="label">正解（訂正なし）</div><div class="value">${accuracy.correct || 0}枚</div></div>
+      <div class="accuracy-card"><div class="label">不正解（訂正あり）</div><div class="value">${accuracy.corrected || 0}枚</div></div>
+      <div class="accuracy-card"><div class="label">実利用正解率</div><div class="value">${percent(accuracy.correct, total)}</div></div>
+    </div>
+    <div class="accuracy-details">
+      <div class="accuracy-group"><h3>牌別正解率</h3><div class="accuracy-rows">${tileRows}</div></div>
+      <div class="accuracy-group"><h3>日別正解率（直近14日）</h3><div class="accuracy-rows">${dayRows || '<div class="accuracy-empty">日付データなし</div>'}</div></div>
+      <div class="accuracy-group"><h3>主な訂正（識別→正解）</h3><div class="accuracy-rows">${confusionRows || '<div class="accuracy-empty">訂正なし</div>'}</div></div>
+    </div>`;
+}
+
+function renderRanking(stats) {
+  const byTile = stats.by_tile_code || {};
+  const ranking = TILES
+    .map((tile, tileOrder) => ({tile, count: Number(byTile[tile] || 0), tileOrder}))
+    .sort((a, b) => a.count - b.count || a.tileOrder - b.tileOrder);
+  document.getElementById('rankingList').innerHTML = ranking.map((item, index) => `
+    <div class="ranking-item">
+      <span class="ranking-position">${index + 1}位</span>
+      <span class="ranking-tile">${item.tile}</span>
+      <span class="ranking-count ${item.count === 0 ? 'zero' : ''}">${item.count}枚</span>
+    </div>
+  `).join('');
 }
 
 // ── Charts (plain SVG, no external library) ──

@@ -49,7 +49,13 @@ class TrainingDataStore:
 
     # ── Upload (GCS, user data) ──
 
-    def upload(self, image_bytes: bytes, tile_code: str, source: str = "user") -> dict:
+    def upload(
+        self,
+        image_bytes: bytes,
+        tile_code: str,
+        source: str = "user",
+        predicted_tile_code: str | None = None,
+    ) -> dict:
         now = datetime.now(timezone.utc)
         entry_id = uuid4().hex[:12]
         date_path = now.strftime("%Y/%m/%d")
@@ -66,6 +72,9 @@ class TrainingDataStore:
             "image_path": image_name,
             "created_at": now.isoformat(),
         }
+        if predicted_tile_code is not None:
+            meta["predicted_tile_code"] = predicted_tile_code
+            meta["was_corrected"] = predicted_tile_code != tile_code
         meta_name = f"{self.prefix}/meta/{date_path}/{entry_id}.json"
         meta_blob = bucket.blob(meta_name)
         meta_blob.upload_from_string(
@@ -275,15 +284,59 @@ class TrainingDataStore:
         entries = self.list_entries(limit=10000)
         by_tile: dict[str, int] = {}
         by_source: dict[str, int] = {}
+        accuracy_entries = []
         for e in entries:
             tc = e.get("tile_code", "unknown")
             src = e.get("source", "unknown")
             by_tile[tc] = by_tile.get(tc, 0) + 1
             by_source[src] = by_source.get(src, 0) + 1
+            if e.get("predicted_tile_code"):
+                accuracy_entries.append(e)
+
+        correct = sum(
+            1 for e in accuracy_entries
+            if e.get("predicted_tile_code") == e.get("tile_code")
+        )
+        by_actual: dict[str, dict[str, int]] = {}
+        by_day: dict[str, dict[str, int]] = {}
+        confusions: dict[tuple[str, str], int] = {}
+        for e in accuracy_entries:
+            actual = e.get("tile_code", "unknown")
+            predicted = e.get("predicted_tile_code", "unknown")
+            tile_stats = by_actual.setdefault(actual, {"total": 0, "correct": 0})
+            tile_stats["total"] += 1
+            if predicted == actual:
+                tile_stats["correct"] += 1
+            else:
+                key = (predicted, actual)
+                confusions[key] = confusions.get(key, 0) + 1
+
+            created_at = str(e.get("created_at", ""))
+            if len(created_at) >= 10:
+                day_stats = by_day.setdefault(created_at[:10], {"total": 0, "correct": 0})
+                day_stats["total"] += 1
+                if predicted == actual:
+                    day_stats["correct"] += 1
+
+        top_confusions = [
+            {"predicted": predicted, "actual": actual, "count": count}
+            for (predicted, actual), count in sorted(
+                confusions.items(), key=lambda item: (-item[1], item[0])
+            )[:10]
+        ]
         return {
             "total": len(entries),
             "by_tile_code": dict(sorted(by_tile.items())),
             "by_source": dict(sorted(by_source.items())),
+            "recognition_accuracy": {
+                "total": len(accuracy_entries),
+                "correct": correct,
+                "corrected": len(accuracy_entries) - correct,
+                "accuracy": correct / len(accuracy_entries) if accuracy_entries else None,
+                "by_actual_tile": dict(sorted(by_actual.items())),
+                "by_day": dict(sorted(by_day.items())),
+                "top_confusions": top_confusions,
+            },
         }
 
     def get_daily_timeline(self) -> list[dict]:
