@@ -407,13 +407,21 @@ from app.schemas import TrainingDataListResponse, TrainingDataUploadResponse
 async def upload_training_data(
     image: UploadFile = File(...),
     tile_code: str = Form(...),
+    predicted_tile_code: str | None = Form(None),
     source: str = Form("user"),
     _user: dict = Depends(get_current_user),
 ) -> TrainingDataUploadResponse:
     validate_tile(tile_code)
+    if predicted_tile_code is not None:
+        validate_tile(predicted_tile_code)
     image_bytes = await _read_limited_image(image)
     try:
-        result = training_data_store.upload(image_bytes, tile_code, source)
+        result = training_data_store.upload(
+            image_bytes,
+            tile_code,
+            source,
+            predicted_tile_code=predicted_tile_code,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return TrainingDataUploadResponse(status="ok", **result)
