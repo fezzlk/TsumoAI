@@ -551,7 +551,7 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
     try:
         from google.cloud.devtools import cloudbuild_v1
         client = cloudbuild_v1.CloudBuildClient()
-        location = "asia-northeast1"
+        location = settings.gcp_region
         parent = f"projects/{project_id}/locations/{location}"
         repository = (
             f"{parent}/connections/tsumoai-github/repositories/tsumoai-repo"
