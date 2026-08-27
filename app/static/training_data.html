@@ -101,6 +101,15 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
     </div>
   </div>
 </div>
+<div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
+<section class="accuracy-panel" aria-labelledby="accuracyTitle">
+  <h2 id="accuracyTitle">モバイル認識精度（訂正実績）</h2>
+  <div id="accuracyContent"></div>
+</section>
+<section class="ranking-board" aria-labelledby="rankingTitle">
+  <h2 id="rankingTitle">画像枚数が少ない牌ランキング</h2>
+  <div class="ranking-list" id="rankingList"></div>
+</section>
 <div class="filters">
   <select id="filterTile"><option value="">全ての牌</option></select>
   <select id="filterSource">
@@ -112,15 +121,6 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
   <button onclick="loadData(true)" style="background:#4ecca3;color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">更新</button>
   <button onclick="triggerRetrain()" id="retrainBtn" style="background:#e67e22;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;margin-left:auto;">モデル再学習</button>
 </div>
-<div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
-<section class="accuracy-panel" aria-labelledby="accuracyTitle">
-  <h2 id="accuracyTitle">モバイル認識精度（訂正実績）</h2>
-  <div id="accuracyContent"></div>
-</section>
-<section class="ranking-board" aria-labelledby="rankingTitle">
-  <h2 id="rankingTitle">画像枚数が少ない牌ランキング</h2>
-  <div class="ranking-list" id="rankingList"></div>
-</section>
 <div class="grid" id="grid"></div>
 <div class="tile-stats" id="tileStats"></div>
 </div>
@@ -133,6 +133,16 @@ const TILES = [
   ...Array.from({length:9},(_,i)=>`${i+1}s`),
   'E','S','W','N','P','F','C'
 ];
+const TILE_NAMES = {
+  '1m':'一萬', '2m':'二萬', '3m':'三萬', '4m':'四萬', '5m':'五萬',
+  '6m':'六萬', '7m':'七萬', '8m':'八萬', '9m':'九萬',
+  '1p':'一筒', '2p':'二筒', '3p':'三筒', '4p':'四筒', '5p':'五筒',
+  '6p':'六筒', '7p':'七筒', '8p':'八筒', '9p':'九筒',
+  '1s':'一索', '2s':'二索', '3s':'三索', '4s':'四索', '5s':'五索',
+  '6s':'六索', '7s':'七索', '8s':'八索', '9s':'九索',
+  'E':'東', 'S':'南', 'W':'西', 'N':'北', 'P':'白', 'F':'發', 'C':'中'
+};
+const tileName = code => TILE_NAMES[code] || code;
 
 // ── Auth (Firebase Google sign-in; the admin APIs below require the
 // resulting ID token, verified server-side via app/auth.py) ──
@@ -214,14 +224,14 @@ function renderAccuracy(stats) {
     const item = (accuracy.by_actual_tile || {})[tile];
     if (!item) return '';
     const rate = item.correct / item.total * 100;
-    return `<div class="accuracy-row"><span>${tile}</span><div class="accuracy-bar"><span style="width:${rate}%"></span></div><span>${rate.toFixed(1)}% (${item.correct}/${item.total})</span></div>`;
+    return `<div class="accuracy-row"><span>${tileName(tile)}</span><div class="accuracy-bar"><span style="width:${rate}%"></span></div><span>${rate.toFixed(1)}% (${item.correct}/${item.total})</span></div>`;
   }).join('');
   const dayRows = Object.entries(accuracy.by_day || {}).slice(-14).map(([day, item]) => {
     const rate = item.correct / item.total * 100;
     return `<div class="accuracy-row"><span>${day.slice(5)}</span><div class="accuracy-bar"><span style="width:${rate}%"></span></div><span>${rate.toFixed(1)}% (${item.total}枚)</span></div>`;
   }).join('');
   const confusionRows = (accuracy.top_confusions || []).map(item =>
-    `<div class="accuracy-row"><span>${item.predicted}→${item.actual}</span><div></div><span>${item.count}枚</span></div>`
+    `<div class="accuracy-row"><span>${tileName(item.predicted)}→${tileName(item.actual)}</span><div></div><span>${item.count}枚</span></div>`
   ).join('');
   el.innerHTML = `
     <div class="accuracy-summary">
@@ -245,7 +255,7 @@ function renderRanking(stats) {
   document.getElementById('rankingList').innerHTML = ranking.map((item, index) => `
     <div class="ranking-item">
       <span class="ranking-position">${index + 1}位</span>
-      <span class="ranking-tile">${item.tile}</span>
+      <span class="ranking-tile">${tileName(item.tile)}</span>
       <span class="ranking-count ${item.count === 0 ? 'zero' : ''}">${item.count}枚</span>
     </div>
   `).join('');
@@ -332,7 +342,7 @@ function renderDistributionChart(byTile) {
     return;
   }
   const values = TILES.map(t => byTile[t] || 0);
-  el.innerHTML = barChartSVG(TILES, values);
+  el.innerHTML = barChartSVG(TILES.map(tileName), values);
 }
 
 async function loadAccuracyHistory() {
@@ -375,9 +385,9 @@ function renderGrid(entries) {
   }
   el.innerHTML = entries.map(e => `
     <div class="tile-card">
-      <img data-id="${e.id}" alt="${e.tile_code}">
+      <img data-id="${e.id}" alt="${tileName(e.tile_code)}">
       <select class="label-select" aria-label="正解牌" onchange="updateTileCode('${e.id}', this.value, '${e.tile_code}', this)">
-        ${TILES.map(t => `<option value="${t}" ${t === e.tile_code ? 'selected' : ''}>${t}</option>`).join('')}
+        ${TILES.map(t => `<option value="${t}" ${t === e.tile_code ? 'selected' : ''}>${tileName(t)}</option>`).join('')}
       </select>
       <div class="source">${e.source}</div>
       <button class="delete-btn" onclick="deleteEntry('${e.id}')" title="削除">×</button>
@@ -399,7 +409,7 @@ function renderTileStats(stats) {
   const byTile = stats.by_tile_code || {};
   el.innerHTML = '<div class="tile-stats-grid">' +
     Object.entries(byTile).map(([k,v]) =>
-      `<div class="tile-stat">${k}: <span class="count">${v}</span></div>`
+      `<div class="tile-stat">${tileName(k)}: <span class="count">${v}</span></div>`
     ).join('') + '</div>';
 }
 
@@ -408,7 +418,7 @@ function populateFilter(stats) {
   const current = sel.value;
   sel.innerHTML = '<option value="">全ての牌</option>';
   TILES.forEach(t => {
-    sel.innerHTML += `<option value="${t}" ${t===current?'selected':''}>${t}</option>`;
+    sel.innerHTML += `<option value="${t}" ${t===current?'selected':''}>${tileName(t)}</option>`;
   });
 }
 
