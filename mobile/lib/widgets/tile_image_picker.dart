@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
+import '../services/tile_assets.dart';
 
-/// Tile selection keyboard shown as a BottomSheet.
-/// Allows user to manually select a mahjong tile code.
-class TileKeyboard extends StatelessWidget {
+/// Image-based tile selection, shown as a BottomSheet — same grid-by-suit
+/// layout as `TileKeyboard`, but each button shows the tile's illustration
+/// (`tileAssetPath`) instead of a text label.
+class TileImagePicker extends StatelessWidget {
   final String? currentTile;
   final ValueChanged<String> onTileSelected;
 
-  const TileKeyboard({
+  const TileImagePicker({
     super.key,
     this.currentTile,
     required this.onTileSelected,
@@ -25,10 +27,8 @@ class TileKeyboard extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      // See TileImagePicker.show for why: a short (landscape) screen can
-      // be shorter than this sheet's natural content height.
       constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
-      builder: (_) => TileKeyboard(
+      builder: (_) => TileImagePicker(
         currentTile: currentTile,
         onTileSelected: (tile) => Navigator.pop(context, tile),
       ),
@@ -41,14 +41,17 @@ class TileKeyboard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // See TileImagePicker.build for why height (not width) drives
-          // cell size: fits exactly 4 rows in whatever vertical space the
-          // sheet has, instead of growing with a wide sheet's width.
-          const headerHeight = 4.0 + 12 + 18 + 12;
+          // Cell size is derived from the AVAILABLE HEIGHT, not the row's
+          // width — sized to fit exactly 4 suit rows in whatever vertical
+          // space the sheet has (a short landscape screen included), rather
+          // than growing with a wide sheet's width and overflowing. Cells
+          // are then a fixed size and the row just uses however much width
+          // that needs, instead of stretching to fill it.
+          const headerHeight = 4.0 + 12 + 18 + 12; // handle + spacing + label + spacing
           const rowSpacing = 6.0;
           final gridHeight = constraints.maxHeight - headerHeight - rowSpacing * 3;
-          final cellHeight = (gridHeight / 4 - 6).clamp(28.0, 48.0);
-          final cellWidth = cellHeight * 1.1;
+          final cellHeight = (gridHeight / 4 - 6).clamp(28.0, 64.0);
+          final cellWidth = cellHeight * 0.75;
 
           return Column(
             mainAxisSize: MainAxisSize.min,
@@ -85,37 +88,26 @@ class TileKeyboard extends StatelessWidget {
           width: 20,
           child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
         ),
-        ...tiles.map((tile) {
-          final isRed = tile.endsWith('r');
-          return GestureDetector(
-            onTap: () => onTileSelected(tile),
-            child: Container(
-              width: cellWidth,
-              height: cellHeight,
-              margin: const EdgeInsets.symmetric(horizontal: 1),
-              decoration: BoxDecoration(
-                color: tile == currentTile
-                    ? Colors.green.withValues(alpha: 0.4)
-                    : Colors.white.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(4),
-                border: tile == currentTile
-                    ? Border.all(color: Colors.greenAccent, width: 1.5)
-                    : null,
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                _displayLabel(tile),
-                style: TextStyle(
-                  color: tile == currentTile
-                      ? Colors.greenAccent
-                      : isRed ? Colors.redAccent : Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+        ...tiles.map((tile) => GestureDetector(
+          onTap: () => onTileSelected(tile),
+          child: Container(
+            width: cellWidth,
+            height: cellHeight,
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            decoration: BoxDecoration(
+              color: tile == currentTile
+                  ? Colors.green.withValues(alpha: 0.4)
+                  : Colors.white.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4),
+              border: tile == currentTile
+                  ? Border.all(color: Colors.greenAccent, width: 1.5)
+                  : null,
             ),
-          );
-        }),
+            alignment: Alignment.center,
+            child: _tileImage(tile),
+          ),
+        )),
         // Pad honor row to match the suit rows' column count.
         if (tiles.length < _columns)
           SizedBox(width: (cellWidth + 2) * (_columns - tiles.length)),
@@ -123,13 +115,9 @@ class TileKeyboard extends StatelessWidget {
     );
   }
 
-  String _displayLabel(String tile) {
-    const honorLabels = {
-      'E': '東', 'S': '南', 'W': '西', 'N': '北',
-      'P': '白', 'F': '發', 'C': '中',
-    };
-    if (honorLabels.containsKey(tile)) return honorLabels[tile]!;
-    if (tile.endsWith('r')) return '赤${tile[0]}';
-    return tile;
+  Widget _tileImage(String tile) {
+    final path = tileAssetPath(tile);
+    if (path == null) return const SizedBox.shrink();
+    return Image.asset(path, fit: BoxFit.contain);
   }
 }

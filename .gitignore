@@ -22,3 +22,4 @@ ml/kaggle_mahjong/
 # Evaluation photos (personal hand-tile photos, not for public repo)
 data/eval_images/
 data/eval_images_cropped/
+data/eval_images_tilted/
