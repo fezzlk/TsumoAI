@@ -74,6 +74,31 @@ printf '%s' "${OPENAI_API_KEY}" | gcloud secrets versions add openai-api-key \
 `gcloud run deploy --source` と Console のソースリポジトリ接続は、重複トリガーを作るため使用しません。
 既定では 1 リージョン、min instances 0、max instances 1、CPU boost 無効、非公開です。
 
+TsumoAI の正式なトリガーは、グローバルトリガーではなく `asia-northeast1` の
+第2世代リポジトリ接続に登録されています。確認・実行時は必ずプロジェクトと
+リージョンを明示します。リージョンを省略すると一覧が空に見えるため、
+「トリガーが存在しない」と判断しないでください。
+
+```bash
+gcloud builds triggers list \
+  --project=tsumoai \
+  --region=asia-northeast1
+
+gcloud builds triggers run tsumoai-deploy \
+  --project=tsumoai \
+  --region=asia-northeast1 \
+  --branch=main
+```
+
+- トリガー名: `tsumoai-deploy`
+- 対象リポジトリ: `fezzlk/TsumoAI`
+- 対象ブランチ: `main`
+- ビルド構成: `cloudbuild.yaml`
+- GitHub接続: `tsumoai-github` / `tsumoai-repo`
+
+デプロイ前には、上記の一覧結果が `tsumoai-deploy` の1件だけであることを確認します。
+過去の `rmgpgab-` プレフィックスのConsole自動生成トリガーは再作成しません。
+
 ### 5. 動作確認
 
 ```bash
