@@ -522,6 +522,58 @@ def get_accuracy_history(_admin: dict = Depends(require_admin)) -> dict:
 # --- Model retraining endpoints ---
 
 
+def _serialize_training_build(build) -> dict:
+    status = getattr(build.status, "name", None) or str(build.status).rsplit(".", 1)[-1]
+    start_time = getattr(build, "start_time", None)
+    finish_time = getattr(build, "finish_time", None)
+    duration_seconds = None
+    if start_time and finish_time:
+        duration_seconds = max(0, int((finish_time - start_time).total_seconds()))
+    failure_info = getattr(build, "failure_info", None)
+    failure_detail = getattr(failure_info, "detail", "") if failure_info else ""
+
+    def isoformat(value):
+        return value.isoformat() if value else None
+
+    return {
+        "build_id": build.id,
+        "status": status,
+        "create_time": isoformat(getattr(build, "create_time", None)),
+        "start_time": isoformat(start_time),
+        "finish_time": isoformat(finish_time),
+        "duration_seconds": duration_seconds,
+        "log_url": getattr(build, "log_url", "") or None,
+        "failure_detail": failure_detail or None,
+    }
+
+
+@app.get("/api/v1/model/retraining-history")
+def get_retraining_history(
+    limit: int = Query(20, ge=1, le=50),
+    _admin: dict = Depends(require_admin),
+) -> dict:
+    project_id = resolve_gcp_project()
+    if not project_id:
+        raise HTTPException(status_code=503, detail="GCP project not configured")
+    try:
+        from google.cloud.devtools import cloudbuild_v1
+
+        parent = f"projects/{project_id}/locations/{settings.gcp_region}"
+        client = cloudbuild_v1.CloudBuildClient()
+        builds = client.list_builds(
+            request={"project_id": project_id, "parent": parent, "page_size": 50}
+        )
+        history = [
+            _serialize_training_build(build)
+            for build in builds
+            if "tsumoai-model-training" in build.tags
+        ]
+        history.sort(key=lambda item: item["create_time"] or "", reverse=True)
+        return {"builds": history[:limit], "region": settings.gcp_region}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cloud Build履歴取得エラー: {e}")
+
+
 @app.get("/api/v1/model/latest")
 def get_latest_model_info() -> dict:
     """Get info about the latest trained model on GCS."""
