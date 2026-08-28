@@ -67,6 +67,20 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 .accuracy-bar { height: 7px; background: #0b2545; border-radius: 4px; overflow: hidden; }
 .accuracy-bar span { display: block; height: 100%; background: #4ecca3; }
 .accuracy-empty { color: #777; font-size: 12px; }
+.history-panel { background:#16213e; border-radius:8px; padding:12px; margin-bottom:16px; }
+.history-header { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.history-header h2 { color:#fff; font-size:15px; }
+.history-header button { margin-left:auto; background:#0f3460; color:#fff; border:1px solid #315b85; padding:5px 10px; border-radius:5px; cursor:pointer; }
+.history-table { width:100%; border-collapse:collapse; font-size:12px; }
+.history-table th, .history-table td { padding:8px 6px; border-top:1px solid #28334f; text-align:left; }
+.history-table a { color:#4ecca3; }
+.build-status { display:inline-block; padding:2px 7px; border-radius:10px; font-weight:bold; }
+.build-success { background:#174c3c; color:#65e6b5; }
+.build-active { background:#4f4219; color:#ffd76a; }
+.build-failure { background:#55272e; color:#ff8b98; }
+.build-other { background:#30394f; color:#b8c1d9; }
+.history-empty { color:#888; padding:10px 4px; }
+@media (max-width:640px) { .history-table th:nth-child(3), .history-table td:nth-child(3) { display:none; } }
 </style>
 </head>
 <body>
@@ -102,6 +116,13 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
   </div>
 </div>
 <div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
+<section class="history-panel" aria-labelledby="historyTitle">
+  <div class="history-header">
+    <h2 id="historyTitle">モデル再学習履歴</h2>
+    <button onclick="loadRetrainingHistory()" id="historyRefreshBtn">更新</button>
+  </div>
+  <div id="trainingHistory" class="history-empty">履歴を読み込んでいます...</div>
+</section>
 <section class="accuracy-panel" aria-labelledby="accuracyTitle">
   <h2 id="accuracyTitle">モバイル認識精度（訂正実績）</h2>
   <div id="accuracyContent"></div>
@@ -143,6 +164,73 @@ const TILE_NAMES = {
   'E':'東', 'S':'南', 'W':'西', 'N':'北', 'P':'白', 'F':'發', 'C':'中'
 };
 const tileName = code => TILE_NAMES[code] || code;
+let historyRefreshTimer = null;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, char => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'
+  })[char]);
+}
+
+function formatBuildDate(value) {
+  return value ? new Date(value).toLocaleString('ja-JP') : '—';
+}
+
+function formatDuration(seconds) {
+  if (seconds == null) return '—';
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}分 ${seconds % 60}秒` : `${seconds}秒`;
+}
+
+function buildStatus(status) {
+  const statuses = {
+    SUCCESS:['成功','success'], QUEUED:['待機中','active'], WORKING:['実行中','active'],
+    FAILURE:['失敗','failure'], INTERNAL_ERROR:['内部エラー','failure'],
+    TIMEOUT:['タイムアウト','failure'], CANCELLED:['キャンセル','failure'],
+    EXPIRED:['期限切れ','failure']
+  };
+  const [label, kind] = statuses[status] || [status || '不明', 'other'];
+  return {label, kind};
+}
+
+async function loadRetrainingHistory() {
+  const button = document.getElementById('historyRefreshBtn');
+  button.disabled = true;
+  try {
+    const res = await authFetch(`${API}/api/v1/model/retraining-history?limit=20`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const builds = data.builds || [];
+    const el = document.getElementById('trainingHistory');
+    if (!builds.length) {
+      el.innerHTML = '<div class="history-empty">再学習の実行履歴はありません</div>';
+    } else {
+      el.innerHTML = `<table class="history-table">
+        <thead><tr><th>結果</th><th>開始日時</th><th>終了日時</th><th>所要時間</th><th>詳細</th></tr></thead>
+        <tbody>${builds.map(build => {
+          const status = buildStatus(build.status);
+          const safeLogUrl = typeof build.log_url === 'string' && build.log_url.startsWith('https://') ? build.log_url : null;
+          const detail = build.failure_detail ? `<br><small>${escapeHtml(build.failure_detail)}</small>` : '';
+          return `<tr>
+            <td><span class="build-status build-${status.kind}">${escapeHtml(status.label)}</span>${detail}</td>
+            <td>${escapeHtml(formatBuildDate(build.start_time || build.create_time))}</td>
+            <td>${escapeHtml(formatBuildDate(build.finish_time))}</td>
+            <td>${escapeHtml(formatDuration(build.duration_seconds))}</td>
+            <td>${safeLogUrl ? `<a href="${escapeHtml(safeLogUrl)}" target="_blank" rel="noopener noreferrer">ログ</a>` : escapeHtml(build.build_id)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+    }
+    clearTimeout(historyRefreshTimer);
+    if (builds.some(build => ['QUEUED','WORKING'].includes(build.status))) {
+      historyRefreshTimer = setTimeout(loadRetrainingHistory, 15000);
+    }
+  } catch (e) {
+    document.getElementById('trainingHistory').innerHTML = `<div class="history-empty">履歴の読み込みに失敗: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    button.disabled = false;
+  }
+}
 
 // ── Auth (Firebase Google sign-in; the admin APIs below require the
 // resulting ID token, verified server-side via app/auth.py) ──
@@ -181,6 +269,7 @@ auth.onAuthStateChanged(user => {
   loadData();
   loadModelInfo();
   loadAccuracyHistory();
+  loadRetrainingHistory();
 });
 
 async function loadData(refresh = false) {
@@ -471,6 +560,7 @@ async function triggerRetrain() {
       btn.textContent = '再学習中...';
       btn.style.background = '#888';
       alert(data.message);
+      await loadRetrainingHistory();
     } else {
       alert('エラー: ' + (data.detail || '不明なエラー'));
       btn.disabled = false;
