@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -8,6 +9,7 @@ import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
+import '../services/tile_detector.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
 import '../widgets/tile_image_picker.dart';
@@ -70,6 +72,23 @@ class _ScanScreenState extends State<ScanScreen> {
   // rectangle. In `_capturedImage`'s (corrected) pixel space.
   final List<TileQuad?> _tileQuads = List.filled(14, null);
 
+  // Live auto-shutter detection (FEZ-96): runs TileDetector against the
+  // camera preview stream and captures automatically once a full 14-tile
+  // detection has stayed stable for a few frames in a row, instead of
+  // requiring the user to judge readiness and tap the shutter themselves.
+  // Kept toggleable — this is the first on-device verification of the
+  // approach (interval/streak below are unverified guesses), so falling
+  // back to the existing manual button must stay one tap away.
+  bool _autoCaptureEnabled = true;
+  bool _isLiveStreamActive = false;
+  bool _isAnalyzingFrame = false;
+  CameraImage? _latestFrame;
+  Timer? _analysisTimer;
+  TileDetectorResult? _liveDetectorResult;
+  int _stableDetectionStreak = 0;
+  static const int _requiredStableFrames = 2;
+  static const Duration _analysisInterval = Duration(seconds: 1);
+
   bool _isCapturing = false;
   bool _isScoring = false;
   bool _isSendingTraining = false;
@@ -105,6 +124,10 @@ class _ScanScreenState extends State<ScanScreen> {
       widget.cameras.first,
       ResolutionPreset.high,
       enableAudio: false,
+      // Needed for startImageStream()'s live auto-detect (see below) to get
+      // a predictable YUV plane layout on both Android and iOS; takePicture()
+      // (still JPEG) is unaffected.
+      imageFormatGroup: ImageFormatGroup.yuv420,
     );
     try {
       await _controller!.initialize();
@@ -120,13 +143,81 @@ class _ScanScreenState extends State<ScanScreen> {
         DeviceOrientation.landscapeLeft,
       );
       if (mounted) setState(() {});
+      await _startLiveDetection();
     } catch (e) {
       debugPrint('Camera init error: $e');
     }
   }
 
+  Future<void> _startLiveDetection() async {
+    await _stopLiveDetection();
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    try {
+      await _controller!.startImageStream((image) => _latestFrame = image);
+      _isLiveStreamActive = true;
+    } catch (e) {
+      debugPrint('Live detection stream start error: $e');
+      return;
+    }
+    _analysisTimer = Timer.periodic(_analysisInterval, (_) => _analyzeLatestFrame());
+  }
+
+  Future<void> _stopLiveDetection() async {
+    _analysisTimer?.cancel();
+    _analysisTimer = null;
+    _latestFrame = null;
+    _stableDetectionStreak = 0;
+    if (_isLiveStreamActive) {
+      try {
+        await _controller?.stopImageStream();
+      } catch (e) {
+        debugPrint('Live detection stream stop error: $e');
+      }
+      _isLiveStreamActive = false;
+    }
+  }
+
+  Future<void> _analyzeLatestFrame() async {
+    if (_isAnalyzingFrame || _isCapturing || _phase != _ScanPhase.camera) {
+      return;
+    }
+    final frame = _latestFrame;
+    if (frame == null) return;
+
+    _isAnalyzingFrame = true;
+    try {
+      final result = await TileDetector.detect(frame);
+      if (!mounted || _phase != _ScanPhase.camera) return;
+
+      final isFullDetection = result.tileCount == TileDetector.targetTileCount;
+      setState(() {
+        _liveDetectorResult = result;
+        _stableDetectionStreak = isFullDetection ? _stableDetectionStreak + 1 : 0;
+      });
+
+      if (_autoCaptureEnabled &&
+          !_isCapturing &&
+          _stableDetectionStreak >= _requiredStableFrames) {
+        _stableDetectionStreak = 0;
+        await _capture();
+      }
+    } catch (e) {
+      debugPrint('Live tile detection error: $e');
+    } finally {
+      _isAnalyzingFrame = false;
+    }
+  }
+
+  void _toggleAutoCapture() {
+    setState(() {
+      _autoCaptureEnabled = !_autoCaptureEnabled;
+      _stableDetectionStreak = 0;
+    });
+  }
+
   @override
   void dispose() {
+    _analysisTimer?.cancel();
     _controller?.dispose();
     _classifier.dispose();
     super.dispose();
@@ -141,6 +232,15 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
     setState(() => _isCapturing = true);
+    await _stopLiveDetection();
+    // Mirrors CameraScreen's original auto-detect prototype: the native
+    // camera needs a moment to fully release the image stream before
+    // takePicture(), or the capture can fail/stall.
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted || _controller == null || !_controller!.value.isInitialized) {
+      if (mounted) setState(() => _isCapturing = false);
+      return;
+    }
 
     bool capturedOk = false;
     try {
@@ -190,7 +290,11 @@ class _ScanScreenState extends State<ScanScreen> {
       // spinner — the user can add all 14 boxes manually from there.
       if (capturedOk) await _classifyBoxesAndFinish(const []);
     } finally {
-      setState(() => _isCapturing = false);
+      if (mounted) setState(() => _isCapturing = false);
+      // takePicture() itself failed (capturedOk stayed false): we're still
+      // on the camera phase, so resume live detection instead of leaving
+      // the preview stuck without it.
+      if (mounted && _phase == _ScanPhase.camera) await _startLiveDetection();
     }
   }
 
@@ -540,6 +644,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _isSendingTraining = false;
       _trainingDataSent = false;
     });
+    _startLiveDetection();
   }
 
   bool get _allTilesReady => _tiles.every((t) => t != null);
@@ -674,6 +779,20 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
               ),
             ),
+            // Live detection tile-count badge + auto/manual shutter toggle
+            // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
+            // real devices, so manual capture must remain available).
+            Positioned(
+              top: 8,
+              right: 12,
+              child: Row(
+                children: [
+                  _buildLiveTileCountBadge(),
+                  const SizedBox(width: 8),
+                  _buildAutoCaptureToggle(),
+                ],
+              ),
+            ),
             // Capture button
             Positioned(
               bottom: 40,
@@ -720,6 +839,69 @@ class _ScanScreenState extends State<ScanScreen> {
                   textAlign: TextAlign.center,
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLiveTileCountBadge() {
+    final count = _liveDetectorResult?.tileCount ?? 0;
+    final isReady = count == TileDetector.targetTileCount;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: (isReady ? Colors.green : Colors.black54).withValues(alpha: 0.8),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isReady ? Icons.check_circle : Icons.search,
+            color: Colors.white,
+            size: 16,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$count / ${TileDetector.targetTileCount} 牌',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: isReady ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAutoCaptureToggle() {
+    return GestureDetector(
+      onTap: _toggleAutoCapture,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black54.withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _autoCaptureEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+              color: _autoCaptureEnabled ? Colors.amberAccent : Colors.white54,
+              size: 16,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              _autoCaptureEnabled ? '自動' : '手動',
+              style: TextStyle(
+                color: _autoCaptureEnabled ? Colors.amberAccent : Colors.white54,
+                fontSize: 12,
+              ),
+            ),
           ],
         ),
       ),
