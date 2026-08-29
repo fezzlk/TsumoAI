@@ -15,7 +15,7 @@ steps:
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
       - --region=${_REGION}
       - --service-account=${_SERVICE_ACCOUNT}
-      - --set-env-vars=GCP_REGION=${_REGION}
+      - --set-env-vars=GCP_PROJECT=$PROJECT_ID,GCP_REGION=${_REGION},GCS_BUCKET_NAME=${_GCS_BUCKET_NAME}
       - --min-instances=0
       - --max-instances=1
       - --cpu-throttling
@@ -46,6 +46,7 @@ substitutions:
   _REPOSITORY: cloud-run-source-deploy
   _SERVICE: tsumoai-api
   _SERVICE_ACCOUNT: tsumoai-runner@tsumoai.iam.gserviceaccount.com
+  _GCS_BUCKET_NAME: correctdata
   _ACCURACY_JOB: tsumoai-accuracy-eval
 options:
   logging: CLOUD_LOGGING_ONLY
