@@ -20,7 +20,7 @@ services:
       - .env
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcloud/application_default_credentials.json
-      - GOOGLE_CLOUD_PROJECT=nazonator
+      - GOOGLE_CLOUD_PROJECT=${GCP_PROJECT:-tsumoai}
     volumes:
       - ./app:/app/app
       - ~/.config/gcloud:/tmp/gcloud:ro
