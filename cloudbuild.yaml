@@ -15,6 +15,7 @@ steps:
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
       - --region=${_REGION}
       - --service-account=${_SERVICE_ACCOUNT}
+      - --set-env-vars=GCP_REGION=${_REGION}
       - --min-instances=0
       - --max-instances=1
       - --cpu-throttling
