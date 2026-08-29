@@ -529,7 +529,7 @@ def get_latest_model_info() -> dict:
         raise HTTPException(status_code=503, detail="GCS not configured")
     try:
         from google.cloud import storage
-        client = storage.Client(project=settings.gcp_project)
+        client = storage.Client(project=resolve_gcp_project())
         bucket = client.bucket(settings.gcs_bucket_name)
         blob = bucket.blob("models/latest.json")
         if not blob.exists():
@@ -618,7 +618,7 @@ def approve_model_candidate(version: str, _admin: dict = Depends(require_admin))
         raise HTTPException(status_code=503, detail="GCS not configured")
     try:
         from google.cloud import storage
-        client = storage.Client(project=settings.gcp_project)
+        client = storage.Client(project=resolve_gcp_project())
         bucket = client.bucket(settings.gcs_bucket_name)
         candidate = bucket.blob(f"models/candidates/{version}.json")
         if not candidate.exists():
@@ -644,7 +644,7 @@ def download_model_file(filename: str) -> Response:
         raise HTTPException(status_code=503, detail="GCS not configured")
     try:
         from google.cloud import storage
-        client = storage.Client(project=settings.gcp_project)
+        client = storage.Client(project=resolve_gcp_project())
         bucket = client.bucket(settings.gcs_bucket_name)
 
         # Get latest version

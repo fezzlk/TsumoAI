@@ -28,15 +28,51 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+class GcpProjectConfigurationError(ValueError):
+    """Raised when explicit GCP project settings disagree."""
+
+
+def _explicit_gcp_projects() -> dict[str, str]:
+    candidates = {
+        "GCP_PROJECT": settings.gcp_project,
+        "GOOGLE_CLOUD_PROJECT": os.getenv("GOOGLE_CLOUD_PROJECT"),
+        "GCLOUD_PROJECT": os.getenv("GCLOUD_PROJECT"),
+    }
+    return {
+        name: value.strip()
+        for name, value in candidates.items()
+        if value and value.strip()
+    }
+
+
+def validate_gcp_project_configuration() -> str | None:
+    """Return the explicit project, rejecting conflicting target projects.
+
+    ADC identifies credentials, not the intended resource project, so its
+    inferred project is used only when no explicit project variable exists.
+    """
+    projects = _explicit_gcp_projects()
+    unique_projects = set(projects.values())
+    if len(unique_projects) > 1:
+        details = ", ".join(f"{name}={value}" for name, value in projects.items())
+        raise GcpProjectConfigurationError(
+            f"Conflicting GCP project settings: {details}. "
+            "Set all explicit project variables to the same project."
+        )
+    return next(iter(unique_projects), None)
+
+
 def resolve_gcp_project() -> str | None:
-    """Resolve the project explicitly or from the active GCP runtime credentials."""
-    if settings.gcp_project:
-        return settings.gcp_project
-    for variable in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"):
-        if project := os.getenv(variable):
-            return project
+    """Resolve one resource project, using ADC only as a final fallback."""
+    if project := validate_gcp_project_configuration():
+        return project
     try:
         _, project = google.auth.default()
         return project
     except google.auth.exceptions.DefaultCredentialsError:
         return None
+
+
+# Fail during application import instead of allowing different Google clients
+# to silently target different projects.
+validate_gcp_project_configuration()

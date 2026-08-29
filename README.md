@@ -28,6 +28,17 @@ Health check:
 curl http://localhost:8000/health
 ```
 
+### Google Cloud project settings
+
+TsumoAIが操作するリソースのproject IDは `GCP_PROJECT=tsumoai` を正本とします。
+`GOOGLE_CLOUD_PROJECT` または `GCLOUD_PROJECT` も設定されている場合、すべて同じ値でなければ
+アプリは起動時に停止します。Application Default Credentials (ADC) から推定されるprojectは、
+これらの明示値が1つもない場合だけfallbackとして使用します。
+
+認証に使うgcloud configurationのactive projectと、処理対象projectは別の概念です。
+ローカルのComposeは `.env` の `GCP_PROJECT` を `GOOGLE_CLOUD_PROJECT` に反映しますが、
+手動のgcloudコマンドでは引き続き `--project=tsumoai` と `--region=asia-northeast1` を明示してください。
+
 ## Deploy (Google Cloud Run)
 
 この構成は Cloud Run 向けに対応済みです（`Dockerfile` が `PORT` 環境変数で起動）。

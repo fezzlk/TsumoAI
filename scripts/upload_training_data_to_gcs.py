@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOCAL_DATA_DIR = ROOT / "ml" / "training_data"
 
 sys.path.insert(0, str(ROOT))
-from app.config import settings  # noqa: E402
+from app.config import resolve_gcp_project, settings  # noqa: E402
 
 
 def upload(dry_run: bool = False) -> None:
@@ -31,7 +31,7 @@ def upload(dry_run: bool = False) -> None:
         print("ERROR: GCS_BUCKET_NAME is not configured in .env")
         sys.exit(1)
 
-    client = storage.Client(project=settings.gcp_project)
+    client = storage.Client(project=resolve_gcp_project())
     bucket = client.bucket(bucket_name)
     prefix = "training-data"
 
