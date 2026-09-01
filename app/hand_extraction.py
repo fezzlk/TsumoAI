@@ -20,6 +20,16 @@ Detect exactly 14 winning-hand tiles from a single image.
 Use tile codes: 1m-9m,1p-9p,1s-9s,E,S,W,N,P,F,C,5mr,5pr,5sr.
 For each slot, return top and up to 3 candidates with confidence [0,1]."""
 
+# Experimental variant for FEZ-95 (bbox localization verification). Not used by the
+# production pipeline (extract_hand_from_image) — see scripts/evaluate_bbox_estimation.py.
+SYSTEM_PROMPT_WITH_BBOX = """You are a mahjong tile recognizer.
+Return JSON only.
+Detect exactly 14 winning-hand tiles from a single image.
+Use tile codes: 1m-9m,1p-9p,1s-9s,E,S,W,N,P,F,C,5mr,5pr,5sr.
+For each slot, return top, up to 3 candidates with confidence [0,1],
+and bbox: [x_min, y_min, x_max, y_max] normalized to the image size (0 to 1),
+drawn tight around that single tile."""
+
 
 class RecognitionCancelledError(Exception):
     pass
@@ -169,7 +179,7 @@ def _image_variants(image_bytes: bytes) -> list[tuple[str, bytes, float]]:
     return variants
 
 
-def _call_model_for_slots(client: OpenAI, image_bytes: bytes) -> dict[str, Any]:
+def _call_model_for_slots(client: OpenAI, image_bytes: bytes, system_prompt: str = SYSTEM_PROMPT) -> dict[str, Any]:
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
     if hasattr(client, "responses"):
         response = client.responses.create(
@@ -177,7 +187,7 @@ def _call_model_for_slots(client: OpenAI, image_bytes: bytes) -> dict[str, Any]:
             input=[
                 {
                     "role": "system",
-                    "content": [{"type": "input_text", "text": SYSTEM_PROMPT}],
+                    "content": [{"type": "input_text", "text": system_prompt}],
                 },
                 {
                     "role": "user",
@@ -196,7 +206,7 @@ def _call_model_for_slots(client: OpenAI, image_bytes: bytes) -> dict[str, Any]:
             temperature=0,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": [
