@@ -2,21 +2,28 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import '../config.dart';
 import '../models/recognize_result.dart';
+import '../models/interpretation_request.dart';
+import '../models/interpretation_result.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
 import 'auth_service.dart';
 
 class ApiClient {
-  late final Dio _dio;
+  final Dio _dio;
+  final String? _baseUrlOverride;
 
-  ApiClient() {
-    _dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 60),
-    ));
-  }
+  ApiClient({Dio? dio, String? baseUrl})
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 10),
+              receiveTimeout: const Duration(seconds: 60),
+            ),
+          ),
+      _baseUrlOverride = baseUrl;
 
-  String get _baseUrl => AppConfig.apiBaseUrl;
+  String get _baseUrl => _baseUrlOverride ?? AppConfig.apiBaseUrl;
 
   /// Upload image and recognize tiles (synchronous call, no polling needed)
   Future<RecognizeResponse> recognize(File imageFile) async {
@@ -54,6 +61,38 @@ class ApiClient {
     }
   }
 
+  Future<InterpretationResult> interpret(InterpretationRequest request) async {
+    try {
+      final response = await _dio.post(
+        '$_baseUrl/api/v1/interpretations',
+        data: request.toJson(),
+      );
+      return InterpretationResult.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+    } on DioException catch (error) {
+      final response = error.response;
+      if (response == null) rethrow;
+      final data = response.data;
+      String message = 'Interpretation request failed';
+      Object? details = data;
+      if (data is Map) {
+        final detail = data['detail'];
+        if (detail is String) {
+          message = detail;
+        } else if (detail != null) {
+          message = 'Interpretation request was rejected';
+          details = detail;
+        }
+      }
+      throw InterpretationApiException(
+        statusCode: response.statusCode,
+        message: message,
+        details: details,
+      );
+    }
+  }
+
   /// Send recognition feedback with corrected tiles.
   Future<void> sendRecognitionFeedback({
     required Map<String, dynamic> recognitionResponse,
@@ -71,4 +110,21 @@ class ApiClient {
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }
+}
+
+class InterpretationApiException implements Exception {
+  final int? statusCode;
+  final String message;
+  final Object? details;
+
+  const InterpretationApiException({
+    required this.statusCode,
+    required this.message,
+    this.details,
+  });
+
+  @override
+  String toString() => statusCode == null
+      ? message
+      : 'Interpretation API error ($statusCode): $message';
 }
