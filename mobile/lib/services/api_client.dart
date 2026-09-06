@@ -93,6 +93,94 @@ class ApiClient {
     }
   }
 
+  Future<ConfirmedHandStateV1> confirmHand({
+    required InterpretationRequest request,
+  }) async {
+    final confirmation = request.confirmation;
+    if (confirmation == null) {
+      throw ArgumentError('Confirmation is required');
+    }
+    try {
+      final response = await _dio.post(
+        '$_baseUrl/api/v1/confirmed-hands',
+        data: {
+          'observation': request.observation.toJson(),
+          'confirmation': confirmation.toJson(),
+        },
+      );
+      return ConfirmedHandStateV1.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+    } on DioException catch (error) {
+      throw _interpretationException(error);
+    }
+  }
+
+  Future<Map<String, dynamic>> analyzeTenpai({
+    required ConfirmedHandStateV1 state,
+    required ContextInput context,
+    required RuleSet rules,
+  }) async {
+    final response = await _dio.post(
+      '$_baseUrl/api/v1/tenpai/analyze',
+      data: _analysisPayload(state, context, rules),
+    );
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> analyzeDiscards({
+    required ConfirmedHandStateV1 state,
+    required ContextInput context,
+    required RuleSet rules,
+  }) async {
+    final response = await _dio.post(
+      '$_baseUrl/api/v1/discards/analyze',
+      data: _analysisPayload(state, context, rules),
+    );
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Map<String, dynamic> _analysisPayload(
+    ConfirmedHandStateV1 state,
+    ContextInput context,
+    RuleSet rules,
+  ) => {
+    'closed_tiles': state.hand.closedTiles,
+    'melds': state.hand.melds
+        .map((meld) => meld.toAnalysisJson())
+        .toList(growable: false),
+    'context': context.toJson(),
+    'rules': rules.toJson(),
+    'include_score_predictions': true,
+  };
+
+  InterpretationApiException _interpretationException(DioException error) {
+    final response = error.response;
+    if (response == null) {
+      return InterpretationApiException(
+        statusCode: null,
+        message: error.message ?? 'Network request failed',
+      );
+    }
+    final data = response.data;
+    String message = 'Confirmation request failed';
+    Object? details = data;
+    if (data is Map) {
+      final detail = data['detail'];
+      if (detail is String) {
+        message = detail;
+      } else if (detail != null) {
+        message = 'Confirmation request was rejected';
+        details = detail;
+      }
+    }
+    return InterpretationApiException(
+      statusCode: response.statusCode,
+      message: message,
+      details: details,
+    );
+  }
+
   /// Send recognition feedback with corrected tiles.
   Future<void> sendRecognitionFeedback({
     required Map<String, dynamic> recognitionResponse,

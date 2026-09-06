@@ -126,6 +126,11 @@ class ConfirmedHandStateV1(BaseModel):
     hand: ConfirmedHandV1
 
 
+class ConfirmedHandAssemblyRequest(BaseModel):
+    observation: ObservationV1
+    confirmation: ConfirmationV1
+
+
 class InterpretationRequest(BaseModel):
     observations: list[TileObservation]
     confirmed_winning_tile_id: str | None = None

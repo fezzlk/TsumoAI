@@ -102,4 +102,55 @@ void main() {
       ),
     );
   });
+
+  test(
+    'confirmHand posts separate observation and confirmation documents',
+    () async {
+      final dio = Dio();
+      RequestOptions? captured;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            captured = options;
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: {
+                  'schema_version': '1',
+                  'operation': 'score',
+                  'hand': {
+                    'closed_tiles': ['1m'],
+                    'closed_tile_observation_ids': ['tile-000'],
+                    'melds': [],
+                    'win_tile': '1m',
+                    'win_tile_observation_id': 'tile-000',
+                  },
+                },
+              ),
+            );
+          },
+        ),
+      );
+      final client = ApiClient(dio: dio, baseUrl: 'https://example.test');
+      const confirmation = ConfirmationV1(
+        operation: HandOperation.score,
+        confirmedTiles: [ConfirmedTile(observationId: 'tile-000', tile: '1m')],
+        confirmedWinningTileId: 'tile-000',
+      );
+
+      final state = await client.confirmHand(
+        request: InterpretationRequest(
+          observation: observation(),
+          confirmation: confirmation,
+        ),
+      );
+
+      expect(captured?.path, 'https://example.test/api/v1/confirmed-hands');
+      final sent = captured?.data as Map<String, dynamic>;
+      expect((sent['observation'] as Map)['schema_version'], '1');
+      expect((sent['confirmation'] as Map)['operation'], 'score');
+      expect(state.hand.winTileObservationId, 'tile-000');
+    },
+  );
 }
