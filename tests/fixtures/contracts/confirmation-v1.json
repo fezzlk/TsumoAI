@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "operation": "score",
+  "confirmed_tiles": [
+    {"observation_id": "tile-000", "tile": "1m"},
+    {"observation_id": "tile-001", "tile": "2m"},
+    {"observation_id": "tile-002", "tile": "3m"},
+    {"observation_id": "tile-003", "tile": "4p"},
+    {"observation_id": "tile-004", "tile": "5pr"},
+    {"observation_id": "tile-005", "tile": "6p"},
+    {"observation_id": "tile-006", "tile": "7s"},
+    {"observation_id": "tile-007", "tile": "8s"},
+    {"observation_id": "tile-008", "tile": "9s"},
+    {"observation_id": "tile-009", "tile": "E"},
+    {"observation_id": "tile-010", "tile": "E"},
+    {"observation_id": "tile-011", "tile": "5s"},
+    {"observation_id": "tile-012", "tile": "5s"},
+    {"observation_id": "tile-013", "tile": "5s"}
+  ],
+  "confirmed_winning_tile_id": "tile-008",
+  "confirmed_melds": [
+    {
+      "observation_ids": ["tile-011", "tile-012", "tile-013"],
+      "type": "pon",
+      "open": true
+    }
+  ]
+}

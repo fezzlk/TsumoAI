@@ -11,21 +11,31 @@
 
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'package:flutter/material.dart' show Rect;
+import 'package:flutter/material.dart' show Rect, Offset;
 import 'package:image/image.dart' as img;
+import '../models/tile_quad.dart';
 
 typedef _Comp = ({int x, int y, int w, int h, int area});
 
 /// Detect individual tile bounding boxes in [image]. Returns boxes in
 /// [image]'s own pixel coordinate space (not downscaled). Empty if no
 /// plausible tile run is found.
-List<Rect> segmentTiles(img.Image image) {
+List<Rect> segmentTiles(img.Image image) => _segmentCore(image).boxes;
+
+/// Same as [segmentTiles], but also returns each box's local straightening
+/// angle hint (degrees) — see [_segmentCore] for how it's derived. For
+/// [refineTileCropWithRect] callers that want a per-tile rotation estimate
+/// more robust than a single tile's own (shadow-degraded) mask.
+({List<Rect> boxes, List<double> angleHints}) segmentTilesWithHints(img.Image image) =>
+    _segmentCore(image);
+
+({List<Rect> boxes, List<double> angleHints}) _segmentCore(img.Image image) {
   const scale = 4;
   final w = image.width;
   final h = image.height;
   final mW = w ~/ scale;
   final mH = h ~/ scale;
-  if (mW <= 0 || mH <= 0) return [];
+  if (mW <= 0 || mH <= 0) return (boxes: <Rect>[], angleHints: <double>[]);
 
   // Raw white-pixel mask (pre-morphology; kept for pitch detection, since
   // CLOSE bridges the thin gaps between touching tiles).
@@ -86,7 +96,7 @@ List<Rect> segmentTiles(img.Image image) {
     }
   }
 
-  if (components.isEmpty) return [];
+  if (components.isEmpty) return (boxes: <Rect>[], angleHints: <double>[]);
 
   final maskArea = mW * mH;
   final minArea = math.max(300 / (scale * scale), 0.003 * maskArea);
@@ -100,7 +110,7 @@ List<Rect> segmentTiles(img.Image image) {
     if (bboxArea == 0 || c.area / bboxArea < 0.20) continue;
     filtered.add(c);
   }
-  if (filtered.isEmpty) return [];
+  if (filtered.isEmpty) return (boxes: <Rect>[], angleHints: <double>[]);
 
   // Decide run orientation once, from how ALL surviving components are
   // spatially arranged (not any single component's own aspect ratio).
@@ -149,7 +159,37 @@ List<Rect> segmentTiles(img.Image image) {
   // position/extent tracks the blob's local centerline (see
   // `_blobCenterline`) rather than the blob's own fixed bbox, so a curved
   // (non-straight) tile row doesn't drift slots away from the true tiles.
+  //
+  // Along the run axis, slots are still uniform (`c.w / n`, `c.h / n`) —
+  // snapping each boundary to the nearest local dip in the white-fraction
+  // profile was tried and reverted: a tile face's own ink (e.g. the gaps
+  // between a bamboo tile's printed circles) produces dips just as deep as
+  // the true seam between tiles, so the snap just as often lands on an
+  // in-tile pattern as on the real boundary. Fixing this properly needs
+  // seam detection that can tell those apart (e.g. matched against the
+  // resolved pitch jointly, not a single nearest-dip search per boundary)
+  // — until then, `refineTileCropWithRect`'s per-tile local correction and
+  // the manual box editor are the ways to recover a mis-split tile.
+  // Each tile's straightening-angle hint (degrees) comes from the LOCAL
+  // SLOPE of the blob's own centerline across that tile's span — how much
+  // the curved row's cross-axis center shifts per pixel of run-axis
+  // distance, converted to an angle. This is a hint about the row's local
+  // tilt, not the tile's own (possibly shadow-degraded) mask, so it stays
+  // usable exactly where per-tile mask-based angle estimation
+  // (`_bestStraighteningAngleDegrees`, used downstream in
+  // `refineTileCropWithRect`) is least reliable — a sharply-curved stretch
+  // of the row. Sign is a best-effort guess; callers that act on it (see
+  // `refineTileCropWithRect`) verify empirically rather than trusting it.
+  double angleHintFromSlope(_Centerline centerline, int rel0, int rel1) {
+    final r1 = math.min(centerline.centers.length, rel1) - 1;
+    if (r1 <= rel0) return 0.0;
+    final rise = centerline.centers[r1] - centerline.centers[rel0];
+    final run = (r1 - rel0).toDouble();
+    return math.atan2(rise, run) * 180 / math.pi;
+  }
+
   final result = <Rect>[];
+  final angleHints = <double>[];
   for (int i = 0; i < kept.length; i++) {
     final n = tileCounts[i];
     if (n <= 0) continue;
@@ -174,6 +214,7 @@ List<Rect> segmentTiles(img.Image image) {
           ((ex - sx) * scale).toDouble(),
           ((ey - sy) * scale).toDouble(),
         ));
+        angleHints.add(angleHintFromSlope(centerline, rel0, rel1));
       }
     } else {
       final subW = c.w / n;
@@ -193,10 +234,11 @@ List<Rect> segmentTiles(img.Image image) {
           ((ex - sx) * scale).toDouble(),
           ((ey - sy) * scale).toDouble(),
         ));
+        angleHints.add(angleHintFromSlope(centerline, rel0, rel1));
       }
     }
   }
-  return result;
+  return (boxes: result, angleHints: angleHints);
 }
 
 /// Decode [bytes] and run [segmentTiles]. Suitable as a top-level `compute()`
@@ -213,6 +255,16 @@ List<Rect> segmentTilesFromBytes(Uint8List bytes) {
   return segmentTiles(rgb);
 }
 
+/// Same as [segmentTilesFromBytes], but returns hints too (see
+/// [segmentTilesWithHints]) — for the `compute()` isolate entry point.
+({List<Rect> boxes, List<double> angleHints}) segmentTilesWithHintsFromBytes(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return (boxes: <Rect>[], angleHints: <double>[]);
+  final oriented = img.bakeOrientation(decoded);
+  final rgb = oriented.numChannels == 3 ? oriented : oriented.convert(numChannels: 3);
+  return segmentTilesWithHints(rgb);
+}
+
 /// Given a rough (axis-aligned) detected bounding box for one tile, produce
 /// a straightened, tightly-cropped image suitable for classification —
 /// correcting that individual tile's own tilt and trimming background/
@@ -220,9 +272,35 @@ List<Rect> segmentTilesFromBytes(Uint8List bytes) {
 /// This is a small, local, per-tile refinement; it does not touch (and
 /// cannot destabilize) the whole-row detection/counting in [segmentTiles].
 /// Falls back to a plain crop of [roughBox] if no clear tile blob is found.
-img.Image refineTileCrop(img.Image source, Rect roughBox) {
+img.Image refineTileCrop(img.Image source, Rect roughBox) => refineTileCropWithRect(source, roughBox).image;
+
+/// Same as [refineTileCrop], but also reports the region it actually used,
+/// in [source]'s own pixel space, as a [TileQuad] — for callers that want
+/// to show/let the user edit that region (e.g. the mobile app's box-editor
+/// starting point) rather than the much coarser, uniform-pitch [roughBox]
+/// every tile in a row starts from. A plain (axis-aligned) quad when no
+/// rotation was applied; an actually-rotated quad — not just its axis-
+/// aligned bounding box — when one was, computed by rotating the local
+/// blob's own point cloud analytically rather than trying to invert
+/// [img.copyRotate]'s pixel-level canvas geometry.
+///
+/// [angleHint] (degrees, from [segmentTilesWithHints]) is an additional
+/// rotation candidate, alongside this tile's own local (mask-based) angle
+/// estimate — the mask a single tile's own crop offers is often degraded
+/// by shadow, while the hint comes from the whole row's local curve
+/// direction and stays usable exactly where the local mask isn't. Neither
+/// is trusted blindly: every candidate (both signs of both estimates) is
+/// tried as a *real* rotation of the actual pixels, and whichever yields
+/// the tightest axis-aligned blob wins — see the candidate loop below.
+({img.Image image, TileQuad sourceQuad}) refineTileCropWithRect(
+  img.Image source,
+  Rect roughBox, {
+  double angleHint = 0.0,
+}) {
   final srcW = source.width, srcH = source.height;
   final fallback = _plainCrop(source, roughBox);
+  ({img.Image image, TileQuad sourceQuad}) fallbackResult() =>
+      (image: fallback, sourceQuad: TileQuad.fromRect(roughBox));
 
   final marginX = roughBox.width * 0.20;
   final marginY = roughBox.height * 0.20;
@@ -233,7 +311,7 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) {
   final padded = img.copyCrop(source, x: px0, y: py0, width: px1 - px0, height: py1 - py0);
 
   final blob = _pickCentralBlob(_findLocalBlobs(padded), padded.width, padded.height);
-  if (blob == null) return fallback;
+  if (blob == null) return fallbackResult();
 
   // Touching tiles can share a seam too faint to separate even in this
   // small local (non-morphed) mask — the same low-contrast, white-on-white
@@ -244,30 +322,54 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) {
   // actively make the crop worse), fall back to the safe naive crop.
   final expectedArea = roughBox.width * roughBox.height;
   if (expectedArea > 0 && _bboxArea(blob) > expectedArea * 1.6) {
-    return fallback;
+    return fallbackResult();
   }
 
-  final angle = _bestStraighteningAngleDegrees(blob.points);
-  if (angle.abs() < 0.05) {
-    return _tightCropToBlob(padded, blob) ?? fallback;
+  ({img.Image image, TileQuad sourceQuad}) noRotationResult() {
+    final tight = _tightCropToBlobRect(blob, padded.width, padded.height);
+    if (tight == null) return fallbackResult();
+    if (expectedArea > 0 && tight.width * tight.height > expectedArea * 1.6) return fallbackResult();
+    return (
+      image: img.copyCrop(padded, x: tight.left.round(), y: tight.top.round(),
+          width: tight.width.round(), height: tight.height.round()),
+      sourceQuad: TileQuad.fromRect(tight.translate(px0.toDouble(), py0.toDouble())),
+    );
   }
 
-  // The point-cloud search above gives the correction *magnitude* but not
-  // reliably its sign relative to copyRotate's rotation direction, and it
-  // can also be a false positive on an already-straight tile (a small
-  // spurious angle from mask noise). Resolve both by comparing three real
-  // candidates — no rotation, +angle, -angle — and keeping whichever
-  // actually yields the tightest (smallest-area) axis-aligned blob after
-  // rotating the real image, rather than trusting the estimate blindly.
-  // Cheap: the crop here is small, so this is only two extra rotations.
-  final rotatedPos = img.copyRotate(padded, angle: angle, interpolation: img.Interpolation.linear);
-  final rotatedNeg = img.copyRotate(padded, angle: -angle, interpolation: img.Interpolation.linear);
-  final blobPos = _pickCentralBlob(_findLocalBlobs(rotatedPos), rotatedPos.width, rotatedPos.height);
-  final blobNeg = _pickCentralBlob(_findLocalBlobs(rotatedNeg), rotatedNeg.width, rotatedNeg.height);
+  // Neither candidate source's *sign* is reliable relative to copyRotate's
+  // rotation direction (and either can be a false positive on an already-
+  // straight tile), so try every combination as a *real* rotation of the
+  // actual pixels and let the tightest resulting blob decide — magnitude,
+  // sign, and whether to rotate at all. Cheap: the crop here is small.
+  final pointCloudAngle = _bestStraighteningAngleDegrees(blob.points);
+  final candidates = <double>{};
+  if (pointCloudAngle.abs() >= 0.05) {
+    candidates.add(pointCloudAngle);
+    candidates.add(-pointCloudAngle);
+  }
+  if (angleHint.abs() >= 0.05) {
+    candidates.add(angleHint);
+    candidates.add(-angleHint);
+  }
+  if (candidates.isEmpty) return noRotationResult();
 
-  final areaOriginal = _bboxArea(blob);
-  final areaPos = blobPos == null ? double.infinity : _bboxArea(blobPos);
-  final areaNeg = blobNeg == null ? double.infinity : _bboxArea(blobNeg);
+  final areaOriginal = _bboxArea(blob).toDouble();
+  double bestArea = areaOriginal;
+  double bestAngle = 0.0;
+  img.Image? bestImage;
+  _LocalBlob? bestBlob;
+  for (final candidate in candidates) {
+    final rotated = img.copyRotate(padded, angle: candidate, interpolation: img.Interpolation.linear);
+    final rBlob = _pickCentralBlob(_findLocalBlobs(rotated), rotated.width, rotated.height);
+    if (rBlob == null) continue;
+    final area = _bboxArea(rBlob).toDouble();
+    if (area < bestArea) {
+      bestArea = area;
+      bestAngle = candidate;
+      bestImage = rotated;
+      bestBlob = rBlob;
+    }
+  }
 
   // A rotated candidate's bounding box can come out only marginally
   // smaller than the unrotated original by noise alone (mask-detection
@@ -275,26 +377,75 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) {
   // a slightly different blob picked up). Require a clear improvement —
   // not just "smaller" — before trusting a rotation over no rotation at
   // all; otherwise keep the original framing.
-  const minImprovement = 0.90; // rotated area must be <= 90% of original
-  final bestRotatedArea = math.min(areaPos, areaNeg);
-
-  img.Image useImage;
-  _LocalBlob useBlob;
-  if (bestRotatedArea > areaOriginal * minImprovement) {
-    useImage = padded;
-    useBlob = blob;
-  } else if (areaPos <= areaNeg) {
-    useImage = rotatedPos;
-    useBlob = blobPos!;
-  } else {
-    useImage = rotatedNeg;
-    useBlob = blobNeg!;
+  const minImprovement = 0.90; // winning area must be <= 90% of original
+  if (bestImage == null || bestArea > areaOriginal * minImprovement) {
+    return noRotationResult();
   }
 
-  if (expectedArea > 0 && _bboxArea(useBlob) > expectedArea * 1.6) {
-    return fallback;
+  // A rotation was actually used: the true region is a rotated rectangle
+  // in source space, not an axis-aligned one. Reuse the winning angle to
+  // rotate `blob`'s own (unrotated) point cloud analytically for the quad
+  // corners, rather than trying to map `bestBlob` (found in `bestImage`'s
+  // pixel space) back through `img.copyRotate`'s canvas-expansion geometry.
+  final winningBlob = bestBlob!;
+  if (expectedArea > 0 && _bboxArea(winningBlob) > expectedArea * 1.6) {
+    return fallbackResult();
   }
-  return _tightCropToBlob(useImage, useBlob) ?? fallback;
+  final croppedImage = _tightCropToBlob(bestImage, winningBlob) ?? fallback;
+  final corners = _rotatedRectCorners(blob.points, bestAngle, 3);
+  final quad = TileQuad(
+    topLeft: corners[0] + Offset(px0.toDouble(), py0.toDouble()),
+    topRight: corners[1] + Offset(px0.toDouble(), py0.toDouble()),
+    bottomRight: corners[2] + Offset(px0.toDouble(), py0.toDouble()),
+    bottomLeft: corners[3] + Offset(px0.toDouble(), py0.toDouble()),
+  );
+  return (image: croppedImage, sourceQuad: quad);
+}
+
+/// The 4 corners — in [points]' own (unrotated) coordinate space, order
+/// top-left/top-right/bottom-right/bottom-left — of the minimum-area
+/// bounding rectangle at [angleDeg] around [points]' centroid, expanded by
+/// [pad] on each side. Rotates the point cloud analytically (a plain 2D
+/// rotation this function fully controls and inverts exactly) rather than
+/// reasoning about a real [img.copyRotate] pixel buffer's canvas geometry.
+List<Offset> _rotatedRectCorners(List<(int, int)> points, double angleDeg, double pad) {
+  double sumX = 0, sumY = 0;
+  for (final p in points) {
+    sumX += p.$1;
+    sumY += p.$2;
+  }
+  final cx = sumX / points.length, cy = sumY / points.length;
+  final rad = angleDeg * math.pi / 180.0;
+  final cosA = math.cos(rad), sinA = math.sin(rad);
+
+  double minRx = double.infinity, maxRx = -double.infinity;
+  double minRy = double.infinity, maxRy = -double.infinity;
+  for (final p in points) {
+    final dx = p.$1 - cx, dy = p.$2 - cy;
+    final rx = dx * cosA - dy * sinA;
+    final ry = dx * sinA + dy * cosA;
+    if (rx < minRx) minRx = rx;
+    if (rx > maxRx) maxRx = rx;
+    if (ry < minRy) minRy = ry;
+    if (ry > maxRy) maxRy = ry;
+  }
+  minRx -= pad;
+  maxRx += pad;
+  minRy -= pad;
+  maxRy += pad;
+
+  // Inverse of the forward rotation above (a rotation matrix's inverse is
+  // its transpose), mapping each rotated-frame corner back to the original
+  // (unrotated) coordinate space around the same centroid.
+  Offset unrotate(double rx, double ry) =>
+      Offset(cx + rx * cosA + ry * sinA, cy - rx * sinA + ry * cosA);
+
+  return [
+    unrotate(minRx, minRy),
+    unrotate(maxRx, minRy),
+    unrotate(maxRx, maxRy),
+    unrotate(minRx, maxRy),
+  ];
 }
 
 img.Image _plainCrop(img.Image source, Rect box) {
@@ -308,12 +459,22 @@ img.Image _plainCrop(img.Image source, Rect box) {
 int _bboxArea(_LocalBlob b) => (b.maxX - b.minX + 1) * (b.maxY - b.minY + 1);
 
 img.Image? _tightCropToBlob(img.Image image, _LocalBlob blob) {
+  final rect = _tightCropToBlobRect(blob, image.width, image.height);
+  if (rect == null) return null;
+  return img.copyCrop(image, x: rect.left.round(), y: rect.top.round(),
+      width: rect.width.round(), height: rect.height.round());
+}
+
+/// The region [_tightCropToBlob] would crop to, without doing the crop —
+/// so callers can also report it (e.g. translated into a different
+/// coordinate space) alongside the cropped image itself.
+Rect? _tightCropToBlobRect(_LocalBlob blob, int imageWidth, int imageHeight) {
   const pad = 3;
-  final x = (blob.minX - pad).clamp(0, image.width - 1);
-  final y = (blob.minY - pad).clamp(0, image.height - 1);
-  final x1 = (blob.maxX + pad + 1).clamp(x + 1, image.width);
-  final y1 = (blob.maxY + pad + 1).clamp(y + 1, image.height);
-  return img.copyCrop(image, x: x, y: y, width: x1 - x, height: y1 - y);
+  final x = (blob.minX - pad).clamp(0, imageWidth - 1);
+  final y = (blob.minY - pad).clamp(0, imageHeight - 1);
+  final x1 = (blob.maxX + pad + 1).clamp(x + 1, imageWidth);
+  final y1 = (blob.maxY + pad + 1).clamp(y + 1, imageHeight);
+  return Rect.fromLTRB(x.toDouble(), y.toDouble(), x1.toDouble(), y1.toDouble());
 }
 
 /// A connected white-pixel blob found in a small local crop (full
@@ -711,16 +872,15 @@ _Centerline _blobCenterline(
   return (centers: smoothed, extent: extent);
 }
 
-/// Estimate tile pitch for one blob from the RAW (pre-morphology) mask
-/// restricted to its bounding box. Returns (pitch_px, confidence, dim) —
-/// dim is the blob's extent along the run axis, in the same (downscaled)
-/// units as [maskRaw].
-(int?, double, int) _blobPitch(Uint8List maskRaw, int maskW, int x, int y, int w, int h, bool vertical) {
-  late final List<double> profile;
-  late final int dim;
+/// The 1-D white-fraction profile along the run axis for one blob, from the
+/// RAW (pre-morphology) [maskRaw] restricted to its bounding box — kept
+/// pre-morphology (unlike [_blobCenterline]'s mask) so the thin seam
+/// between touching tiles stays visible instead of being bridged by the
+/// CLOSE step. Shared by [_blobPitch] (whole-blob periodicity) and
+/// [_snapBoundaries] (per-boundary local seam snapping).
+List<double> _runProfile(Uint8List maskRaw, int maskW, int x, int y, int w, int h, bool vertical) {
   if (vertical) {
-    dim = h;
-    profile = List<double>.filled(h, 0.0);
+    final profile = List<double>.filled(h, 0.0);
     for (int ry = 0; ry < h; ry++) {
       int sum = 0;
       final rowOff = (y + ry) * maskW;
@@ -729,17 +889,26 @@ _Centerline _blobCenterline(
       }
       profile[ry] = sum / w;
     }
-  } else {
-    dim = w;
-    profile = List<double>.filled(w, 0.0);
-    for (int rx = 0; rx < w; rx++) {
-      int sum = 0;
-      for (int ry = 0; ry < h; ry++) {
-        sum += maskRaw[(y + ry) * maskW + x + rx];
-      }
-      profile[rx] = sum / h;
-    }
+    return profile;
   }
+  final profile = List<double>.filled(w, 0.0);
+  for (int rx = 0; rx < w; rx++) {
+    int sum = 0;
+    for (int ry = 0; ry < h; ry++) {
+      sum += maskRaw[(y + ry) * maskW + x + rx];
+    }
+    profile[rx] = sum / h;
+  }
+  return profile;
+}
+
+/// Estimate tile pitch for one blob from the RAW (pre-morphology) mask
+/// restricted to its bounding box. Returns (pitch_px, confidence, dim) —
+/// dim is the blob's extent along the run axis, in the same (downscaled)
+/// units as [maskRaw].
+(int?, double, int) _blobPitch(Uint8List maskRaw, int maskW, int x, int y, int w, int h, bool vertical) {
+  final dim = vertical ? h : w;
+  final profile = _runProfile(maskRaw, maskW, x, y, w, h, vertical);
   final (pitch, confidence) = _estimatePitch(profile, dim);
   return (pitch, confidence, dim);
 }

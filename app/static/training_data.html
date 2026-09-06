@@ -20,6 +20,7 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 .tile-card { background: #16213e; border-radius: 8px; overflow: hidden; text-align: center; position: relative; }
 .tile-card img { width: 100%; aspect-ratio: 0.75; object-fit: cover; }
 .tile-card .label { padding: 4px; font-size: 13px; font-weight: bold; }
+.tile-card .label-select { margin: 4px; width: calc(100% - 8px); background: #0f3460; border: 1px solid #4ecca3; color: #fff; border-radius: 4px; padding: 4px; }
 .tile-card .source { font-size: 9px; color: #888; }
 .tile-card .delete-btn { position: absolute; top: 2px; right: 2px; background: rgba(255,0,0,0.6); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 12px; display: none; }
 .tile-card:hover .delete-btn { display: block; }
@@ -47,6 +48,39 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
 .auth-gate .error { color: #e67e22; font-size: 12px; margin-top: 12px; }
 .user-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: #999; }
 .user-bar button { background: none; border: 1px solid #444; color: #999; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; margin-left: auto; }
+.ranking-board, .accuracy-panel { background: #16213e; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+.ranking-board h2, .accuracy-panel h2 { color: #fff; font-size: 15px; margin-bottom: 10px; }
+.ranking-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
+.ranking-item { display: flex; align-items: center; gap: 8px; background: #0f3460; border-radius: 6px; padding: 7px 9px; }
+.ranking-position { width: 24px; color: #999; font-size: 11px; text-align: right; }
+.ranking-tile { flex: 1; color: #fff; font-weight: bold; }
+.ranking-count { color: #4ecca3; font-weight: bold; white-space: nowrap; }
+.ranking-count.zero { color: #ff7675; }
+.accuracy-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.accuracy-card { background: #0f3460; border-radius: 6px; padding: 8px 12px; min-width: 105px; }
+.accuracy-card .label { color: #999; font-size: 10px; }
+.accuracy-card .value { color: #4ecca3; font-size: 18px; font-weight: bold; }
+.accuracy-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.accuracy-group h3 { font-size: 12px; color: #bbb; margin-bottom: 6px; }
+.accuracy-rows { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.accuracy-row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 7px; font-size: 11px; }
+.accuracy-bar { height: 7px; background: #0b2545; border-radius: 4px; overflow: hidden; }
+.accuracy-bar span { display: block; height: 100%; background: #4ecca3; }
+.accuracy-empty { color: #777; font-size: 12px; }
+.history-panel { background:#16213e; border-radius:8px; padding:12px; margin-bottom:16px; }
+.history-header { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.history-header h2 { color:#fff; font-size:15px; }
+.history-header button { margin-left:auto; background:#0f3460; color:#fff; border:1px solid #315b85; padding:5px 10px; border-radius:5px; cursor:pointer; }
+.history-table { width:100%; border-collapse:collapse; font-size:12px; }
+.history-table th, .history-table td { padding:8px 6px; border-top:1px solid #28334f; text-align:left; }
+.history-table a { color:#4ecca3; }
+.build-status { display:inline-block; padding:2px 7px; border-radius:10px; font-weight:bold; }
+.build-success { background:#174c3c; color:#65e6b5; }
+.build-active { background:#4f4219; color:#ffd76a; }
+.build-failure { background:#55272e; color:#ff8b98; }
+.build-other { background:#30394f; color:#b8c1d9; }
+.history-empty { color:#888; padding:10px 4px; }
+@media (max-width:640px) { .history-table th:nth-child(3), .history-table td:nth-child(3) { display:none; } }
 </style>
 </head>
 <body>
@@ -81,6 +115,22 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
     </div>
   </div>
 </div>
+<div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
+<section class="history-panel" aria-labelledby="historyTitle">
+  <div class="history-header">
+    <h2 id="historyTitle">モデル再学習履歴</h2>
+    <button onclick="loadRetrainingHistory()" id="historyRefreshBtn">更新</button>
+  </div>
+  <div id="trainingHistory" class="history-empty">履歴を読み込んでいます...</div>
+</section>
+<section class="accuracy-panel" aria-labelledby="accuracyTitle">
+  <h2 id="accuracyTitle">モバイル認識精度（訂正実績）</h2>
+  <div id="accuracyContent"></div>
+</section>
+<section class="ranking-board" aria-labelledby="rankingTitle">
+  <h2 id="rankingTitle">画像枚数が少ない牌ランキング</h2>
+  <div class="ranking-list" id="rankingList"></div>
+</section>
 <div class="filters">
   <select id="filterTile"><option value="">全ての牌</option></select>
   <select id="filterSource">
@@ -92,7 +142,6 @@ h1 { font-size: 20px; margin-bottom: 12px; color: #fff; }
   <button onclick="loadData(true)" style="background:#4ecca3;color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">更新</button>
   <button onclick="triggerRetrain()" id="retrainBtn" style="background:#e67e22;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;margin-left:auto;">モデル再学習</button>
 </div>
-<div id="modelInfo" style="background:#16213e;padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#999;display:none;"></div>
 <div class="grid" id="grid"></div>
 <div class="tile-stats" id="tileStats"></div>
 </div>
@@ -105,6 +154,83 @@ const TILES = [
   ...Array.from({length:9},(_,i)=>`${i+1}s`),
   'E','S','W','N','P','F','C'
 ];
+const TILE_NAMES = {
+  '1m':'一萬', '2m':'二萬', '3m':'三萬', '4m':'四萬', '5m':'五萬',
+  '6m':'六萬', '7m':'七萬', '8m':'八萬', '9m':'九萬',
+  '1p':'一筒', '2p':'二筒', '3p':'三筒', '4p':'四筒', '5p':'五筒',
+  '6p':'六筒', '7p':'七筒', '8p':'八筒', '9p':'九筒',
+  '1s':'一索', '2s':'二索', '3s':'三索', '4s':'四索', '5s':'五索',
+  '6s':'六索', '7s':'七索', '8s':'八索', '9s':'九索',
+  'E':'東', 'S':'南', 'W':'西', 'N':'北', 'P':'白', 'F':'發', 'C':'中'
+};
+const tileName = code => TILE_NAMES[code] || code;
+let historyRefreshTimer = null;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, char => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'
+  })[char]);
+}
+
+function formatBuildDate(value) {
+  return value ? new Date(value).toLocaleString('ja-JP') : '—';
+}
+
+function formatDuration(seconds) {
+  if (seconds == null) return '—';
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}分 ${seconds % 60}秒` : `${seconds}秒`;
+}
+
+function buildStatus(status) {
+  const statuses = {
+    SUCCESS:['成功','success'], QUEUED:['待機中','active'], WORKING:['実行中','active'],
+    FAILURE:['失敗','failure'], INTERNAL_ERROR:['内部エラー','failure'],
+    TIMEOUT:['タイムアウト','failure'], CANCELLED:['キャンセル','failure'],
+    EXPIRED:['期限切れ','failure']
+  };
+  const [label, kind] = statuses[status] || [status || '不明', 'other'];
+  return {label, kind};
+}
+
+async function loadRetrainingHistory() {
+  const button = document.getElementById('historyRefreshBtn');
+  button.disabled = true;
+  try {
+    const res = await authFetch(`${API}/api/v1/model/retraining-history?limit=20`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const builds = data.builds || [];
+    const el = document.getElementById('trainingHistory');
+    if (!builds.length) {
+      el.innerHTML = '<div class="history-empty">再学習の実行履歴はありません</div>';
+    } else {
+      el.innerHTML = `<table class="history-table">
+        <thead><tr><th>結果</th><th>開始日時</th><th>終了日時</th><th>所要時間</th><th>詳細</th></tr></thead>
+        <tbody>${builds.map(build => {
+          const status = buildStatus(build.status);
+          const safeLogUrl = typeof build.log_url === 'string' && build.log_url.startsWith('https://') ? build.log_url : null;
+          const detail = build.failure_detail ? `<br><small>${escapeHtml(build.failure_detail)}</small>` : '';
+          return `<tr>
+            <td><span class="build-status build-${status.kind}">${escapeHtml(status.label)}</span>${detail}</td>
+            <td>${escapeHtml(formatBuildDate(build.start_time || build.create_time))}</td>
+            <td>${escapeHtml(formatBuildDate(build.finish_time))}</td>
+            <td>${escapeHtml(formatDuration(build.duration_seconds))}</td>
+            <td>${safeLogUrl ? `<a href="${escapeHtml(safeLogUrl)}" target="_blank" rel="noopener noreferrer">ログ</a>` : escapeHtml(build.build_id)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+    }
+    clearTimeout(historyRefreshTimer);
+    if (builds.some(build => ['QUEUED','WORKING'].includes(build.status))) {
+      historyRefreshTimer = setTimeout(loadRetrainingHistory, 15000);
+    }
+  } catch (e) {
+    document.getElementById('trainingHistory').innerHTML = `<div class="history-empty">履歴の読み込みに失敗: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    button.disabled = false;
+  }
+}
 
 // ── Auth (Firebase Google sign-in; the admin APIs below require the
 // resulting ID token, verified server-side via app/auth.py) ──
@@ -143,6 +269,7 @@ auth.onAuthStateChanged(user => {
   loadData();
   loadModelInfo();
   loadAccuracyHistory();
+  loadRetrainingHistory();
 });
 
 async function loadData(refresh = false) {
@@ -158,6 +285,8 @@ async function loadData(refresh = false) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     renderStats(data.stats);
+    renderAccuracy(data.stats);
+    renderRanking(data.stats);
     renderGrid(data.entries);
     renderTileStats(data.stats);
     populateFilter(data.stats);
@@ -166,6 +295,59 @@ async function loadData(refresh = false) {
   } catch(e) {
     document.getElementById('grid').innerHTML = `<div class="empty">データの読み込みに失敗: ${e.message}</div>`;
   }
+}
+
+function percent(correct, total) {
+  return total ? `${(correct / total * 100).toFixed(1)}%` : '—';
+}
+
+function renderAccuracy(stats) {
+  const accuracy = stats.recognition_accuracy || {};
+  const total = Number(accuracy.total || 0);
+  const el = document.getElementById('accuracyContent');
+  if (!total) {
+    el.innerHTML = '<div class="accuracy-empty">訂正前ラベルを含む新しい学習データがまだありません</div>';
+    return;
+  }
+  const tileRows = TILES.map(tile => {
+    const item = (accuracy.by_actual_tile || {})[tile];
+    if (!item) return '';
+    const rate = item.correct / item.total * 100;
+    return `<div class="accuracy-row"><span>${tileName(tile)}</span><div class="accuracy-bar"><span style="width:${rate}%"></span></div><span>${rate.toFixed(1)}% (${item.correct}/${item.total})</span></div>`;
+  }).join('');
+  const dayRows = Object.entries(accuracy.by_day || {}).slice(-14).map(([day, item]) => {
+    const rate = item.correct / item.total * 100;
+    return `<div class="accuracy-row"><span>${day.slice(5)}</span><div class="accuracy-bar"><span style="width:${rate}%"></span></div><span>${rate.toFixed(1)}% (${item.total}枚)</span></div>`;
+  }).join('');
+  const confusionRows = (accuracy.top_confusions || []).map(item =>
+    `<div class="accuracy-row"><span>${tileName(item.predicted)}→${tileName(item.actual)}</span><div></div><span>${item.count}枚</span></div>`
+  ).join('');
+  el.innerHTML = `
+    <div class="accuracy-summary">
+      <div class="accuracy-card"><div class="label">集計対象</div><div class="value">${total}枚</div></div>
+      <div class="accuracy-card"><div class="label">正解（訂正なし）</div><div class="value">${accuracy.correct || 0}枚</div></div>
+      <div class="accuracy-card"><div class="label">不正解（訂正あり）</div><div class="value">${accuracy.corrected || 0}枚</div></div>
+      <div class="accuracy-card"><div class="label">実利用正解率</div><div class="value">${percent(accuracy.correct, total)}</div></div>
+    </div>
+    <div class="accuracy-details">
+      <div class="accuracy-group"><h3>牌別正解率</h3><div class="accuracy-rows">${tileRows}</div></div>
+      <div class="accuracy-group"><h3>日別正解率（直近14日）</h3><div class="accuracy-rows">${dayRows || '<div class="accuracy-empty">日付データなし</div>'}</div></div>
+      <div class="accuracy-group"><h3>主な訂正（識別→正解）</h3><div class="accuracy-rows">${confusionRows || '<div class="accuracy-empty">訂正なし</div>'}</div></div>
+    </div>`;
+}
+
+function renderRanking(stats) {
+  const byTile = stats.by_tile_code || {};
+  const ranking = TILES
+    .map((tile, tileOrder) => ({tile, count: Number(byTile[tile] || 0), tileOrder}))
+    .sort((a, b) => a.count - b.count || a.tileOrder - b.tileOrder);
+  document.getElementById('rankingList').innerHTML = ranking.map((item, index) => `
+    <div class="ranking-item">
+      <span class="ranking-position">${index + 1}位</span>
+      <span class="ranking-tile">${tileName(item.tile)}</span>
+      <span class="ranking-count ${item.count === 0 ? 'zero' : ''}">${item.count}枚</span>
+    </div>
+  `).join('');
 }
 
 // ── Charts (plain SVG, no external library) ──
@@ -249,7 +431,7 @@ function renderDistributionChart(byTile) {
     return;
   }
   const values = TILES.map(t => byTile[t] || 0);
-  el.innerHTML = barChartSVG(TILES, values);
+  el.innerHTML = barChartSVG(TILES.map(tileName), values);
 }
 
 async function loadAccuracyHistory() {
@@ -292,8 +474,10 @@ function renderGrid(entries) {
   }
   el.innerHTML = entries.map(e => `
     <div class="tile-card">
-      <img data-id="${e.id}" alt="${e.tile_code}">
-      <div class="label">${e.tile_code}</div>
+      <img data-id="${e.id}" alt="${tileName(e.tile_code)}">
+      <select class="label-select" aria-label="正解牌" onchange="updateTileCode('${e.id}', this.value, '${e.tile_code}', this)">
+        ${TILES.map(t => `<option value="${t}" ${t === e.tile_code ? 'selected' : ''}>${tileName(t)}</option>`).join('')}
+      </select>
       <div class="source">${e.source}</div>
       <button class="delete-btn" onclick="deleteEntry('${e.id}')" title="削除">×</button>
     </div>
@@ -314,7 +498,7 @@ function renderTileStats(stats) {
   const byTile = stats.by_tile_code || {};
   el.innerHTML = '<div class="tile-stats-grid">' +
     Object.entries(byTile).map(([k,v]) =>
-      `<div class="tile-stat">${k}: <span class="count">${v}</span></div>`
+      `<div class="tile-stat">${tileName(k)}: <span class="count">${v}</span></div>`
     ).join('') + '</div>';
 }
 
@@ -323,7 +507,7 @@ function populateFilter(stats) {
   const current = sel.value;
   sel.innerHTML = '<option value="">全ての牌</option>';
   TILES.forEach(t => {
-    sel.innerHTML += `<option value="${t}" ${t===current?'selected':''}>${t}</option>`;
+    sel.innerHTML += `<option value="${t}" ${t===current?'selected':''}>${tileName(t)}</option>`;
   });
 }
 
@@ -331,6 +515,21 @@ async function deleteEntry(id) {
   if (!confirm('この学習データを削除しますか？')) return;
   await authFetch(`${API}/api/v1/training-data/${id}`, {method:'DELETE'});
   loadData();
+}
+
+async function updateTileCode(id, tileCode, previousTileCode, select) {
+  if (tileCode === previousTileCode) return;
+  select.disabled = true;
+  try {
+    const res = await authFetch(`${API}/api/v1/training-data/${id}?tile_code=${encodeURIComponent(tileCode)}`, {method:'PATCH'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '更新に失敗しました');
+    await loadData(true);
+  } catch (e) {
+    select.value = previousTileCode;
+    select.disabled = false;
+    alert('エラー: ' + e.message);
+  }
 }
 
 async function loadModelInfo() {
@@ -361,6 +560,7 @@ async function triggerRetrain() {
       btn.textContent = '再学習中...';
       btn.style.background = '#888';
       alert(data.message);
+      await loadRetrainingHistory();
     } else {
       alert('エラー: ' + (data.detail || '不明なエラー'));
       btn.disabled = false;

@@ -3,20 +3,26 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show compute, debugPrint;
+import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
-import 'package:path_provider/path_provider.dart';
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
-import '../widgets/tile_slot_row.dart';
-import '../widgets/tile_keyboard.dart';
+import '../models/interpretation_request.dart';
+import '../models/interpretation_result.dart';
+import '../models/tile_observation.dart';
+import '../widgets/tile_image_picker.dart';
 import '../widgets/context_input_panel.dart';
 import '../widgets/score_result_panel.dart';
 import '../widgets/tile_marker_overlay.dart';
 import '../services/training_data_client.dart';
 import '../services/tile_segmenter.dart';
+import '../services/tile_assets.dart';
+import '../models/tile_quad.dart';
+import '../services/scan_observation_builder.dart';
+import 'tile_box_editor_screen.dart';
 
 class ScanScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -29,6 +35,7 @@ class ScanScreen extends StatefulWidget {
 enum _ScanPhase { camera, detecting, align, results }
 
 class _ScanScreenState extends State<ScanScreen> {
+  static const int _maxPhysicalTiles = 18;
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
   final ApiClient _api = ApiClient();
@@ -36,32 +43,69 @@ class _ScanScreenState extends State<ScanScreen> {
 
   _ScanPhase _phase = _ScanPhase.camera;
 
-  // Captured image
+  // The capture, straight from the camera plugin — `lockCaptureOrientation`
+  // (see `_initCamera`) makes this already correctly oriented, so there's
+  // no separate raw/corrected buffer or coordinate space to keep in sync.
   Uint8List? _capturedBytes;
   img.Image? _capturedImage;
 
-  // Image transform
-  Offset _imageOffset = Offset.zero;
-  double _imageScale = 1.0;
-  double _imageRotation = 0.0;
-  double _lastScaleValue = 1.0;
-  double _lastRotationValue = 0.0;
+  // Image transform: pan/zoom/rotate combined into a single matrix so that
+  // scale and rotation always pivot around the gesture's own focal point
+  // instead of the image's center (see _buildAlignPhase for the composition).
+  Matrix4 _imageTransform = Matrix4.identity();
+  Matrix4? _gestureStartTransform;
+  Offset? _gestureStartFocalPoint;
+  double _gestureStartScale = 1.0;
 
   // Tile results
-  final List<String?> _tiles = List.filled(14, null);
-  final List<bool> _isClassifying = List.filled(14, false);
-  final List<img.Image?> _croppedImages = List.filled(14, null);
-  final List<Rect?> _tileBoxes = List.filled(14, null);
+  final List<String?> _tiles = List.filled(_maxPhysicalTiles, null);
+  // Latest on-device predictions, kept unchanged when the user corrects
+  // `_tiles`, so training uploads can measure real-world recognition accuracy.
+  final List<String?> _predictedTiles = List.filled(_maxPhysicalTiles, null);
+  final List<List<TileCandidate>> _candidates = List.generate(
+    _maxPhysicalTiles,
+    (_) => <TileCandidate>[],
+  );
+  final List<bool> _isClassifying = List.filled(_maxPhysicalTiles, false);
+  final List<img.Image?> _croppedImages = List.filled(_maxPhysicalTiles, null);
+  // Cached JPEG encoding of `_croppedImages`, computed once when a crop is
+  // set rather than in build() — re-encoding 14 images per rebuild (e.g. on
+  // every drag frame of a box edit) was the main source of the "重い"
+  // (heavy/laggy) results-screen feedback.
+  final List<Uint8List?> _croppedImageThumbnails = List.filled(
+    _maxPhysicalTiles,
+    null,
+  );
+  // Each tile's crop region as 4 independent corners (not just an
+  // axis-aligned Rect) — see `TileQuad` for why: a tile photographed at an
+  // angle projects as a general quadrilateral, not just a rotated
+  // rectangle. In `_capturedImage`'s (corrected) pixel space.
+  final List<TileQuad?> _tileQuads = List.filled(_maxPhysicalTiles, null);
 
   bool _isCapturing = false;
   bool _isScoring = false;
+  bool _isInterpreting = false;
   bool _isSendingTraining = false;
   bool _trainingDataSent = false;
   ScoreResponse? _scoreResult;
   bool _isNotWinning = false;
   String? _errorMessage;
+  InterpretationResult? _interpretation;
+  String? _confirmedWinningTileId;
+  final List<ConfirmedMeld> _confirmedMelds = [];
+  HandOperation _operation = HandOperation.score;
+  Map<String, dynamic>? _analysisResult;
 
   ContextInput _context = ContextInput();
+
+  void _invalidateInterpretation() {
+    _interpretation = null;
+    _confirmedWinningTileId = null;
+    _confirmedMelds.clear();
+    _analysisResult = null;
+    _scoreResult = null;
+    _isNotWinning = false;
+  }
 
   @override
   void initState() {
@@ -91,6 +135,17 @@ class _ScanScreenState extends State<ScanScreen> {
     );
     try {
       await _controller!.initialize();
+      // The phone is held nearly flat, pointed down at tiles on a table —
+      // the accelerometer can't reliably tell landscape from portrait in
+      // that position, so ambient device-orientation detection (what both
+      // the live preview and the captured photo would otherwise fall back
+      // on) is unusable here. Pin it explicitly instead: this is what
+      // actually determines CameraPreview's aspect ratio (it checks
+      // `lockedCaptureOrientation` before the ambient sensor) and the
+      // orientation `takePicture()` bakes into the photo.
+      await _controller!.lockCaptureOrientation(
+        DeviceOrientation.landscapeLeft,
+      );
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Camera init error: $e');
@@ -107,67 +162,61 @@ class _ScanScreenState extends State<ScanScreen> {
   // ── Phase 1: Capture ──
 
   Future<void> _capture() async {
-    if (_controller == null || !_controller!.value.isInitialized || _isCapturing) return;
+    if (_controller == null ||
+        !_controller!.value.isInitialized ||
+        _isCapturing) {
+      return;
+    }
     setState(() => _isCapturing = true);
 
     bool capturedOk = false;
     try {
       final xFile = await _controller!.takePicture();
-      final rawBytes = await File(xFile.path).readAsBytes();
-      final rawDecoded = img.decodeImage(rawBytes);
-      if (rawDecoded == null) throw Exception('画像のデコードに失敗');
-      // The `camera` plugin here writes no EXIF orientation tag at all
-      // (confirmed empirically: hasOrientation=false), so bakeOrientation is
-      // a no-op — it always delivers a fixed-shape portrait buffer
-      // regardless of how the phone is actually held. The UI is locked to
-      // portrait (see main.dart) and the user always physically turns the
-      // phone sideways to shoot a tile row along its long edge, so correct
-      // for that with a fixed rotation instead of relying on (absent)
-      // metadata. Re-encoding (rather than keeping the original file's
-      // bytes) keeps every downstream consumer (display, detection,
-      // per-tile crop/classify) working from the same already-rotated
-      // pixels.
-      final decoded = img.copyRotate(rawDecoded, angle: -90);
-      final bytes = Uint8List.fromList(img.encodeJpg(decoded));
+      final bytes = await File(xFile.path).readAsBytes();
+      // Off the main isolate: decoding a high-resolution JPEG synchronously
+      // here blocked the UI thread long enough that the camera preview
+      // visibly froze on a stale frame right after the shutter.
+      final decoded = await compute(img.decodeImage, bytes);
+      if (decoded == null) throw Exception('画像のデコードに失敗');
       capturedOk = true;
 
       setState(() {
         _capturedBytes = bytes;
         _capturedImage = decoded;
         _phase = _ScanPhase.detecting;
-        _imageOffset = Offset.zero;
-        _imageScale = 1.0;
-        _imageRotation = 0.0;
-        _lastScaleValue = 1.0;
-        _lastRotationValue = 0.0;
+        _imageTransform = Matrix4.identity();
         _errorMessage = null;
-        for (int i = 0; i < 14; i++) {
+        for (int i = 0; i < _maxPhysicalTiles; i++) {
           _tiles[i] = null;
+          _predictedTiles[i] = null;
+          _candidates[i] = [];
           _isClassifying[i] = false;
           _croppedImages[i] = null;
-          _tileBoxes[i] = null;
+          _croppedImageThumbnails[i] = null;
+          _tileQuads[i] = null;
         }
       });
 
-      // Try automatic tile detection first; the manual grid-alignment phase
-      // is a fallback for when detection doesn't find a clean 13/14-tile
-      // hand (not the primary mechanism).
-      final detectedBoxes = await compute(segmentTilesFromBytes, bytes);
+      // Always proceed straight to the results phase with whatever
+      // detection found (13/14 clean, or short/over-counted) — the results
+      // screen's "枠を追加" button and per-tile box editor already cover
+      // fixing up any missing/wrong boxes, so a partial/imperfect detection
+      // no longer needs to fall back to the separate manual grid-alignment
+      // phase (that fallback used to trigger on any non-13/14 count, which
+      // was hitting often enough to be disruptive on its own).
+      final detected = await compute(segmentTilesWithHintsFromBytes, bytes);
       if (!mounted) return;
-
-      if (detectedBoxes.length == 13 || detectedBoxes.length == 14) {
-        await _classifyBoxesAndFinish(detectedBoxes);
-      } else {
-        setState(() => _phase = _ScanPhase.align);
-      }
+      await _classifyBoxesAndFinish(
+        detected.boxes,
+        angleHints: detected.angleHints,
+      );
     } catch (e) {
-      setState(() {
-        _errorMessage = '撮影エラー: $e';
-        // If capture/decode itself failed, stay on the camera phase; if it
-        // was detection that failed after a successful capture, fall back
-        // to manual alignment rather than getting stuck on the spinner.
-        if (capturedOk) _phase = _ScanPhase.align;
-      });
+      setState(() => _errorMessage = '撮影エラー: $e');
+      // If capture/decode itself failed, stay on the camera phase; if it was
+      // detection that failed after a successful capture, still move on to
+      // the results phase (empty boxes) rather than getting stuck on the
+      // spinner — the user can add all 14 boxes manually from there.
+      if (capturedOk) await _classifyBoxesAndFinish(const []);
     } finally {
       setState(() => _isCapturing = false);
     }
@@ -175,40 +224,27 @@ class _ScanScreenState extends State<ScanScreen> {
 
   // ── Phase 2: Align grid & classify ──
 
-  /// Map a screen point to original image pixel coordinates.
-  /// Accounts for offset, scale, and rotation (around image center).
-  Offset _screenToImagePixel(double screenX, double screenY,
-      double imgCenterX, double imgCenterY,
-      double origW, double origH, double scaledW, double scaledH) {
-    // 1. Translate to image center
-    final dx = screenX - imgCenterX;
-    final dy = screenY - imgCenterY;
-    // 2. Inverse rotate
-    final cosA = math.cos(-_imageRotation);
-    final sinA = math.sin(-_imageRotation);
-    final rx = dx * cosA - dy * sinA;
-    final ry = dx * sinA + dy * cosA;
-    // 3. Scale from display to image pixels
-    // then scaled by _imageScale. So pixel = (display_offset / _imageScale) * (origW / baseW) + origW/2
-    // But baseW/baseH = scaledW/_imageScale and scaledH/_imageScale
-    final baseW = scaledW / _imageScale;
-    final baseH = scaledH / _imageScale;
-    final imgX = (rx / _imageScale + baseW / 2) * (origW / baseW);
-    final imgY = (ry / _imageScale + baseH / 2) * (origH / baseH);
-    return Offset(imgX, imgY);
-  }
-
   Future<void> _classifyFromGrid(
-      Rect gridScreenRect, double imgLeft, double imgTop,
-      double scaledW, double scaledH) async {
+    Rect gridScreenRect,
+    double baseLeft,
+    double baseTop,
+    double baseW,
+    double baseH,
+  ) async {
     final srcImage = _capturedImage;
     if (srcImage == null) return;
 
-    // Image center in screen coordinates
-    final imgCenterX = imgLeft + scaledW / 2;
-    final imgCenterY = imgTop + scaledH / 2;
+    final origin = Offset(baseLeft, baseTop);
     final origW = srcImage.width.toDouble();
     final origH = srcImage.height.toDouble();
+    final inverse = Matrix4.inverted(_imageTransform);
+
+    // Map a screen point back through the (pan/zoom/rotate) display transform
+    // to a pixel coordinate in the original captured image.
+    Offset toImagePixel(Offset screenPoint) {
+      final content = MatrixUtils.transformPoint(inverse, screenPoint - origin);
+      return Offset(content.dx * (origW / baseW), content.dy * (origH / baseH));
+    }
 
     final slotW = gridScreenRect.width / 14;
     final padX = slotW * 0.2;
@@ -223,119 +259,397 @@ class _ScanScreenState extends State<ScanScreen> {
       final slotBottom = slotTop + gridScreenRect.height + padY * 2;
 
       // Map all 4 corners to image pixels
-      final tl = _screenToImagePixel(slotLeft, slotTop, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
-      final tr = _screenToImagePixel(slotRight, slotTop, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
-      final bl = _screenToImagePixel(slotLeft, slotBottom, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
-      final br = _screenToImagePixel(slotRight, slotBottom, imgCenterX, imgCenterY, origW, origH, scaledW, scaledH);
+      final tl = toImagePixel(Offset(slotLeft, slotTop));
+      final tr = toImagePixel(Offset(slotRight, slotTop));
+      final bl = toImagePixel(Offset(slotLeft, slotBottom));
+      final br = toImagePixel(Offset(slotRight, slotBottom));
 
       // Bounding box in image pixels
-      final minX = [tl.dx, tr.dx, bl.dx, br.dx].reduce(math.min).round().clamp(0, srcImage.width - 1);
-      final minY = [tl.dy, tr.dy, bl.dy, br.dy].reduce(math.min).round().clamp(0, srcImage.height - 1);
-      final maxX = [tl.dx, tr.dx, bl.dx, br.dx].reduce(math.max).round().clamp(0, srcImage.width - 1);
-      final maxY = [tl.dy, tr.dy, bl.dy, br.dy].reduce(math.max).round().clamp(0, srcImage.height - 1);
+      final minX = [
+        tl.dx,
+        tr.dx,
+        bl.dx,
+        br.dx,
+      ].reduce(math.min).round().clamp(0, srcImage.width - 1);
+      final minY = [
+        tl.dy,
+        tr.dy,
+        bl.dy,
+        br.dy,
+      ].reduce(math.min).round().clamp(0, srcImage.height - 1);
+      final maxX = [
+        tl.dx,
+        tr.dx,
+        bl.dx,
+        br.dx,
+      ].reduce(math.max).round().clamp(0, srcImage.width - 1);
+      final maxY = [
+        tl.dy,
+        tr.dy,
+        bl.dy,
+        br.dy,
+      ].reduce(math.max).round().clamp(0, srcImage.height - 1);
 
       final cropW = (maxX - minX).clamp(1, srcImage.width - minX);
       final cropH = (maxY - minY).clamp(1, srcImage.height - minY);
-      boxes.add(Rect.fromLTWH(minX.toDouble(), minY.toDouble(), cropW.toDouble(), cropH.toDouble()));
+      boxes.add(
+        Rect.fromLTWH(
+          minX.toDouble(),
+          minY.toDouble(),
+          cropW.toDouble(),
+          cropH.toDouble(),
+        ),
+      );
     }
 
     await _classifyBoxesAndFinish(boxes);
   }
 
   /// Crop and on-device-classify each of [boxes] (in `_capturedImage`'s pixel
-  /// coordinate space), populating `_tiles`/`_croppedImages`/`_tileBoxes`,
+  /// coordinate space), populating `_tiles`/`_croppedImages`/`_tileQuads`,
   /// then move to the results phase. Shared by both the automatic-detection
-  /// path and the manual grid-alignment fallback.
-  Future<void> _classifyBoxesAndFinish(List<Rect> boxes) async {
+  /// path (which has [angleHints], one per box — see `segmentTilesWithHints`)
+  /// and the manual grid-alignment fallback (which doesn't).
+  Future<void> _classifyBoxesAndFinish(
+    List<Rect> boxes, {
+    List<double>? angleHints,
+  }) async {
     final srcImage = _capturedImage;
-    if (srcImage == null || !_classifier.isReady) {
-      setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
-      return;
-    }
+    if (srcImage == null) return;
 
     setState(() {
-      for (int i = 0; i < 14; i++) { _tiles[i] = null; _isClassifying[i] = true; _croppedImages[i] = null; _tileBoxes[i] = null; }
-      _scoreResult = null;
-      _isNotWinning = false;
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
+        _tiles[i] = null;
+        _predictedTiles[i] = null;
+        _candidates[i] = [];
+        _isClassifying[i] = false;
+        _croppedImages[i] = null;
+        _croppedImageThumbnails[i] = null;
+        _tileQuads[i] = null;
+      }
+      _invalidateInterpretation();
       _errorMessage = null;
     });
 
-    // TEMPORARY DEBUG: dump the source photo and each naive/refined crop to
-    // Documents so they can be pulled off-device for direct inspection
-    // (`xcrun devicectl device copy from ... /Documents/debug_crops`).
-    Directory? debugDir;
-    try {
-      final docs = await getApplicationDocumentsDirectory();
-      debugDir = Directory('${docs.path}/debug_crops');
-      if (debugDir.existsSync()) debugDir.deleteSync(recursive: true);
-      debugDir.createSync(recursive: true);
-      File('${debugDir.path}/full.jpg').writeAsBytesSync(img.encodeJpg(srcImage));
-    } catch (_) {
-      debugDir = null;
-    }
-
-    for (int i = 0; i < boxes.length && i < 14; i++) {
+    for (int i = 0; i < boxes.length && i < _maxPhysicalTiles; i++) {
       final box = boxes[i];
-      final x = box.left.round().clamp(0, srcImage.width - 1);
-      final y = box.top.round().clamp(0, srcImage.height - 1);
-      final w = box.width.round().clamp(1, srcImage.width - x);
-      final h = box.height.round().clamp(1, srcImage.height - y);
-
-      final cropped = refineTileCrop(srcImage, box);
-      if (debugDir != null) {
-        final naive = img.copyCrop(srcImage, x: x, y: y, width: w, height: h);
-        final idxStr = i.toString().padLeft(2, '0');
-        File('${debugDir.path}/tile${idxStr}_naive.jpg').writeAsBytesSync(img.encodeJpg(naive));
-        File('${debugDir.path}/tile${idxStr}_refined.jpg').writeAsBytesSync(img.encodeJpg(cropped));
-      }
+      final refined = refineTileCropWithRect(
+        srcImage,
+        box,
+        angleHint: angleHints?[i] ?? 0.0,
+      );
+      final cropped = refined.image;
       _croppedImages[i] = cropped;
-      _tileBoxes[i] = Rect.fromLTWH(x.toDouble(), y.toDouble(), w.toDouble(), h.toDouble());
-
-      final idx = i;
-      final results = _classifier.classify(cropped, topK: 1);
-      setState(() {
-        _tiles[idx] = results.isNotEmpty ? results.first.tileCode : null;
-        _isClassifying[idx] = false;
-      });
+      _croppedImageThumbnails[i] = Uint8List.fromList(img.encodeJpg(cropped));
+      // The displayed/editable box starts from the actual tight refined
+      // crop region, not the coarse uniform-pitch `box` from segmentTiles
+      // (every tile in a row would otherwise show the same size marker).
+      _tileQuads[i] = refined.sourceQuad;
     }
 
     setState(() => _phase = _ScanPhase.results);
   }
 
-  // ── Phase 3: Score ──
+  /// Classifies every cropped tile (`_croppedImages`) at once. Separate
+  /// from cropping itself (both the auto-detect path above and
+  /// `_openBoxEditor` only crop) so the AI doesn't run on every box edit —
+  /// only when the user explicitly asks for it via the results screen's
+  /// "識別実行" button.
+  Future<void> _runClassification() async {
+    if (!_classifier.isReady) {
+      setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
+      return;
+    }
 
-  Future<void> _calculateScore() async {
-    final tiles = _tiles.whereType<String>().toList();
-    if (tiles.length != 14) return;
+    setState(() {
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
+        if (_croppedImages[i] != null) _isClassifying[i] = true;
+      }
+      _errorMessage = null;
+    });
+
+    for (int i = 0; i < _maxPhysicalTiles; i++) {
+      final cropped = _croppedImages[i];
+      if (cropped == null) continue;
+      final results = _classifier.classify(cropped, topK: 3);
+      setState(() {
+        final prediction = results.isNotEmpty ? results.first.tileCode : null;
+        _tiles[i] = prediction;
+        _predictedTiles[i] = prediction;
+        _candidates[i] = results
+            .map(
+              (result) => TileCandidate(
+                tile: result.tileCode,
+                confidence: result.confidence,
+              ),
+            )
+            .toList(growable: false);
+        _isClassifying[i] = false;
+      });
+    }
+
+    setState(() {
+      _invalidateInterpretation();
+    });
+  }
+
+  // ── Results phase: manual box correction ──
+
+  /// Opens the full-screen quad editor for tile [index] (see
+  /// `TileBoxEditorScreen` for why it's a separate route rather than
+  /// embedded here). [initialDecodedQuad] seeds the editor when the tile
+  /// has no quad yet (the "枠を追加" path); otherwise the existing
+  /// `_tileQuads[index]` is used. On confirm, re-crops via `_cropQuad`
+  /// (perspective-rectifies the quad — handles a tile that photographed as
+  /// a trapezoid, not just a rotated rectangle). Does NOT reclassify —
+  /// only the results screen's "識別実行" button runs the AI, so editing a
+  /// box clears that tile's previous result rather than guessing again
+  /// immediately.
+  Future<void> _openBoxEditor(int index, {TileQuad? initialDecodedQuad}) async {
+    final srcImage = _capturedImage;
+    final imageBytes = _capturedBytes;
+    if (srcImage == null || imageBytes == null) return;
+
+    final quad = _tileQuads[index] ?? initialDecodedQuad;
+    if (quad == null) return;
+
+    final newQuad = await Navigator.of(context).push<TileQuad>(
+      MaterialPageRoute(
+        builder: (_) => TileBoxEditorScreen(
+          rawImageBytes: imageBytes,
+          rawWidth: srcImage.width,
+          rawHeight: srcImage.height,
+          initialQuad: quad,
+        ),
+      ),
+    );
+    if (newQuad == null || !mounted) return;
+
+    final cropped = _cropQuad(srcImage, newQuad);
+
+    setState(() {
+      _tileQuads[index] = newQuad;
+      _croppedImages[index] = cropped;
+      _croppedImageThumbnails[index] = Uint8List.fromList(
+        img.encodeJpg(cropped),
+      );
+      _tiles[index] = null;
+      _predictedTiles[index] = null;
+      _candidates[index] = [];
+      _invalidateInterpretation();
+    });
+  }
+
+  /// Opens the editor for the next empty physical-tile slot, seeded with a
+  /// median-size placeholder for the user to move into place.
+  void _addMissingTileBox() {
+    final srcImage = _capturedImage;
+    if (srcImage == null) return;
+    final existing = _tileQuads
+        .whereType<TileQuad>()
+        .map((q) => q.boundingRect)
+        .toList();
+    if (existing.isEmpty) return;
+    final newIndex = _tileQuads.indexWhere((q) => q == null);
+    if (newIndex == -1) return;
+
+    final medianW = _median(existing.map((r) => r.width).toList());
+    final medianH = _median(existing.map((r) => r.height).toList());
+    final placeholder = TileQuad.fromRect(
+      Rect.fromCenter(
+        center: Offset(srcImage.width / 2, srcImage.height / 2),
+        width: medianW,
+        height: medianH,
+      ),
+    );
+
+    _openBoxEditor(newIndex, initialDecodedQuad: placeholder);
+  }
+
+  static double _median(List<double> values) {
+    final sorted = [...values]..sort();
+    return sorted[sorted.length ~/ 2];
+  }
+
+  /// Perspective-rectifies the quadrilateral [quad] (in `source`'s pixel
+  /// space) into an axis-aligned tile image, via `package:image`'s
+  /// `copyRectify` (bilinear-samples the quad onto a rectangle — a
+  /// general quad-to-rect warp, not just a rotation, so it also corrects a
+  /// tile that photographed as a trapezoid). Output size is the average of
+  /// the quad's own edge lengths; `TileClassifier.classify` resizes to its
+  /// fixed input size regardless, so only the aspect ratio matters here.
+  img.Image _cropQuad(img.Image source, TileQuad quad) {
+    final w =
+        ((quad.topRight - quad.topLeft).distance +
+            (quad.bottomRight - quad.bottomLeft).distance) /
+        2;
+    final h =
+        ((quad.bottomLeft - quad.topLeft).distance +
+            (quad.bottomRight - quad.topRight).distance) /
+        2;
+    final outW = w.round().clamp(8, 2000);
+    final outH = h.round().clamp(8, 2000);
+    final out = img.Image(width: outW, height: outH);
+    return img.copyRectify(
+      source,
+      topLeft: img.Point(quad.topLeft.dx, quad.topLeft.dy),
+      topRight: img.Point(quad.topRight.dx, quad.topRight.dy),
+      bottomLeft: img.Point(quad.bottomLeft.dx, quad.bottomLeft.dy),
+      bottomRight: img.Point(quad.bottomRight.dx, quad.bottomRight.dy),
+      interpolation: img.Interpolation.linear,
+      toImage: out,
+    );
+  }
+
+  // ── Phase 3: Interpretation, confirmation, and explicit operation ──
+
+  ObservationV1 _buildObservation() {
+    final image = _capturedImage;
+    if (image == null) throw StateError('撮影画像がありません');
+    final inputs = <ScanObservationInput>[];
+    for (int index = 0; index < _maxPhysicalTiles; index++) {
+      final tile = _tiles[index];
+      if (tile == null) continue;
+      final candidates = _candidates[index].isEmpty
+          ? [TileCandidate(tile: tile, confidence: 1.0)]
+          : _candidates[index];
+      inputs.add(
+        ScanObservationInput(
+          index: index,
+          candidates: candidates,
+          quad: _tileQuads[index],
+        ),
+      );
+    }
+    return buildScanObservationV1(
+      imageWidth: image.width,
+      imageHeight: image.height,
+      tiles: inputs,
+    );
+  }
+
+  Future<void> _runInterpretation() async {
+    if (!_allDetectedTilesReady) return;
+    setState(() {
+      _isInterpreting = true;
+      _errorMessage = null;
+      _invalidateInterpretation();
+    });
+    try {
+      final result = await _api.interpret(
+        InterpretationRequest(observation: _buildObservation()),
+      );
+      if (!mounted) return;
+      setState(() => _interpretation = result);
+    } catch (error) {
+      if (mounted) setState(() => _errorMessage = '画像解釈エラー: $error');
+    } finally {
+      if (mounted) setState(() => _isInterpreting = false);
+    }
+  }
+
+  Future<void> _confirmAndAnalyze() async {
+    if (_interpretation == null) return;
+    if (_operation == HandOperation.score && _confirmedWinningTileId == null) {
+      setState(() => _errorMessage = 'あがり牌を選択してください');
+      return;
+    }
+
+    final observation = _buildObservation();
+    final confirmation = ConfirmationV1(
+      operation: _operation,
+      confirmedTiles: observation.observations
+          .map(
+            (item) => ConfirmedTile(
+              observationId: item.observationId,
+              tile: _tiles[item.index]!,
+            ),
+          )
+          .toList(growable: false),
+      confirmedWinningTileId: _operation == HandOperation.score
+          ? _confirmedWinningTileId
+          : null,
+      confirmedMelds: List.unmodifiable(_confirmedMelds),
+    );
 
     setState(() {
       _isScoring = true;
       _scoreResult = null;
+      _analysisResult = null;
       _isNotWinning = false;
       _errorMessage = null;
     });
-
     try {
-      final hand = HandInput(closedTiles: tiles, melds: [], winTile: tiles.last);
-      final request = ScoreRequest(hand: hand, context: _context, rules: RuleSet());
-      final result = await _api.calculateScore(request);
-      setState(() {
-        if (result == null) { _isNotWinning = true; } else { _scoreResult = result; }
-      });
-    } catch (e) {
-      setState(() => _errorMessage = 'スコア計算エラー: $e');
+      final state = await _api.confirmHand(
+        request: InterpretationRequest(
+          observation: observation,
+          confirmation: confirmation,
+        ),
+      );
+      final rules = RuleSet();
+      switch (_operation) {
+        case HandOperation.score:
+          final winTile = state.hand.winTile;
+          if (winTile == null) throw StateError('確定済みのあがり牌がありません');
+          final result = await _api.calculateScore(
+            ScoreRequest(
+              hand: HandInput(
+                closedTiles: state.hand.closedTiles,
+                melds: state.hand.melds
+                    .map(
+                      (meld) => Meld(
+                        type: meld.type,
+                        tiles: meld.tiles,
+                        open: meld.open,
+                      ),
+                    )
+                    .toList(growable: false),
+                winTile: winTile,
+              ),
+              context: _context,
+              rules: rules,
+            ),
+          );
+          if (!mounted) return;
+          setState(() {
+            _scoreResult = result;
+            _isNotWinning = result == null;
+          });
+          break;
+        case HandOperation.tenpai:
+          final result = await _api.analyzeTenpai(
+            state: state,
+            context: _context,
+            rules: rules,
+          );
+          if (mounted) setState(() => _analysisResult = result);
+          break;
+        case HandOperation.discardAnalysis:
+          final result = await _api.analyzeDiscards(
+            state: state,
+            context: _context,
+            rules: rules,
+          );
+          if (mounted) setState(() => _analysisResult = result);
+          break;
+      }
+    } catch (error) {
+      if (mounted) setState(() => _errorMessage = '解析エラー: $error');
     } finally {
-      setState(() => _isScoring = false);
+      if (mounted) setState(() => _isScoring = false);
     }
   }
 
   void _onSlotTap(int index) async {
-    final selected = await TileKeyboard.show(context, currentTile: _tiles[index]);
+    final selected = await TileImagePicker.show(
+      context,
+      currentTile: _tiles[index],
+    );
     if (selected != null && mounted) {
       setState(() {
         _tiles[index] = selected;
-        _scoreResult = null;
-        _isNotWinning = false;
+        _candidates[index] = [TileCandidate(tile: selected, confidence: 1.0)];
+        _invalidateInterpretation();
       });
     }
   }
@@ -345,39 +659,284 @@ class _ScanScreenState extends State<ScanScreen> {
       _phase = _ScanPhase.camera;
       _capturedBytes = null;
       _capturedImage = null;
-      for (int i = 0; i < 14; i++) {
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
         _tiles[i] = null;
+        _predictedTiles[i] = null;
+        _candidates[i] = [];
         _isClassifying[i] = false;
         _croppedImages[i] = null;
-        _tileBoxes[i] = null;
+        _croppedImageThumbnails[i] = null;
+        _tileQuads[i] = null;
       }
-      _scoreResult = null;
-      _isNotWinning = false;
+      _invalidateInterpretation();
       _errorMessage = null;
       _isSendingTraining = false;
       _trainingDataSent = false;
     });
   }
 
-  bool get _allTilesReady => _tiles.every((t) => t != null);
+  bool get _allDetectedTilesReady {
+    final detected = [
+      for (int index = 0; index < _maxPhysicalTiles; index++)
+        if (_tileQuads[index] != null) index,
+    ];
+    return detected.isNotEmpty &&
+        detected.every((index) => _tiles[index] != null);
+  }
+
+  bool get _trainingTilesReady =>
+      _tiles.take(14).every((tile) => tile != null) &&
+      _tiles.skip(14).every((tile) => tile == null);
+
+  int get _visibleSlotCount {
+    var last = -1;
+    for (int index = 0; index < _maxPhysicalTiles; index++) {
+      if (_tileQuads[index] != null || _tiles[index] != null) last = index;
+    }
+    return math.max(14, last + 1).clamp(14, _maxPhysicalTiles);
+  }
+
+  String _operationLabel(HandOperation operation) => switch (operation) {
+    HandOperation.score => '点数計算',
+    HandOperation.tenpai => 'テンパイ・待ち',
+    HandOperation.discardAnalysis => '打牌分析',
+  };
+
+  String _analysisSummary(Map<String, dynamic> result) {
+    final shanten = result['shanten'];
+    final improving = result['improving_tiles'];
+    if (improving is List) {
+      final tiles = improving
+          .whereType<Map>()
+          .map((item) => '${item['tile']}(${item['remaining']})')
+          .join('、');
+      return 'シャンテン数: $shanten\n有効牌・待ち: ${tiles.isEmpty ? 'なし' : tiles}';
+    }
+    final discards = result['discards'];
+    if (discards is List) {
+      final lines = discards.whereType<Map>().take(8).map((item) {
+        final options = item['improving_tiles'];
+        final count = options is List
+            ? options.fold<int>(
+                0,
+                (sum, option) =>
+                    sum + ((option as Map)['remaining'] as num).toInt(),
+              )
+            : 0;
+        return '${item['discard']}: ${item['shanten']}シャンテン / 有効牌$count枚';
+      });
+      return ['シャンテン数: $shanten', ...lines].join('\n');
+    }
+    return result.toString();
+  }
+
+  Future<void> _showAddMeldDialog() async {
+    final available = <int>[
+      for (int index = 0; index < _maxPhysicalTiles; index++)
+        if (_tiles[index] != null &&
+            !_confirmedMelds.any(
+              (meld) => meld.observationIds.contains(
+                'tile-${index.toString().padLeft(3, '0')}',
+              ),
+            ))
+          index,
+    ];
+    final selected = <int>{};
+    var type = 'pon';
+    var isOpen = true;
+    final meld = await showDialog<ConfirmedMeld>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final expected = {'chi', 'pon'}.contains(type) ? 3 : 4;
+          return AlertDialog(
+            title: const Text('鳴き・槓を確定'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: type,
+                    decoration: const InputDecoration(labelText: '種類'),
+                    items: const [
+                      DropdownMenuItem(value: 'chi', child: Text('チー')),
+                      DropdownMenuItem(value: 'pon', child: Text('ポン')),
+                      DropdownMenuItem(value: 'kan', child: Text('明槓')),
+                      DropdownMenuItem(value: 'ankan', child: Text('暗槓')),
+                      DropdownMenuItem(value: 'kakan', child: Text('加槓')),
+                    ],
+                    onChanged: (value) => setDialogState(() {
+                      type = value!;
+                      isOpen = type != 'ankan';
+                      selected.clear();
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('$expected枚を選択'),
+                  Wrap(
+                    spacing: 6,
+                    children: available
+                        .map((index) {
+                          final isSelected = selected.contains(index);
+                          return FilterChip(
+                            label: Text('${index + 1}:${_tiles[index]}'),
+                            selected: isSelected,
+                            onSelected: (value) => setDialogState(() {
+                              if (value && selected.length < expected) {
+                                selected.add(index);
+                              } else if (!value) {
+                                selected.remove(index);
+                              }
+                            }),
+                          );
+                        })
+                        .toList(growable: false),
+                  ),
+                  SwitchListTile(
+                    title: const Text('副露（open）'),
+                    value: isOpen,
+                    onChanged: type == 'ankan'
+                        ? null
+                        : (value) => setDialogState(() => isOpen = value),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('キャンセル'),
+              ),
+              FilledButton(
+                onPressed: selected.length == expected
+                    ? () => Navigator.pop(
+                        dialogContext,
+                        ConfirmedMeld(
+                          observationIds: selected
+                              .map(
+                                (index) =>
+                                    'tile-${index.toString().padLeft(3, '0')}',
+                              )
+                              .toList(growable: false),
+                          type: type,
+                          open: isOpen,
+                        ),
+                      )
+                    : null,
+                child: const Text('確定'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (meld != null && mounted) setState(() => _confirmedMelds.add(meld));
+  }
+
+  Widget _buildInterpretationConfirmation() {
+    final interpretation = _interpretation;
+    if (interpretation == null) return const SizedBox.shrink();
+    final suggested = interpretation.winningTile;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.12),
+        border: Border.all(color: Colors.amber),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '画像解釈の確認',
+            style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
+          ),
+          Text(
+            suggested.observationId == null
+                ? 'あがり牌候補: 不明（選択してください）'
+                : 'あがり牌候補: ${suggested.tile} / ${suggested.status.wireValue}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          if (_operation == HandOperation.score) ...[
+            const SizedBox(height: 8),
+            const Text('あがり牌を明示選択', style: TextStyle(color: Colors.white)),
+            Wrap(
+              spacing: 5,
+              children: [
+                for (int index = 0; index < _maxPhysicalTiles; index++)
+                  if (_tiles[index] != null)
+                    ChoiceChip(
+                      label: Text('${index + 1}:${_tiles[index]}'),
+                      selected:
+                          _confirmedWinningTileId ==
+                          'tile-${index.toString().padLeft(3, '0')}',
+                      onSelected: (_) => setState(
+                        () => _confirmedWinningTileId =
+                            'tile-${index.toString().padLeft(3, '0')}',
+                      ),
+                    ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          if (interpretation.melds.isNotEmpty)
+            Text(
+              '画像からの鳴き候補: ${interpretation.melds.map((meld) => '${meld.type}/${meld.status.wireValue}').join('、')}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          for (int index = 0; index < _confirmedMelds.length; index++)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                '${_confirmedMelds[index].type}: ${_confirmedMelds[index].observationIds.join(', ')}',
+                style: const TextStyle(color: Colors.white),
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                onPressed: () =>
+                    setState(() => _confirmedMelds.removeAt(index)),
+              ),
+            ),
+          TextButton.icon(
+            onPressed: _showAddMeldDialog,
+            icon: const Icon(Icons.add),
+            label: const Text('鳴き・槓を追加'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _sendTrainingData() async {
     if (_isSendingTraining || _trainingDataSent) return;
     final images = _croppedImages.whereType<img.Image>().toList();
     final tiles = _tiles.whereType<String>().toList();
-    if (images.length != 14 || tiles.length != 14) {
+    final predictedTiles = _predictedTiles.whereType<String>().toList();
+    if (images.length != 14 ||
+        tiles.length != 14 ||
+        predictedTiles.length != 14) {
       setState(() => _errorMessage = '14枚すべての識別結果が必要です');
       return;
     }
 
-    setState(() { _isSendingTraining = true; _errorMessage = null; });
+    setState(() {
+      _isSendingTraining = true;
+      _errorMessage = null;
+    });
     try {
-      final count = await _trainingClient.uploadBatch(images: images, tileCodes: tiles);
+      final count = await _trainingClient.uploadBatch(
+        images: images,
+        tileCodes: tiles,
+        predictedTileCodes: predictedTiles,
+      );
       if (mounted) {
-        setState(() { _trainingDataSent = true; });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$count枚の学習データを送信しました')),
-        );
+        setState(() {
+          _trainingDataSent = true;
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$count枚の学習データを送信しました')));
       }
     } catch (e) {
       setState(() => _errorMessage = '送信エラー: $e');
@@ -414,7 +973,11 @@ class _ScanScreenState extends State<ScanScreen> {
             if (_capturedBytes != null)
               Opacity(
                 opacity: 0.4,
-                child: Image.memory(_capturedBytes!, fit: BoxFit.contain, gaplessPlayback: true),
+                child: Image.memory(
+                  _capturedBytes!,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                ),
               ),
             const Center(
               child: Column(
@@ -440,7 +1003,9 @@ class _ScanScreenState extends State<ScanScreen> {
     if (_controller == null || !_controller!.value.isInitialized) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(child: Text('カメラ初期化中...', style: TextStyle(color: Colors.white))),
+        body: Center(
+          child: Text('カメラ初期化中...', style: TextStyle(color: Colors.white)),
+        ),
       );
     }
 
@@ -450,19 +1015,24 @@ class _ScanScreenState extends State<ScanScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            CameraPreview(_controller!),
+            Center(child: CameraPreview(_controller!)),
             // Simple instruction
             Positioned(
-              top: 20, left: 0, right: 0,
+              top: 20,
+              left: 0,
+              right: 0,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.6),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Text(
-                    '牌14枚が映るように撮影してください',
+                    '解析対象の牌がすべて映るように撮影してください',
                     style: TextStyle(color: Colors.white, fontSize: 14),
                   ),
                 ),
@@ -470,31 +1040,49 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
             // Capture button
             Positioned(
-              bottom: 40, left: 0, right: 0,
+              bottom: 40,
+              left: 0,
+              right: 0,
               child: Center(
                 child: GestureDetector(
                   onTap: _isCapturing ? null : _capture,
                   child: Container(
-                    width: 72, height: 72,
+                    width: 72,
+                    height: 72,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 4),
-                      color: _isCapturing ? Colors.grey : Colors.white.withValues(alpha: 0.3),
+                      color: _isCapturing
+                          ? Colors.grey
+                          : Colors.white.withValues(alpha: 0.3),
                     ),
                     child: _isCapturing
                         ? const Padding(
                             padding: EdgeInsets.all(20),
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 3,
+                            ),
                           )
-                        : const Icon(Icons.camera_alt, color: Colors.white, size: 32),
+                        : const Icon(
+                            Icons.camera_alt,
+                            color: Colors.white,
+                            size: 32,
+                          ),
                   ),
                 ),
               ),
             ),
             if (_errorMessage != null)
               Positioned(
-                bottom: 130, left: 20, right: 20,
-                child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12), textAlign: TextAlign.center),
+                bottom: 130,
+                left: 20,
+                right: 20,
+                child: Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
               ),
           ],
         ),
@@ -521,7 +1109,12 @@ class _ScanScreenState extends State<ScanScreen> {
             final slotH = slotW / 0.75;
             final gridLeft = (viewW - gridTotalW) / 2;
             final gridTop = (viewH - slotH) / 2;
-            final gridRect = Rect.fromLTWH(gridLeft, gridTop, gridTotalW, slotH);
+            final gridRect = Rect.fromLTWH(
+              gridLeft,
+              gridTop,
+              gridTotalW,
+              slotH,
+            );
 
             // Box size based on ORIGINAL image aspect (no rotation distortion)
             final srcW = _capturedImage!.width.toDouble();
@@ -538,21 +1131,30 @@ class _ScanScreenState extends State<ScanScreen> {
               baseW = viewH * imgAspect;
             }
 
-            final scaledW = baseW * _imageScale;
-            final scaledH = baseH * _imageScale;
-            final imgLeft = (viewW - scaledW) / 2 + _imageOffset.dx;
-            final imgTop = (viewH - scaledH) / 2 + _imageOffset.dy;
+            // The image's own box never moves or resizes; all pan/zoom/rotate
+            // from user gestures lives entirely in `_imageTransform`, applied
+            // below via Transform. This keeps a single source of truth for
+            // the display transform instead of separate offset/scale/rotation
+            // variables that have to be kept in sync by hand.
+            final baseLeft = (viewW - baseW) / 2;
+            final baseTop = (viewH - baseH) / 2;
+            final origin = Offset(baseLeft, baseTop);
 
             return Stack(
               clipBehavior: Clip.none,
               children: [
-                // Image with Transform.rotate for display
                 Positioned(
-                  left: imgLeft, top: imgTop,
-                  width: scaledW, height: scaledH,
-                  child: Transform.rotate(
-                    angle: _imageRotation,
-                    child: Image.memory(_capturedBytes!, fit: BoxFit.fill, gaplessPlayback: true),
+                  left: baseLeft,
+                  top: baseTop,
+                  width: baseW,
+                  height: baseH,
+                  child: Transform(
+                    transform: _imageTransform,
+                    child: Image.memory(
+                      _capturedBytes!,
+                      fit: BoxFit.fill,
+                      gaplessPlayback: true,
+                    ),
                   ),
                 ),
 
@@ -560,24 +1162,43 @@ class _ScanScreenState extends State<ScanScreen> {
                 ClipRect(
                   child: CustomPaint(
                     size: Size(viewW, viewH),
-                    painter: _SlotOverlayPainter(slotRect: gridRect, slotCount: 14),
+                    painter: _SlotOverlayPainter(
+                      slotRect: gridRect,
+                      slotCount: 14,
+                    ),
                   ),
                 ),
 
-                // Gesture: drag/pinch/rotate the IMAGE
+                // Gesture: drag/pinch/rotate the IMAGE. Scale and rotation are
+                // cumulative-since-gesture-start values from Flutter's scale
+                // recognizer, so the whole current gesture's transform is
+                // rebuilt fresh each update, pivoting around the point that
+                // was under the fingers when the gesture began — that point
+                // stays under the fingers regardless of the image's current
+                // rotation, which is what a naive per-axis add of offset/
+                // scale/rotation could not guarantee.
                 Positioned.fill(
                   child: GestureDetector(
-                    onScaleStart: (_) {
-                      _lastScaleValue = _imageScale;
-                      _lastRotationValue = _imageRotation;
+                    onScaleStart: (details) {
+                      _gestureStartTransform = _imageTransform.clone();
+                      _gestureStartFocalPoint =
+                          details.localFocalPoint - origin;
+                      _gestureStartScale = _gestureStartTransform!
+                          .getMaxScaleOnAxis();
                     },
                     onScaleUpdate: (details) {
+                      final startFocal = _gestureStartFocalPoint;
+                      final startTransform = _gestureStartTransform;
+                      if (startFocal == null || startTransform == null) return;
                       setState(() {
-                        _imageOffset += details.focalPointDelta;
-                        if (details.pointerCount >= 2) {
-                          _imageScale = (_lastScaleValue * details.scale).clamp(0.5, 5.0);
-                          _imageRotation = _lastRotationValue + details.rotation;
-                        }
+                        _imageTransform = composeGestureTransform(
+                          startTransform: startTransform,
+                          startFocalLocal: startFocal,
+                          startScale: _gestureStartScale,
+                          currentFocalLocal: details.localFocalPoint - origin,
+                          scaleFactorSinceStart: details.scale,
+                          rotationSinceStart: details.rotation,
+                        );
                       });
                     },
                     onScaleEnd: (_) {},
@@ -588,16 +1209,27 @@ class _ScanScreenState extends State<ScanScreen> {
                 Positioned(
                   left: gridRect.right - slotW / 2 - 20,
                   top: gridRect.top - 18,
-                  child: const Text('和了牌',
-                    style: TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    '和了牌',
+                    style: TextStyle(
+                      color: Colors.greenAccent,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
 
                 // Instructions
                 Positioned(
-                  top: 12, left: 0, right: 0,
+                  top: 12,
+                  left: 0,
+                  right: 0,
                   child: Center(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black.withValues(alpha: 0.7),
                         borderRadius: BorderRadius.circular(16),
@@ -612,10 +1244,27 @@ class _ScanScreenState extends State<ScanScreen> {
 
                 // 90° rotation button
                 Positioned(
-                  top: 12, right: 12,
+                  top: 12,
+                  right: 12,
                   child: IconButton(
-                    onPressed: () => setState(() => _imageRotation += math.pi / 2),
-                    icon: const Icon(Icons.rotate_right, color: Colors.white70, size: 28),
+                    onPressed: () => setState(() {
+                      // Rotate the image 90° about its own center, then keep
+                      // applying whatever pan/zoom/rotation was already
+                      // dialed in on top of that.
+                      final center = Offset(baseW / 2, baseH / 2);
+                      final rotateAboutCenter = Matrix4.identity()
+                        ..translateByDouble(center.dx, center.dy, 0, 1)
+                        ..rotateZ(math.pi / 2)
+                        ..translateByDouble(-center.dx, -center.dy, 0, 1);
+                      _imageTransform = _imageTransform.multiplied(
+                        rotateAboutCenter,
+                      );
+                    }),
+                    icon: const Icon(
+                      Icons.rotate_right,
+                      color: Colors.white70,
+                      size: 28,
+                    ),
                     tooltip: '90°回転',
                     style: IconButton.styleFrom(
                       backgroundColor: Colors.black.withValues(alpha: 0.5),
@@ -625,7 +1274,9 @@ class _ScanScreenState extends State<ScanScreen> {
 
                 // Bottom buttons
                 Positioned(
-                  left: 0, right: 0, bottom: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                     color: Colors.black.withValues(alpha: 0.7),
@@ -635,7 +1286,9 @@ class _ScanScreenState extends State<ScanScreen> {
                           child: ElevatedButton(
                             onPressed: _backToCamera,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white.withValues(alpha: 0.15),
+                              backgroundColor: Colors.white.withValues(
+                                alpha: 0.15,
+                              ),
                               foregroundColor: Colors.white,
                             ),
                             child: const Text('撮り直す'),
@@ -646,12 +1299,18 @@ class _ScanScreenState extends State<ScanScreen> {
                           flex: 2,
                           child: ElevatedButton.icon(
                             onPressed: () => _classifyFromGrid(
-                              gridRect, imgLeft, imgTop, scaledW, scaledH,
+                              gridRect,
+                              baseLeft,
+                              baseTop,
+                              baseW,
+                              baseH,
                             ),
                             icon: const Icon(Icons.search, size: 20),
                             label: const Text('識別開始'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green.withValues(alpha: 0.7),
+                              backgroundColor: Colors.green.withValues(
+                                alpha: 0.7,
+                              ),
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
@@ -673,6 +1332,17 @@ class _ScanScreenState extends State<ScanScreen> {
   // Phase 3: Results
   // ════════════════════════════════════════
 
+  Widget _buildTileMarkerOverlay() {
+    return TileMarkerOverlay(
+      imageBytes: _capturedBytes!,
+      imageWidth: _capturedImage!.width,
+      imageHeight: _capturedImage!.height,
+      boxes: _tileQuads.map((q) => q?.boundingRect).toList(),
+      tiles: _tiles,
+      onTap: _openBoxEditor,
+    );
+  }
+
   Widget _buildResultsPhase() {
     return Scaffold(
       backgroundColor: Colors.black,
@@ -682,53 +1352,174 @@ class _ScanScreenState extends State<ScanScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Tile results row
-              TileSlotRow(tiles: _tiles, isClassifying: _isClassifying, onSlotTap: _onSlotTap),
-              const SizedBox(height: 8),
-
               // Full photo with detected-tile markers. Sized by the photo's
               // own aspect ratio (not a fixed screen fraction) so a portrait
               // capture gets a tall box and a landscape capture a short one
               // — the scrolling column below absorbs whichever it is.
-              if (_capturedBytes != null && _capturedImage != null) ...[
+              // Tapping a marker opens the full-screen box editor for that
+              // tile (`_openBoxEditor`); pinch-zoom is safe to leave on
+              // here since nothing on this screen does its own dragging
+              // anymore (editing happens in `TileBoxEditorScreen`, a
+              // separate route with no zoom of its own).
+              if (_capturedBytes != null) ...[
                 AspectRatio(
                   aspectRatio: _capturedImage!.width / _capturedImage!.height,
-                  child: TileMarkerOverlay(
-                    imageBytes: _capturedBytes!,
-                    imageWidth: _capturedImage!.width,
-                    imageHeight: _capturedImage!.height,
-                    boxes: _tileBoxes,
-                    tiles: _tiles,
-                    onTap: _onSlotTap,
+                  child: InteractiveViewer(
+                    minScale: 1.0,
+                    maxScale: 4.0,
+                    child: _buildTileMarkerOverlay(),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
+                if (_tileQuads.any((q) => q == null))
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _addMissingTileBox,
+                      icon: const Icon(
+                        Icons.add_box_outlined,
+                        size: 18,
+                        color: Colors.greenAccent,
+                      ),
+                      label: const Text(
+                        '枠を追加',
+                        style: TextStyle(color: Colors.greenAccent),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 4),
               ],
 
-              // Cropped images preview
+              // Cropped images preview, each paired with its identified
+              // tile's illustration directly below (or "?" until "識別実行"
+              // has been run for it). Tapping the crop opens the box editor
+              // (`_openBoxEditor`); tapping the illustration opens the
+              // image-based picker (`_onSlotTap`) to correct it manually.
               SizedBox(
-                height: 60,
+                height: 100,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: 14,
+                  itemCount: _visibleSlotCount,
                   itemBuilder: (_, i) {
-                    final cropped = _croppedImages[i];
-                    if (cropped == null) return const SizedBox(width: 40);
+                    final thumb = _croppedImageThumbnails[i];
+                    if (thumb == null) return const SizedBox(width: 40);
+                    final tile = _tiles[i];
+                    final tileAsset = tile == null ? null : tileAssetPath(tile);
                     return Padding(
-                      padding: const EdgeInsets.only(right: 2),
-                      child: Image.memory(
-                        Uint8List.fromList(img.encodeJpg(cropped)),
-                        width: 40, height: 56, fit: BoxFit.cover,
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: () => _openBoxEditor(i),
+                            child: Image.memory(
+                              thumb,
+                              width: 40,
+                              height: 56,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          GestureDetector(
+                            onTap: () => _onSlotTap(i),
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              alignment: Alignment.center,
+                              child: _isClassifying[i]
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 1.5,
+                                        color: Colors.white54,
+                                      ),
+                                    )
+                                  : tileAsset != null
+                                  ? Image.asset(tileAsset, fit: BoxFit.contain)
+                                  : const Text(
+                                      '?',
+                                      style: TextStyle(
+                                        color: Colors.white38,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },
                 ),
               ),
+              const SizedBox(height: 8),
+
+              // Runs AI classification for every cropped tile at once —
+              // separate from cropping itself so the AI only runs when
+              // explicitly asked for (see `_runClassification`).
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _croppedImages.any((c) => c != null)
+                      ? _runClassification
+                      : null,
+                  icon: const Icon(Icons.auto_awesome, size: 18),
+                  label: const Text('識別実行'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.greenAccent,
+                    side: const BorderSide(color: Colors.greenAccent),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              DropdownButtonFormField<HandOperation>(
+                initialValue: _operation,
+                dropdownColor: Colors.grey.shade900,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: '実行する機能',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  border: OutlineInputBorder(),
+                ),
+                items: HandOperation.values
+                    .map(
+                      (operation) => DropdownMenuItem(
+                        value: operation,
+                        child: Text(_operationLabel(operation)),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (operation) {
+                  if (operation == null) return;
+                  setState(() {
+                    _operation = operation;
+                    _invalidateInterpretation();
+                  });
+                },
+              ),
               const SizedBox(height: 12),
 
               // Context input
-              ContextInputPanel(context_: _context, onChanged: (c) => setState(() => _context = c)),
+              ContextInputPanel(
+                context_: _context,
+                onChanged: (c) => setState(() {
+                  _context = c;
+                  _scoreResult = null;
+                  _analysisResult = null;
+                  _isNotWinning = false;
+                }),
+              ),
               const SizedBox(height: 12),
+
+              if (_interpretation != null) ...[
+                _buildInterpretationConfirmation(),
+                const SizedBox(height: 12),
+              ],
 
               // Buttons
               Row(
@@ -747,14 +1538,31 @@ class _ScanScreenState extends State<ScanScreen> {
                   Expanded(
                     flex: 2,
                     child: ElevatedButton.icon(
-                      onPressed: _allTilesReady && !_isScoring ? _calculateScore : null,
-                      icon: _isScoring
-                          ? const SizedBox(width: 16, height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.calculate, size: 20),
-                      label: const Text('点数計算'),
+                      onPressed:
+                          _allDetectedTilesReady &&
+                              !_isScoring &&
+                              !_isInterpreting
+                          ? (_interpretation == null
+                                ? _runInterpretation
+                                : _confirmAndAnalyze)
+                          : null,
+                      icon: _isScoring || _isInterpreting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.fact_check_outlined, size: 20),
+                      label: Text(
+                        _interpretation == null
+                            ? '画像解釈を確認'
+                            : '${_operationLabel(_operation)}を実行',
+                      ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _allTilesReady
+                        backgroundColor: _allDetectedTilesReady
                             ? Colors.green.withValues(alpha: 0.6)
                             : Colors.white.withValues(alpha: 0.1),
                         foregroundColor: Colors.white,
@@ -767,19 +1575,31 @@ class _ScanScreenState extends State<ScanScreen> {
 
               if (_errorMessage != null) ...[
                 const SizedBox(height: 8),
-                Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                ),
               ],
 
               if (_isNotWinning) ...[
                 const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.red.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: const Text('上がりの形になっていません',
-                      style: TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    '上がりの形になっていません',
+                    style: TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
 
@@ -788,19 +1608,50 @@ class _ScanScreenState extends State<ScanScreen> {
                 ScoreResultPanel(scoreResponse: _scoreResult!),
               ],
 
+              if (_analysisResult != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _analysisSummary(_analysisResult!),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+
               // Training data send button
-              if (_allTilesReady) ...[
+              if (_trainingTilesReady) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _isSendingTraining || _trainingDataSent ? null : _sendTrainingData,
+                    onPressed: _isSendingTraining || _trainingDataSent
+                        ? null
+                        : _sendTrainingData,
                     icon: _isSendingTraining
-                        ? const SizedBox(width: 16, height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : Icon(_trainingDataSent ? Icons.check : Icons.school, size: 18),
-                    label: Text(_isSendingTraining ? '送信中...'
-                        : _trainingDataSent ? '送信済み' : '学習データとして送信'),
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(
+                            _trainingDataSent ? Icons.check : Icons.school,
+                            size: 18,
+                          ),
+                    label: Text(
+                      _isSendingTraining
+                          ? '送信中...'
+                          : _trainingDataSent
+                          ? '送信済み'
+                          : '学習データとして送信',
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _trainingDataSent
                           ? Colors.grey.withValues(alpha: 0.3)
@@ -839,7 +1690,12 @@ class _SlotOverlayPainter extends CustomPainter {
     final slotW = slotRect.width / slotCount;
     for (int i = 0; i < slotCount; i++) {
       canvas.drawRect(
-        Rect.fromLTWH(slotRect.left + i * slotW, slotRect.top, slotW, slotRect.height),
+        Rect.fromLTWH(
+          slotRect.left + i * slotW,
+          slotRect.top,
+          slotW,
+          slotRect.height,
+        ),
         clearPaint,
       );
     }
@@ -850,13 +1706,23 @@ class _SlotOverlayPainter extends CustomPainter {
       ..strokeWidth = 1.0;
     for (int i = 0; i < slotCount; i++) {
       canvas.drawRect(
-        Rect.fromLTWH(slotRect.left + i * slotW, slotRect.top, slotW, slotRect.height),
+        Rect.fromLTWH(
+          slotRect.left + i * slotW,
+          slotRect.top,
+          slotW,
+          slotRect.height,
+        ),
         borderPaint,
       );
     }
 
     canvas.drawRect(
-      Rect.fromLTWH(slotRect.left + (slotCount - 1) * slotW, slotRect.top, slotW, slotRect.height),
+      Rect.fromLTWH(
+        slotRect.left + (slotCount - 1) * slotW,
+        slotRect.top,
+        slotW,
+        slotRect.height,
+      ),
       Paint()
         ..color = Colors.greenAccent.withValues(alpha: 0.8)
         ..style = PaintingStyle.stroke
@@ -869,4 +1735,38 @@ class _SlotOverlayPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SlotOverlayPainter old) =>
       slotRect != old.slotRect || slotCount != old.slotCount;
+}
+
+/// Composes the display transform for one pan/zoom/rotate gesture update.
+///
+/// [scaleFactorSinceStart] and [rotationSinceStart] are the cumulative values
+/// Flutter's scale gesture recognizer reports relative to gesture start (as
+/// in [ScaleUpdateDetails.scale]/[.rotation]), not per-frame deltas. The
+/// whole current gesture's transform is rebuilt from [startTransform] on
+/// every call, pivoting scale and rotation around [startFocalLocal] — the
+/// point that was under the fingers when the gesture began — so that point
+/// stays under [currentFocalLocal] regardless of any rotation already
+/// applied before the gesture started. Coordinates are all in the same
+/// "local" space (i.e. relative to the transformed widget's own origin).
+Matrix4 composeGestureTransform({
+  required Matrix4 startTransform,
+  required Offset startFocalLocal,
+  required double startScale,
+  required Offset currentFocalLocal,
+  required double scaleFactorSinceStart,
+  required double rotationSinceStart,
+  double minScale = 0.5,
+  double maxScale = 5.0,
+}) {
+  final targetScale = (startScale * scaleFactorSinceStart).clamp(
+    minScale,
+    maxScale,
+  );
+  final relativeScale = targetScale / startScale;
+  final delta = Matrix4.identity()
+    ..translateByDouble(currentFocalLocal.dx, currentFocalLocal.dy, 0, 1)
+    ..rotateZ(rotationSinceStart)
+    ..scaleByDouble(relativeScale, relativeScale, relativeScale, 1)
+    ..translateByDouble(-startFocalLocal.dx, -startFocalLocal.dy, 0, 1);
+  return delta.multiplied(startTransform);
 }

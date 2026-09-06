@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+
+import google.auth
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +12,7 @@ class Settings(BaseSettings):
     recognize_ensemble_passes: int = 3
     image_ttl_hours: int = 24
     gcp_project: str | None = None
+    gcp_region: str = "asia-northeast1"
     gcs_bucket_name: str | None = None
     gcs_feedback_prefix: str = "score-feedback"
     gcs_dataset_prefix: str = "score-dataset"
@@ -23,3 +27,17 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def resolve_gcp_project() -> str | None:
+    """Resolve the project explicitly or from the active GCP runtime credentials."""
+    if settings.gcp_project:
+        return settings.gcp_project
+    for variable in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"):
+        if project := os.getenv(variable):
+            return project
+    try:
+        _, project = google.auth.default()
+        return project
+    except google.auth.exceptions.DefaultCredentialsError:
+        return None

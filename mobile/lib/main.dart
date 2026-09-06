@@ -12,12 +12,13 @@ List<CameraDescription> cameras = const [];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Lock the UI to portrait regardless of the device's own rotation-lock
-  // setting: the camera capture path assumes a fixed portrait-locked UI
-  // (the user physically turns the phone sideways to shoot a tile row; the
-  // app itself never rotates). This avoids depending on whatever rotation
-  // state the OS happens to be in.
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  // Lock the whole app to landscape: every screen assumes the phone is
+  // held sideways (the tile-row photography this app exists for is
+  // inherently wide, not tall), so there's no portrait-shaped screen to
+  // fall back to. This avoids depending on whatever rotation state the OS
+  // happens to be in.
+  await SystemChrome.setPreferredOrientations(
+      [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await AuthService.initialize();
 
