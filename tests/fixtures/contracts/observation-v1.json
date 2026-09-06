@@ -1,0 +1,24 @@
+{
+  "schema_version": "1",
+  "image": {
+    "width": 1600,
+    "height": 900,
+    "coordinate_space": "oriented_image_pixels"
+  },
+  "observations": [
+    {"observation_id": "tile-000", "index": 0, "candidates": [{"tile": "1m", "confidence": 0.98}], "bbox": {"left": 80.0, "top": 420.0, "right": 150.0, "bottom": 540.0}, "rotation_degrees": 0.5, "visual_group_id": null},
+    {"observation_id": "tile-001", "index": 1, "candidates": [{"tile": "2m", "confidence": 0.97}], "bbox": {"left": 155.0, "top": 420.0, "right": 225.0, "bottom": 540.0}, "rotation_degrees": 0.2, "visual_group_id": null},
+    {"observation_id": "tile-002", "index": 2, "candidates": [{"tile": "3m", "confidence": 0.96}], "bbox": {"left": 230.0, "top": 420.0, "right": 300.0, "bottom": 540.0}, "rotation_degrees": 0.0, "visual_group_id": null},
+    {"observation_id": "tile-003", "index": 3, "candidates": [{"tile": "4p", "confidence": 0.95}], "bbox": {"left": 305.0, "top": 420.0, "right": 375.0, "bottom": 540.0}, "rotation_degrees": -0.4, "visual_group_id": null},
+    {"observation_id": "tile-004", "index": 4, "candidates": [{"tile": "5pr", "confidence": 0.88}, {"tile": "5p", "confidence": 0.1}], "bbox": {"left": 380.0, "top": 420.0, "right": 450.0, "bottom": 540.0}, "rotation_degrees": -0.6, "visual_group_id": null},
+    {"observation_id": "tile-005", "index": 5, "candidates": [{"tile": "6p", "confidence": 0.96}], "bbox": {"left": 455.0, "top": 420.0, "right": 525.0, "bottom": 540.0}, "rotation_degrees": -0.3, "visual_group_id": null},
+    {"observation_id": "tile-006", "index": 6, "candidates": [{"tile": "7s", "confidence": 0.96}], "bbox": {"left": 530.0, "top": 420.0, "right": 600.0, "bottom": 540.0}, "rotation_degrees": 0.1, "visual_group_id": null},
+    {"observation_id": "tile-007", "index": 7, "candidates": [{"tile": "8s", "confidence": 0.95}], "bbox": {"left": 605.0, "top": 420.0, "right": 675.0, "bottom": 540.0}, "rotation_degrees": 0.2, "visual_group_id": null},
+    {"observation_id": "tile-008", "index": 8, "candidates": [{"tile": "9s", "confidence": 0.94}], "bbox": {"left": 710.0, "top": 420.0, "right": 780.0, "bottom": 540.0}, "rotation_degrees": 0.0, "visual_group_id": null},
+    {"observation_id": "tile-009", "index": 9, "candidates": [{"tile": "E", "confidence": 0.97}], "bbox": {"left": 785.0, "top": 420.0, "right": 855.0, "bottom": 540.0}, "rotation_degrees": 0.4, "visual_group_id": null},
+    {"observation_id": "tile-010", "index": 10, "candidates": [{"tile": "E", "confidence": 0.96}], "bbox": {"left": 860.0, "top": 420.0, "right": 930.0, "bottom": 540.0}, "rotation_degrees": 0.3, "visual_group_id": null},
+    {"observation_id": "tile-011", "index": 11, "candidates": [{"tile": "5s", "confidence": 0.94}], "bbox": {"left": 1050.0, "top": 420.0, "right": 1120.0, "bottom": 540.0}, "rotation_degrees": 0.0, "visual_group_id": "group-001"},
+    {"observation_id": "tile-012", "index": 12, "candidates": [{"tile": "5s", "confidence": 0.91}], "bbox": {"left": 1125.0, "top": 445.0, "right": 1245.0, "bottom": 515.0}, "rotation_degrees": 90.0, "visual_group_id": "group-001"},
+    {"observation_id": "tile-013", "index": 13, "candidates": [{"tile": "5s", "confidence": 0.93}], "bbox": {"left": 1250.0, "top": 420.0, "right": 1320.0, "bottom": 540.0}, "rotation_degrees": 0.0, "visual_group_id": "group-001"}
+  ]
+}
