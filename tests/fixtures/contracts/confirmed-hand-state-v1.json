@@ -1,0 +1,18 @@
+{
+  "schema_version": "1",
+  "operation": "score",
+  "hand": {
+    "closed_tiles": ["1m", "2m", "3m", "4p", "5pr", "6p", "7s", "8s", "9s", "E", "E"],
+    "closed_tile_observation_ids": ["tile-000", "tile-001", "tile-002", "tile-003", "tile-004", "tile-005", "tile-006", "tile-007", "tile-008", "tile-009", "tile-010"],
+    "melds": [
+      {
+        "type": "pon",
+        "tiles": ["5s", "5s", "5s"],
+        "open": true,
+        "source_observation_ids": ["tile-011", "tile-012", "tile-013"]
+      }
+    ],
+    "win_tile": "9s",
+    "win_tile_observation_id": "tile-008"
+  }
+}
