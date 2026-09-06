@@ -6,11 +6,12 @@ pydantic-settings==2.7.1
 openai==1.63.0
 Pillow==11.1.0
 pillow-heif==0.21.0
-tflite-runtime==2.14.0
+tflite-runtime==2.14.0; platform_system == "Linux"
 numpy>=1.24.0
 opencv-python-headless>=4.8.0
 pytest==8.3.4
 google-cloud-storage==2.19.0
 google-cloud-build==3.35.0
 firebase-admin==6.6.0
+cryptography==44.0.3
 eval_type_backport==0.2.2

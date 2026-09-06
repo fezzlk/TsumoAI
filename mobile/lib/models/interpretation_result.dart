@@ -98,3 +98,78 @@ class InterpretationResult {
     );
   }
 }
+
+class ConfirmedHandMeld {
+  final String type;
+  final List<String> tiles;
+  final bool open;
+  final List<String> sourceObservationIds;
+
+  const ConfirmedHandMeld({
+    required this.type,
+    required this.tiles,
+    required this.open,
+    required this.sourceObservationIds,
+  });
+
+  factory ConfirmedHandMeld.fromJson(Map<String, dynamic> json) =>
+      ConfirmedHandMeld(
+        type: json['type'] as String,
+        tiles: (json['tiles'] as List<dynamic>).cast<String>(),
+        open: json['open'] as bool,
+        sourceObservationIds: (json['source_observation_ids'] as List<dynamic>)
+            .cast<String>(),
+      );
+
+  Map<String, dynamic> toAnalysisJson() => {
+    'type': type,
+    'tiles': tiles,
+    'open': open,
+  };
+}
+
+class ConfirmedHand {
+  final List<String> closedTiles;
+  final List<String> closedTileObservationIds;
+  final List<ConfirmedHandMeld> melds;
+  final String? winTile;
+  final String? winTileObservationId;
+
+  const ConfirmedHand({
+    required this.closedTiles,
+    required this.closedTileObservationIds,
+    required this.melds,
+    required this.winTile,
+    required this.winTileObservationId,
+  });
+
+  factory ConfirmedHand.fromJson(Map<String, dynamic> json) => ConfirmedHand(
+    closedTiles: (json['closed_tiles'] as List<dynamic>).cast<String>(),
+    closedTileObservationIds:
+        (json['closed_tile_observation_ids'] as List<dynamic>).cast<String>(),
+    melds: (json['melds'] as List<dynamic>? ?? const [])
+        .map((meld) => ConfirmedHandMeld.fromJson(meld as Map<String, dynamic>))
+        .toList(growable: false),
+    winTile: json['win_tile'] as String?,
+    winTileObservationId: json['win_tile_observation_id'] as String?,
+  );
+}
+
+class ConfirmedHandStateV1 {
+  final String schemaVersion;
+  final String operation;
+  final ConfirmedHand hand;
+
+  const ConfirmedHandStateV1({
+    required this.schemaVersion,
+    required this.operation,
+    required this.hand,
+  });
+
+  factory ConfirmedHandStateV1.fromJson(Map<String, dynamic> json) =>
+      ConfirmedHandStateV1(
+        schemaVersion: json['schema_version'] as String,
+        operation: json['operation'] as String,
+        hand: ConfirmedHand.fromJson(json['hand'] as Map<String, dynamic>),
+      );
+}

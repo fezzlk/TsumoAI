@@ -10,6 +10,9 @@ import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
+import '../models/interpretation_request.dart';
+import '../models/interpretation_result.dart';
+import '../models/tile_observation.dart';
 import '../widgets/tile_image_picker.dart';
 import '../widgets/context_input_panel.dart';
 import '../widgets/score_result_panel.dart';
@@ -18,6 +21,7 @@ import '../services/training_data_client.dart';
 import '../services/tile_segmenter.dart';
 import '../services/tile_assets.dart';
 import '../models/tile_quad.dart';
+import '../services/scan_observation_builder.dart';
 import 'tile_box_editor_screen.dart';
 
 class ScanScreen extends StatefulWidget {
@@ -31,6 +35,7 @@ class ScanScreen extends StatefulWidget {
 enum _ScanPhase { camera, detecting, align, results }
 
 class _ScanScreenState extends State<ScanScreen> {
+  static const int _maxPhysicalTiles = 18;
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
   final ApiClient _api = ApiClient();
@@ -53,32 +58,54 @@ class _ScanScreenState extends State<ScanScreen> {
   double _gestureStartScale = 1.0;
 
   // Tile results
-  final List<String?> _tiles = List.filled(14, null);
+  final List<String?> _tiles = List.filled(_maxPhysicalTiles, null);
   // Latest on-device predictions, kept unchanged when the user corrects
   // `_tiles`, so training uploads can measure real-world recognition accuracy.
-  final List<String?> _predictedTiles = List.filled(14, null);
-  final List<bool> _isClassifying = List.filled(14, false);
-  final List<img.Image?> _croppedImages = List.filled(14, null);
+  final List<String?> _predictedTiles = List.filled(_maxPhysicalTiles, null);
+  final List<List<TileCandidate>> _candidates = List.generate(
+    _maxPhysicalTiles,
+    (_) => <TileCandidate>[],
+  );
+  final List<bool> _isClassifying = List.filled(_maxPhysicalTiles, false);
+  final List<img.Image?> _croppedImages = List.filled(_maxPhysicalTiles, null);
   // Cached JPEG encoding of `_croppedImages`, computed once when a crop is
   // set rather than in build() — re-encoding 14 images per rebuild (e.g. on
   // every drag frame of a box edit) was the main source of the "重い"
   // (heavy/laggy) results-screen feedback.
-  final List<Uint8List?> _croppedImageThumbnails = List.filled(14, null);
+  final List<Uint8List?> _croppedImageThumbnails = List.filled(
+    _maxPhysicalTiles,
+    null,
+  );
   // Each tile's crop region as 4 independent corners (not just an
   // axis-aligned Rect) — see `TileQuad` for why: a tile photographed at an
   // angle projects as a general quadrilateral, not just a rotated
   // rectangle. In `_capturedImage`'s (corrected) pixel space.
-  final List<TileQuad?> _tileQuads = List.filled(14, null);
+  final List<TileQuad?> _tileQuads = List.filled(_maxPhysicalTiles, null);
 
   bool _isCapturing = false;
   bool _isScoring = false;
+  bool _isInterpreting = false;
   bool _isSendingTraining = false;
   bool _trainingDataSent = false;
   ScoreResponse? _scoreResult;
   bool _isNotWinning = false;
   String? _errorMessage;
+  InterpretationResult? _interpretation;
+  String? _confirmedWinningTileId;
+  final List<ConfirmedMeld> _confirmedMelds = [];
+  HandOperation _operation = HandOperation.score;
+  Map<String, dynamic>? _analysisResult;
 
   ContextInput _context = ContextInput();
+
+  void _invalidateInterpretation() {
+    _interpretation = null;
+    _confirmedWinningTileId = null;
+    _confirmedMelds.clear();
+    _analysisResult = null;
+    _scoreResult = null;
+    _isNotWinning = false;
+  }
 
   @override
   void initState() {
@@ -159,9 +186,10 @@ class _ScanScreenState extends State<ScanScreen> {
         _phase = _ScanPhase.detecting;
         _imageTransform = Matrix4.identity();
         _errorMessage = null;
-        for (int i = 0; i < 14; i++) {
+        for (int i = 0; i < _maxPhysicalTiles; i++) {
           _tiles[i] = null;
           _predictedTiles[i] = null;
+          _candidates[i] = [];
           _isClassifying[i] = false;
           _croppedImages[i] = null;
           _croppedImageThumbnails[i] = null;
@@ -290,20 +318,20 @@ class _ScanScreenState extends State<ScanScreen> {
     if (srcImage == null) return;
 
     setState(() {
-      for (int i = 0; i < 14; i++) {
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
         _tiles[i] = null;
         _predictedTiles[i] = null;
+        _candidates[i] = [];
         _isClassifying[i] = false;
         _croppedImages[i] = null;
         _croppedImageThumbnails[i] = null;
         _tileQuads[i] = null;
       }
-      _scoreResult = null;
-      _isNotWinning = false;
+      _invalidateInterpretation();
       _errorMessage = null;
     });
 
-    for (int i = 0; i < boxes.length && i < 14; i++) {
+    for (int i = 0; i < boxes.length && i < _maxPhysicalTiles; i++) {
       final box = boxes[i];
       final refined = refineTileCropWithRect(
         srcImage,
@@ -334,27 +362,34 @@ class _ScanScreenState extends State<ScanScreen> {
     }
 
     setState(() {
-      for (int i = 0; i < 14; i++) {
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
         if (_croppedImages[i] != null) _isClassifying[i] = true;
       }
       _errorMessage = null;
     });
 
-    for (int i = 0; i < 14; i++) {
+    for (int i = 0; i < _maxPhysicalTiles; i++) {
       final cropped = _croppedImages[i];
       if (cropped == null) continue;
-      final results = _classifier.classify(cropped, topK: 1);
+      final results = _classifier.classify(cropped, topK: 3);
       setState(() {
         final prediction = results.isNotEmpty ? results.first.tileCode : null;
         _tiles[i] = prediction;
         _predictedTiles[i] = prediction;
+        _candidates[i] = results
+            .map(
+              (result) => TileCandidate(
+                tile: result.tileCode,
+                confidence: result.confidence,
+              ),
+            )
+            .toList(growable: false);
         _isClassifying[i] = false;
       });
     }
 
     setState(() {
-      _scoreResult = null;
-      _isNotWinning = false;
+      _invalidateInterpretation();
     });
   }
 
@@ -400,15 +435,13 @@ class _ScanScreenState extends State<ScanScreen> {
       );
       _tiles[index] = null;
       _predictedTiles[index] = null;
-      _scoreResult = null;
-      _isNotWinning = false;
+      _candidates[index] = [];
+      _invalidateInterpretation();
     });
   }
 
-  /// Opens the editor for the next empty slot (in practice always index 13,
-  /// the 和了牌 slot, since detection only ever falls short by exactly one
-  /// tile), seeded with a placeholder box (median size of the other tiles,
-  /// centered in the photo) for the user to drag into place.
+  /// Opens the editor for the next empty physical-tile slot, seeded with a
+  /// median-size placeholder for the user to move into place.
   void _addMissingTileBox() {
     final srcImage = _capturedImage;
     if (srcImage == null) return;
@@ -468,42 +501,142 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  // ── Phase 3: Score ──
+  // ── Phase 3: Interpretation, confirmation, and explicit operation ──
 
-  Future<void> _calculateScore() async {
-    final tiles = _tiles.whereType<String>().toList();
-    if (tiles.length != 14) return;
+  ObservationV1 _buildObservation() {
+    final image = _capturedImage;
+    if (image == null) throw StateError('撮影画像がありません');
+    final inputs = <ScanObservationInput>[];
+    for (int index = 0; index < _maxPhysicalTiles; index++) {
+      final tile = _tiles[index];
+      if (tile == null) continue;
+      final candidates = _candidates[index].isEmpty
+          ? [TileCandidate(tile: tile, confidence: 1.0)]
+          : _candidates[index];
+      inputs.add(
+        ScanObservationInput(
+          index: index,
+          candidates: candidates,
+          quad: _tileQuads[index],
+        ),
+      );
+    }
+    return buildScanObservationV1(
+      imageWidth: image.width,
+      imageHeight: image.height,
+      tiles: inputs,
+    );
+  }
+
+  Future<void> _runInterpretation() async {
+    if (!_allDetectedTilesReady) return;
+    setState(() {
+      _isInterpreting = true;
+      _errorMessage = null;
+      _invalidateInterpretation();
+    });
+    try {
+      final result = await _api.interpret(
+        InterpretationRequest(observation: _buildObservation()),
+      );
+      if (!mounted) return;
+      setState(() => _interpretation = result);
+    } catch (error) {
+      if (mounted) setState(() => _errorMessage = '画像解釈エラー: $error');
+    } finally {
+      if (mounted) setState(() => _isInterpreting = false);
+    }
+  }
+
+  Future<void> _confirmAndAnalyze() async {
+    if (_interpretation == null) return;
+    if (_operation == HandOperation.score && _confirmedWinningTileId == null) {
+      setState(() => _errorMessage = 'あがり牌を選択してください');
+      return;
+    }
+
+    final observation = _buildObservation();
+    final confirmation = ConfirmationV1(
+      operation: _operation,
+      confirmedTiles: observation.observations
+          .map(
+            (item) => ConfirmedTile(
+              observationId: item.observationId,
+              tile: _tiles[item.index]!,
+            ),
+          )
+          .toList(growable: false),
+      confirmedWinningTileId: _operation == HandOperation.score
+          ? _confirmedWinningTileId
+          : null,
+      confirmedMelds: List.unmodifiable(_confirmedMelds),
+    );
 
     setState(() {
       _isScoring = true;
       _scoreResult = null;
+      _analysisResult = null;
       _isNotWinning = false;
       _errorMessage = null;
     });
-
     try {
-      final hand = HandInput(
-        closedTiles: tiles,
-        melds: [],
-        winTile: tiles.last,
+      final state = await _api.confirmHand(
+        request: InterpretationRequest(
+          observation: observation,
+          confirmation: confirmation,
+        ),
       );
-      final request = ScoreRequest(
-        hand: hand,
-        context: _context,
-        rules: RuleSet(),
-      );
-      final result = await _api.calculateScore(request);
-      setState(() {
-        if (result == null) {
-          _isNotWinning = true;
-        } else {
-          _scoreResult = result;
-        }
-      });
-    } catch (e) {
-      setState(() => _errorMessage = 'スコア計算エラー: $e');
+      final rules = RuleSet();
+      switch (_operation) {
+        case HandOperation.score:
+          final winTile = state.hand.winTile;
+          if (winTile == null) throw StateError('確定済みのあがり牌がありません');
+          final result = await _api.calculateScore(
+            ScoreRequest(
+              hand: HandInput(
+                closedTiles: state.hand.closedTiles,
+                melds: state.hand.melds
+                    .map(
+                      (meld) => Meld(
+                        type: meld.type,
+                        tiles: meld.tiles,
+                        open: meld.open,
+                      ),
+                    )
+                    .toList(growable: false),
+                winTile: winTile,
+              ),
+              context: _context,
+              rules: rules,
+            ),
+          );
+          if (!mounted) return;
+          setState(() {
+            _scoreResult = result;
+            _isNotWinning = result == null;
+          });
+          break;
+        case HandOperation.tenpai:
+          final result = await _api.analyzeTenpai(
+            state: state,
+            context: _context,
+            rules: rules,
+          );
+          if (mounted) setState(() => _analysisResult = result);
+          break;
+        case HandOperation.discardAnalysis:
+          final result = await _api.analyzeDiscards(
+            state: state,
+            context: _context,
+            rules: rules,
+          );
+          if (mounted) setState(() => _analysisResult = result);
+          break;
+      }
+    } catch (error) {
+      if (mounted) setState(() => _errorMessage = '解析エラー: $error');
     } finally {
-      setState(() => _isScoring = false);
+      if (mounted) setState(() => _isScoring = false);
     }
   }
 
@@ -515,8 +648,8 @@ class _ScanScreenState extends State<ScanScreen> {
     if (selected != null && mounted) {
       setState(() {
         _tiles[index] = selected;
-        _scoreResult = null;
-        _isNotWinning = false;
+        _candidates[index] = [TileCandidate(tile: selected, confidence: 1.0)];
+        _invalidateInterpretation();
       });
     }
   }
@@ -526,23 +659,254 @@ class _ScanScreenState extends State<ScanScreen> {
       _phase = _ScanPhase.camera;
       _capturedBytes = null;
       _capturedImage = null;
-      for (int i = 0; i < 14; i++) {
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
         _tiles[i] = null;
         _predictedTiles[i] = null;
+        _candidates[i] = [];
         _isClassifying[i] = false;
         _croppedImages[i] = null;
         _croppedImageThumbnails[i] = null;
         _tileQuads[i] = null;
       }
-      _scoreResult = null;
-      _isNotWinning = false;
+      _invalidateInterpretation();
       _errorMessage = null;
       _isSendingTraining = false;
       _trainingDataSent = false;
     });
   }
 
-  bool get _allTilesReady => _tiles.every((t) => t != null);
+  bool get _allDetectedTilesReady {
+    final detected = [
+      for (int index = 0; index < _maxPhysicalTiles; index++)
+        if (_tileQuads[index] != null) index,
+    ];
+    return detected.isNotEmpty &&
+        detected.every((index) => _tiles[index] != null);
+  }
+
+  bool get _trainingTilesReady =>
+      _tiles.take(14).every((tile) => tile != null) &&
+      _tiles.skip(14).every((tile) => tile == null);
+
+  int get _visibleSlotCount {
+    var last = -1;
+    for (int index = 0; index < _maxPhysicalTiles; index++) {
+      if (_tileQuads[index] != null || _tiles[index] != null) last = index;
+    }
+    return math.max(14, last + 1).clamp(14, _maxPhysicalTiles);
+  }
+
+  String _operationLabel(HandOperation operation) => switch (operation) {
+    HandOperation.score => '点数計算',
+    HandOperation.tenpai => 'テンパイ・待ち',
+    HandOperation.discardAnalysis => '打牌分析',
+  };
+
+  String _analysisSummary(Map<String, dynamic> result) {
+    final shanten = result['shanten'];
+    final improving = result['improving_tiles'];
+    if (improving is List) {
+      final tiles = improving
+          .whereType<Map>()
+          .map((item) => '${item['tile']}(${item['remaining']})')
+          .join('、');
+      return 'シャンテン数: $shanten\n有効牌・待ち: ${tiles.isEmpty ? 'なし' : tiles}';
+    }
+    final discards = result['discards'];
+    if (discards is List) {
+      final lines = discards.whereType<Map>().take(8).map((item) {
+        final options = item['improving_tiles'];
+        final count = options is List
+            ? options.fold<int>(
+                0,
+                (sum, option) =>
+                    sum + ((option as Map)['remaining'] as num).toInt(),
+              )
+            : 0;
+        return '${item['discard']}: ${item['shanten']}シャンテン / 有効牌$count枚';
+      });
+      return ['シャンテン数: $shanten', ...lines].join('\n');
+    }
+    return result.toString();
+  }
+
+  Future<void> _showAddMeldDialog() async {
+    final available = <int>[
+      for (int index = 0; index < _maxPhysicalTiles; index++)
+        if (_tiles[index] != null &&
+            !_confirmedMelds.any(
+              (meld) => meld.observationIds.contains(
+                'tile-${index.toString().padLeft(3, '0')}',
+              ),
+            ))
+          index,
+    ];
+    final selected = <int>{};
+    var type = 'pon';
+    var isOpen = true;
+    final meld = await showDialog<ConfirmedMeld>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final expected = {'chi', 'pon'}.contains(type) ? 3 : 4;
+          return AlertDialog(
+            title: const Text('鳴き・槓を確定'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: type,
+                    decoration: const InputDecoration(labelText: '種類'),
+                    items: const [
+                      DropdownMenuItem(value: 'chi', child: Text('チー')),
+                      DropdownMenuItem(value: 'pon', child: Text('ポン')),
+                      DropdownMenuItem(value: 'kan', child: Text('明槓')),
+                      DropdownMenuItem(value: 'ankan', child: Text('暗槓')),
+                      DropdownMenuItem(value: 'kakan', child: Text('加槓')),
+                    ],
+                    onChanged: (value) => setDialogState(() {
+                      type = value!;
+                      isOpen = type != 'ankan';
+                      selected.clear();
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('$expected枚を選択'),
+                  Wrap(
+                    spacing: 6,
+                    children: available
+                        .map((index) {
+                          final isSelected = selected.contains(index);
+                          return FilterChip(
+                            label: Text('${index + 1}:${_tiles[index]}'),
+                            selected: isSelected,
+                            onSelected: (value) => setDialogState(() {
+                              if (value && selected.length < expected) {
+                                selected.add(index);
+                              } else if (!value) {
+                                selected.remove(index);
+                              }
+                            }),
+                          );
+                        })
+                        .toList(growable: false),
+                  ),
+                  SwitchListTile(
+                    title: const Text('副露（open）'),
+                    value: isOpen,
+                    onChanged: type == 'ankan'
+                        ? null
+                        : (value) => setDialogState(() => isOpen = value),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('キャンセル'),
+              ),
+              FilledButton(
+                onPressed: selected.length == expected
+                    ? () => Navigator.pop(
+                        dialogContext,
+                        ConfirmedMeld(
+                          observationIds: selected
+                              .map(
+                                (index) =>
+                                    'tile-${index.toString().padLeft(3, '0')}',
+                              )
+                              .toList(growable: false),
+                          type: type,
+                          open: isOpen,
+                        ),
+                      )
+                    : null,
+                child: const Text('確定'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (meld != null && mounted) setState(() => _confirmedMelds.add(meld));
+  }
+
+  Widget _buildInterpretationConfirmation() {
+    final interpretation = _interpretation;
+    if (interpretation == null) return const SizedBox.shrink();
+    final suggested = interpretation.winningTile;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.12),
+        border: Border.all(color: Colors.amber),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '画像解釈の確認',
+            style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
+          ),
+          Text(
+            suggested.observationId == null
+                ? 'あがり牌候補: 不明（選択してください）'
+                : 'あがり牌候補: ${suggested.tile} / ${suggested.status.wireValue}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          if (_operation == HandOperation.score) ...[
+            const SizedBox(height: 8),
+            const Text('あがり牌を明示選択', style: TextStyle(color: Colors.white)),
+            Wrap(
+              spacing: 5,
+              children: [
+                for (int index = 0; index < _maxPhysicalTiles; index++)
+                  if (_tiles[index] != null)
+                    ChoiceChip(
+                      label: Text('${index + 1}:${_tiles[index]}'),
+                      selected:
+                          _confirmedWinningTileId ==
+                          'tile-${index.toString().padLeft(3, '0')}',
+                      onSelected: (_) => setState(
+                        () => _confirmedWinningTileId =
+                            'tile-${index.toString().padLeft(3, '0')}',
+                      ),
+                    ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          if (interpretation.melds.isNotEmpty)
+            Text(
+              '画像からの鳴き候補: ${interpretation.melds.map((meld) => '${meld.type}/${meld.status.wireValue}').join('、')}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          for (int index = 0; index < _confirmedMelds.length; index++)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                '${_confirmedMelds[index].type}: ${_confirmedMelds[index].observationIds.join(', ')}',
+                style: const TextStyle(color: Colors.white),
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                onPressed: () =>
+                    setState(() => _confirmedMelds.removeAt(index)),
+              ),
+            ),
+          TextButton.icon(
+            onPressed: _showAddMeldDialog,
+            icon: const Icon(Icons.add),
+            label: const Text('鳴き・槓を追加'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _sendTrainingData() async {
     if (_isSendingTraining || _trainingDataSent) return;
@@ -668,7 +1032,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Text(
-                    '牌14枚が映るように撮影してください',
+                    '解析対象の牌がすべて映るように撮影してください',
                     style: TextStyle(color: Colors.white, fontSize: 14),
                   ),
                 ),
@@ -1035,7 +1399,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 height: 100,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: 14,
+                  itemCount: _visibleSlotCount,
                   itemBuilder: (_, i) {
                     final thumb = _croppedImageThumbnails[i];
                     if (thumb == null) return const SizedBox(width: 40);
@@ -1113,12 +1477,49 @@ class _ScanScreenState extends State<ScanScreen> {
               ),
               const SizedBox(height: 12),
 
+              DropdownButtonFormField<HandOperation>(
+                initialValue: _operation,
+                dropdownColor: Colors.grey.shade900,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: '実行する機能',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  border: OutlineInputBorder(),
+                ),
+                items: HandOperation.values
+                    .map(
+                      (operation) => DropdownMenuItem(
+                        value: operation,
+                        child: Text(_operationLabel(operation)),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (operation) {
+                  if (operation == null) return;
+                  setState(() {
+                    _operation = operation;
+                    _invalidateInterpretation();
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+
               // Context input
               ContextInputPanel(
                 context_: _context,
-                onChanged: (c) => setState(() => _context = c),
+                onChanged: (c) => setState(() {
+                  _context = c;
+                  _scoreResult = null;
+                  _analysisResult = null;
+                  _isNotWinning = false;
+                }),
               ),
               const SizedBox(height: 12),
+
+              if (_interpretation != null) ...[
+                _buildInterpretationConfirmation(),
+                const SizedBox(height: 12),
+              ],
 
               // Buttons
               Row(
@@ -1137,10 +1538,15 @@ class _ScanScreenState extends State<ScanScreen> {
                   Expanded(
                     flex: 2,
                     child: ElevatedButton.icon(
-                      onPressed: _allTilesReady && !_isScoring
-                          ? _calculateScore
+                      onPressed:
+                          _allDetectedTilesReady &&
+                              !_isScoring &&
+                              !_isInterpreting
+                          ? (_interpretation == null
+                                ? _runInterpretation
+                                : _confirmAndAnalyze)
                           : null,
-                      icon: _isScoring
+                      icon: _isScoring || _isInterpreting
                           ? const SizedBox(
                               width: 16,
                               height: 16,
@@ -1149,10 +1555,14 @@ class _ScanScreenState extends State<ScanScreen> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Icon(Icons.calculate, size: 20),
-                      label: const Text('点数計算'),
+                          : const Icon(Icons.fact_check_outlined, size: 20),
+                      label: Text(
+                        _interpretation == null
+                            ? '画像解釈を確認'
+                            : '${_operationLabel(_operation)}を実行',
+                      ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _allTilesReady
+                        backgroundColor: _allDetectedTilesReady
                             ? Colors.green.withValues(alpha: 0.6)
                             : Colors.white.withValues(alpha: 0.1),
                         foregroundColor: Colors.white,
@@ -1198,8 +1608,23 @@ class _ScanScreenState extends State<ScanScreen> {
                 ScoreResultPanel(scoreResponse: _scoreResult!),
               ],
 
+              if (_analysisResult != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _analysisSummary(_analysisResult!),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+
               // Training data send button
-              if (_allTilesReady) ...[
+              if (_trainingTilesReady) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
