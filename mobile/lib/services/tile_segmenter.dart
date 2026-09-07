@@ -320,8 +320,23 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) => refineTileCropWithR
   // than the rough box already resolved for this tile, it has likely
   // absorbed a neighbor; rather than straighten+trim that (which would
   // actively make the crop worse), fall back to the safe naive crop.
+  //
+  // This *pre*-straightening check has to stay loose enough to admit a
+  // single tile's own legitimate rotation: a w×h rectangle's own unrotated
+  // axis-aligned bbox already grows to up to ~0.5*(w+h)^2/(w*h) (≈2.0-2.2x
+  // for this app's tile proportions, at a worst-case ~45°) of its own area
+  // purely from being tilted, with zero neighbor involved — a tight 1.6x
+  // bound here was rejecting exactly that case (FEZ-122: real curved-row
+  // photos have tiles tilted well past the ~19° where 1.6x is first
+  // exceeded), never even attempting the rotation search below. The
+  // *post*-straightening checks (`noRotationResult` below and the winning-
+  // blob check after the candidate loop) remain the real neighbor-bleed
+  // guard: they run on the tight-cropped / already-corrected blob, which
+  // shrinks back close to `expectedArea` for a genuine single tile but not
+  // for an actual multi-tile merge, and are intentionally left at the
+  // tighter 1.6x.
   final expectedArea = roughBox.width * roughBox.height;
-  if (expectedArea > 0 && _bboxArea(blob) > expectedArea * 1.6) {
+  if (expectedArea > 0 && _bboxArea(blob) > expectedArea * 2.3) {
     return fallbackResult();
   }
 
