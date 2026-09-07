@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from google.cloud import storage
 
-from app.config import settings
+from app.config import resolve_gcp_project, settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class TrainingDataStore:
 
     def _get_client(self) -> storage.Client:
         if self._client is None:
-            self._client = storage.Client(project=settings.gcp_project)
+            self._client = storage.Client(project=resolve_gcp_project())
         return self._client
 
     def _bucket(self) -> storage.Bucket:
