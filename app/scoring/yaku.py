@@ -30,8 +30,4 @@ def evaluate_context_yaku(hand: HandInput, context: ContextInput) -> YakuEvaluat
         items.append(YakuItem(name="槍槓", han=1))
     if context.win_type == "tsumo" and not any(meld.open for meld in hand.melds):
         items.append(YakuItem(name="門前清自摸和", han=1))
-    if context.tenhou:
-        items.append(YakuItem(name="天和", han=13))
-    if context.chiihou:
-        items.append(YakuItem(name="地和", han=13))
     return YakuEvaluation(items=tuple(items), han=sum(item.han for item in items))

@@ -60,6 +60,16 @@ class TrainingDataStore:
         entry_id = uuid4().hex[:12]
         date_path = now.strftime("%Y/%m/%d")
 
+        # Load the index before writing this entry's own meta file: if the
+        # index doesn't exist yet, loading triggers _rebuild_index(), which
+        # scans meta/* and would otherwise pick up the file we're about to
+        # write below, duplicating it once we append(meta) further down.
+        try:
+            index: list[dict] | None = self._load_index()
+        except Exception as exc:
+            logger.warning("Failed to load index before upload: %s", exc)
+            index = None
+
         image_name = f"{self.prefix}/images/{date_path}/{entry_id}.jpg"
         bucket = self._bucket()
         blob = bucket.blob(image_name)
@@ -82,12 +92,12 @@ class TrainingDataStore:
             content_type="application/json",
         )
         # Update index
-        try:
-            index = self._load_index()
-            index.append(meta)
-            self._save_index(index)
-        except Exception as exc:
-            logger.warning("Failed to update index on upload: %s", exc)
+        if index is not None:
+            try:
+                index.append(meta)
+                self._save_index(index)
+            except Exception as exc:
+                logger.warning("Failed to update index on upload: %s", exc)
         return {"id": entry_id, "image_path": image_name}
 
     # ── List (GCS primary, local fallback) ──
