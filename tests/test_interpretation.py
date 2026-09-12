@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from io import BytesIO
 
+import pytest
 from PIL import Image
 
 from app.interpretation.interpreter import interpret_observations
@@ -158,6 +159,92 @@ def test_recognition_id_can_be_interpreted_and_user_confirmed():
         "confidence": 1.0,
         "evidence": ["user_confirmed"],
     }
+
+
+def test_rejects_observation_with_no_candidates():
+    request = InterpretationRequest.model_validate(
+        {"observations": [{"observation_id": "tile-0", "index": 0, "candidates": []}]}
+    )
+    with pytest.raises(ValueError, match="at least one tile candidate"):
+        interpret_observations(request)
+
+
+def test_rejects_invalid_tile_candidate_code():
+    request = InterpretationRequest.model_validate(
+        {"observations": [observation(0, "1m")], "confirmed_winning_tile_id": "tile-0"}
+    )
+    request.observations[0].candidates[0].tile = "10m"
+    with pytest.raises(ValueError, match="invalid tile candidate"):
+        interpret_observations(request)
+
+
+def test_rejects_confirmed_meld_with_duplicate_observation():
+    request = InterpretationRequest.model_validate(
+        {
+            "observations": [observation(0, "1m"), observation(1, "2m"), observation(2, "3m")],
+            "confirmed_melds": [{"observation_ids": ["tile-0", "tile-0", "tile-1"], "type": "chi", "open": True}],
+        }
+    )
+    with pytest.raises(ValueError, match="cannot contain the same observation twice"):
+        interpret_observations(request)
+
+
+def test_rejects_confirmed_meld_with_unknown_observation():
+    request = InterpretationRequest.model_validate(
+        {
+            "observations": [observation(0, "1m"), observation(1, "2m"), observation(2, "3m")],
+            "confirmed_melds": [{"observation_ids": ["tile-0", "tile-1", "tile-99"], "type": "chi", "open": True}],
+        }
+    )
+    with pytest.raises(ValueError, match="references unknown observations"):
+        interpret_observations(request)
+
+
+def test_rejects_winning_tile_inside_confirmed_meld():
+    request = InterpretationRequest.model_validate(
+        {
+            "observations": [observation(0, "1m"), observation(1, "2m"), observation(2, "3m")],
+            "confirmed_melds": [{"observation_ids": ["tile-0", "tile-1", "tile-2"], "type": "chi", "open": True}],
+            "confirmed_winning_tile_id": "tile-0",
+        }
+    )
+    with pytest.raises(ValueError, match="cannot be inside a confirmed meld"):
+        interpret_observations(request)
+
+
+def test_visual_group_with_invalid_meld_shape_is_dropped():
+    """A visual group whose tiles form neither pon/chi/kan is not surfaced as a meld at all."""
+    request = InterpretationRequest.model_validate(
+        {
+            "observations": [
+                observation(0, "E", group="group-a"),
+                observation(1, "2m", group="group-a"),
+                observation(2, "3m", group="group-a"),
+                observation(3, "5p"),
+            ],
+            "confirmed_winning_tile_id": "tile-3",
+        }
+    )
+    result = interpret_observations(request)
+    assert result.melds == []
+
+
+def test_visual_group_of_four_identical_tiles_is_an_inferred_kan():
+    request = InterpretationRequest.model_validate(
+        {
+            "observations": [
+                observation(0, "E", group="group-a"),
+                observation(1, "E", group="group-a", rotation=90),
+                observation(2, "E", group="group-a"),
+                observation(3, "E", group="group-a"),
+                observation(4, "5p"),
+            ],
+            "confirmed_winning_tile_id": "tile-4",
+        }
+    )
+    result = interpret_observations(request)
+    assert result.melds[0].type == "kan"
+    assert result.melds[0].status == "inferred"
 
 
 def test_recognition_without_geometry_does_not_guess_last_tile():

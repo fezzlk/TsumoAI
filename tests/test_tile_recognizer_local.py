@@ -82,6 +82,20 @@ def _point_in_tile(px: float, py: float, tile: tuple[float, float, float, float,
     return abs(lx) <= w / 2 and abs(ly) <= h / 2
 
 
+def test_segment_tile_boxes_returns_empty_for_blank_canvas():
+    """No white pixels at all -> connected-components finds nothing."""
+    boxes = _segment_tile_boxes(_dark_background(400, 800))
+    assert boxes == []
+
+
+def test_segment_tile_boxes_filters_out_speck_below_size_threshold():
+    """A tiny white speck (below min_area/min_dim) must not be treated as a tile."""
+    canvas = _dark_background(400, 800)
+    canvas[10:13, 10:13] = (240, 240, 235)
+    boxes = _segment_tile_boxes(canvas)
+    assert boxes == []
+
+
 def test_segment_tiles_counts_non_touching_rectangles():
     height, width = 400, 3000
     canvas = _dark_background(height, width)
