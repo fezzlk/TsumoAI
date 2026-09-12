@@ -35,6 +35,18 @@ def test_resolve_gcp_project_uses_matching_explicit_values(monkeypatch):
     assert config.resolve_gcp_project() == "tsumoai"
 
 
+def test_resolve_gcp_project_returns_none_without_credentials(monkeypatch):
+    monkeypatch.setattr(config.settings, "gcp_project", None)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GCLOUD_PROJECT", raising=False)
+
+    def raise_no_credentials():
+        raise config.google.auth.exceptions.DefaultCredentialsError("no ADC available")
+
+    monkeypatch.setattr(config.google.auth, "default", raise_no_credentials)
+    assert config.resolve_gcp_project() is None
+
+
 def test_conflicting_explicit_gcp_projects_are_rejected(monkeypatch):
     monkeypatch.setattr(config.settings, "gcp_project", "tsumoai")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "nazonator")
