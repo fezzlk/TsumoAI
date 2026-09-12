@@ -55,6 +55,7 @@ class TrainingDataStore:
         tile_code: str,
         source: str = "user",
         predicted_tile_code: str | None = None,
+        uid: str | None = None,
     ) -> dict:
         now = datetime.now(timezone.utc)
         entry_id = uuid4().hex[:12]
@@ -81,6 +82,7 @@ class TrainingDataStore:
             "source": source,
             "image_path": image_name,
             "created_at": now.isoformat(),
+            "uid": uid,
         }
         if predicted_tile_code is not None:
             meta["predicted_tile_code"] = predicted_tile_code
@@ -287,6 +289,15 @@ class TrainingDataStore:
             return deleted
         except Exception:
             return False
+
+    def delete_by_uid(self, uid: str) -> int:
+        """Delete every entry uploaded by this uid. Best-effort."""
+        try:
+            index = self._load_index(force=True)
+        except Exception:
+            return 0
+        matching_ids = [e.get("id") for e in index if e.get("uid") == uid]
+        return sum(1 for entry_id in matching_ids if entry_id and self.delete_entry(entry_id))
 
     # ── Stats ──
 
