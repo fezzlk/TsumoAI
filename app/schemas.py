@@ -46,11 +46,22 @@ class TileCandidate(BaseModel):
     confidence: confloat(ge=0.0, le=1.0)
 
 
+class SlotBoundingBox(BaseModel):
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
 class HandSlot(BaseModel):
     index: conint(ge=0)
     top: TileCode
     candidates: list[TileCandidate] = Field(default_factory=list)
     ambiguous: bool
+    observation_id: str | None = None
+    bbox: SlotBoundingBox | None = None
+    rotation_degrees: float | None = None
+    visual_group_id: str | None = None
 
 
 class ImageMeta(BaseModel):
@@ -190,6 +201,46 @@ class ScoreResponse(BaseModel):
     status: Literal["ok"]
     result: ScoreResult
     warnings: list[str] = Field(default_factory=list)
+
+
+class AnalysisRequestBase(BaseModel):
+    closed_tiles: list[TileCode]
+    melds: list[Meld] = Field(default_factory=list)
+    context: ContextInput | None = None
+    rules: RuleSet = Field(default_factory=RuleSet)
+    include_score_predictions: bool = True
+
+
+class TenpaiAnalysisRequest(AnalysisRequestBase):
+    pass
+
+
+class DiscardAnalysisRequest(AnalysisRequestBase):
+    pass
+
+
+class WaitAnalysis(BaseModel):
+    tile: TileCode
+    remaining: conint(ge=0, le=4)
+    score: ScoreResult | None = None
+    score_error: str | None = None
+
+
+class DiscardAnalysisResult(BaseModel):
+    discard: TileCode
+    shanten: int
+    improving_tiles: list[WaitAnalysis] = Field(default_factory=list)
+    total_remaining: conint(ge=0) = 0
+
+
+class TenpaiAnalysisResponse(BaseModel):
+    shanten: int
+    improving_tiles: list[WaitAnalysis] = Field(default_factory=list)
+
+
+class DiscardAnalysisResponse(BaseModel):
+    shanten: int
+    discards: list[DiscardAnalysisResult] = Field(default_factory=list)
 
 
 class RecognizeAndScorePayload(BaseModel):

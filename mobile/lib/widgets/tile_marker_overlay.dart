@@ -7,6 +7,11 @@ import 'package:flutter/material.dart';
 /// the displayed [Image.memory] rect (accounting for BoxFit.contain
 /// letterboxing) rather than requiring the image to be shown at any
 /// particular rotation/scale.
+///
+/// Purely a static overview — tapping a marker (via [onTap]) is expected to
+/// open a dedicated full-screen editor (see `TileBoxEditorScreen`) rather
+/// than dragging handles in place here; an earlier version did the latter
+/// but it fought the surrounding scroll view and felt heavy in practice.
 class TileMarkerOverlay extends StatelessWidget {
   final Uint8List imageBytes;
   final int imageWidth;

@@ -20,11 +20,23 @@ from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimat
 from app.recognition_feedback_store import RecognitionFeedbackStore
 from app.recognition_job_manager import RecognitionJobManager
 from app.hand_scoring import score_hand_shape
+from app.hand_analysis import analyze_discard_options, analyze_tenpai
+from app.interpretation import interpret_observations, request_from_hand_estimate
+from app.interpretation.confirmation import assemble_confirmed_hand_state
+from app.interpretation.models import (
+    ConfirmedHandAssemblyRequest,
+    ConfirmedHandStateV1,
+    InterpretationRequest,
+    InterpretationResponse,
+    RecognitionInterpretationRequest,
+)
 from app.repository import InMemoryRepository
 from app.schemas import (
     ContextInput,
     DatasetUploadRequest,
     DatasetUploadResponse,
+    DiscardAnalysisRequest,
+    DiscardAnalysisResponse,
     MyDataDeletionResponse,
     RecognizeJobCreateResponse,
     RecognizeJobStatusResponse,
@@ -38,6 +50,8 @@ from app.schemas import (
     ScoreFeedbackResponse,
     ScoreRequest,
     ScoreResponse,
+    TenpaiAnalysisRequest,
+    TenpaiAnalysisResponse,
 )
 from app.validators import validate_score_request, validate_tile
 
@@ -391,6 +405,52 @@ def score(req: ScoreRequest) -> ScoreResponse:
     return ScoreResponse(score_id=record.id, status="ok", result=result, warnings=[])
 
 
+@app.post("/api/v1/tenpai/analyze", response_model=TenpaiAnalysisResponse)
+def analyze_tenpai_endpoint(req: TenpaiAnalysisRequest) -> TenpaiAnalysisResponse:
+    try:
+        return analyze_tenpai(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/discards/analyze", response_model=DiscardAnalysisResponse)
+def analyze_discards_endpoint(req: DiscardAnalysisRequest) -> DiscardAnalysisResponse:
+    try:
+        return analyze_discard_options(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/interpretations", response_model=InterpretationResponse)
+def create_interpretation(req: InterpretationRequest) -> InterpretationResponse:
+    try:
+        return interpret_observations(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/confirmed-hands", response_model=ConfirmedHandStateV1)
+def create_confirmed_hand(req: ConfirmedHandAssemblyRequest) -> ConfirmedHandStateV1:
+    try:
+        return assemble_confirmed_hand_state(req.observation, req.confirmation)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/recognitions/{recognition_id}/interpret", response_model=InterpretationResponse)
+def interpret_recognition(
+    recognition_id: UUID, req: RecognitionInterpretationRequest
+) -> InterpretationResponse:
+    record = repo.get(recognition_id)
+    if record is None or record.type != "recognition":
+        raise HTTPException(status_code=404, detail="recognition not found or expired")
+    try:
+        interpretation_request = request_from_hand_estimate(record.data["hand_estimate"], req)
+        return interpret_observations(interpretation_request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.post("/api/v1/recognize-and-score", response_model=RecognizeAndScoreResponse)
 async def recognize_and_score(
     image: UploadFile = File(...),
@@ -525,13 +585,22 @@ from app.schemas import TrainingDataListResponse, TrainingDataUploadResponse
 async def upload_training_data(
     image: UploadFile = File(...),
     tile_code: str = Form(...),
+    predicted_tile_code: str | None = Form(None),
     source: str = Form("user"),
     _user: dict = Depends(get_current_user),
 ) -> TrainingDataUploadResponse:
     validate_tile(tile_code)
+    if predicted_tile_code is not None:
+        validate_tile(predicted_tile_code)
     image_bytes = await _read_limited_image(image)
     try:
-        result = training_data_store.upload(image_bytes, tile_code, source, uid=_user.get("uid"))
+        result = training_data_store.upload(
+            image_bytes,
+            tile_code,
+            source,
+            predicted_tile_code=predicted_tile_code,
+            uid=_user.get("uid"),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return TrainingDataUploadResponse(status="ok", **result)
@@ -653,6 +722,58 @@ def get_accuracy_history(_admin: dict = Depends(require_admin)) -> dict:
 # --- Model retraining endpoints ---
 
 
+def _serialize_training_build(build) -> dict:
+    status = getattr(build.status, "name", None) or str(build.status).rsplit(".", 1)[-1]
+    start_time = getattr(build, "start_time", None)
+    finish_time = getattr(build, "finish_time", None)
+    duration_seconds = None
+    if start_time and finish_time:
+        duration_seconds = max(0, int((finish_time - start_time).total_seconds()))
+    failure_info = getattr(build, "failure_info", None)
+    failure_detail = getattr(failure_info, "detail", "") if failure_info else ""
+
+    def isoformat(value):
+        return value.isoformat() if value else None
+
+    return {
+        "build_id": build.id,
+        "status": status,
+        "create_time": isoformat(getattr(build, "create_time", None)),
+        "start_time": isoformat(start_time),
+        "finish_time": isoformat(finish_time),
+        "duration_seconds": duration_seconds,
+        "log_url": getattr(build, "log_url", "") or None,
+        "failure_detail": failure_detail or None,
+    }
+
+
+@app.get("/api/v1/model/retraining-history")
+def get_retraining_history(
+    limit: int = Query(20, ge=1, le=50),
+    _admin: dict = Depends(require_admin),
+) -> dict:
+    project_id = resolve_gcp_project()
+    if not project_id:
+        raise HTTPException(status_code=503, detail="GCP project not configured")
+    try:
+        from google.cloud.devtools import cloudbuild_v1
+
+        parent = f"projects/{project_id}/locations/{settings.gcp_region}"
+        client = cloudbuild_v1.CloudBuildClient()
+        builds = client.list_builds(
+            request={"project_id": project_id, "parent": parent, "page_size": 50}
+        )
+        history = [
+            _serialize_training_build(build)
+            for build in builds
+            if "tsumoai-model-training" in build.tags
+        ]
+        history.sort(key=lambda item: item["create_time"] or "", reverse=True)
+        return {"builds": history[:limit], "region": settings.gcp_region}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cloud Build履歴取得エラー: {e}")
+
+
 @app.get("/api/v1/model/latest")
 def get_latest_model_info() -> dict:
     """Get info about the latest trained model on GCS."""
@@ -682,7 +803,7 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
     try:
         from google.cloud.devtools import cloudbuild_v1
         client = cloudbuild_v1.CloudBuildClient()
-        location = "asia-northeast1"
+        location = settings.gcp_region
         parent = f"projects/{project_id}/locations/{location}"
         repository = (
             f"{parent}/connections/tsumoai-github/repositories/tsumoai-repo"

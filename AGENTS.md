@@ -11,4 +11,11 @@
 
 ## Project-specific guidance
 
-Add repository-specific commands, architecture constraints, and verification steps here.
+- Cloud Build trigger `tsumoai-deploy` is regional. Always inspect and run it with both
+  `--project=tsumoai` and `--region=asia-northeast1`; omitting the region can incorrectly
+  return an empty trigger list.
+- Before deploying, verify that `tsumoai-deploy` is the only trigger returned for that
+  project and region. It tracks `main` and reads `cloudbuild.yaml` through the existing
+  `tsumoai-github` / `tsumoai-repo` second-generation repository connection.
+- Never recreate the deleted `rmgpgab-` Console-generated source deployment trigger.
+- Do not use `gcloud run deploy --source`; run the reviewed regional trigger instead.
