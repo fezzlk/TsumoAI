@@ -20,11 +20,23 @@ from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimat
 from app.recognition_feedback_store import RecognitionFeedbackStore
 from app.recognition_job_manager import RecognitionJobManager
 from app.hand_scoring import score_hand_shape
+from app.hand_analysis import analyze_discard_options, analyze_tenpai
+from app.interpretation import interpret_observations, request_from_hand_estimate
+from app.interpretation.confirmation import assemble_confirmed_hand_state
+from app.interpretation.models import (
+    ConfirmedHandAssemblyRequest,
+    ConfirmedHandStateV1,
+    InterpretationRequest,
+    InterpretationResponse,
+    RecognitionInterpretationRequest,
+)
 from app.repository import InMemoryRepository
 from app.schemas import (
     ContextInput,
     DatasetUploadRequest,
     DatasetUploadResponse,
+    DiscardAnalysisRequest,
+    DiscardAnalysisResponse,
     RecognizeJobCreateResponse,
     RecognizeJobStatusResponse,
     RecognitionFeedbackRequest,
@@ -37,6 +49,8 @@ from app.schemas import (
     ScoreFeedbackResponse,
     ScoreRequest,
     ScoreResponse,
+    TenpaiAnalysisRequest,
+    TenpaiAnalysisResponse,
 )
 from app.validators import validate_score_request, validate_tile
 
@@ -273,6 +287,52 @@ def score(req: ScoreRequest) -> ScoreResponse:
         },
     )
     return ScoreResponse(score_id=record.id, status="ok", result=result, warnings=[])
+
+
+@app.post("/api/v1/tenpai/analyze", response_model=TenpaiAnalysisResponse)
+def analyze_tenpai_endpoint(req: TenpaiAnalysisRequest) -> TenpaiAnalysisResponse:
+    try:
+        return analyze_tenpai(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/discards/analyze", response_model=DiscardAnalysisResponse)
+def analyze_discards_endpoint(req: DiscardAnalysisRequest) -> DiscardAnalysisResponse:
+    try:
+        return analyze_discard_options(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/interpretations", response_model=InterpretationResponse)
+def create_interpretation(req: InterpretationRequest) -> InterpretationResponse:
+    try:
+        return interpret_observations(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/confirmed-hands", response_model=ConfirmedHandStateV1)
+def create_confirmed_hand(req: ConfirmedHandAssemblyRequest) -> ConfirmedHandStateV1:
+    try:
+        return assemble_confirmed_hand_state(req.observation, req.confirmation)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/recognitions/{recognition_id}/interpret", response_model=InterpretationResponse)
+def interpret_recognition(
+    recognition_id: UUID, req: RecognitionInterpretationRequest
+) -> InterpretationResponse:
+    record = repo.get(recognition_id)
+    if record is None or record.type != "recognition":
+        raise HTTPException(status_code=404, detail="recognition not found or expired")
+    try:
+        interpretation_request = request_from_hand_estimate(record.data["hand_estimate"], req)
+        return interpret_observations(interpretation_request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/recognize-and-score", response_model=RecognizeAndScoreResponse)
@@ -581,7 +641,7 @@ def get_latest_model_info() -> dict:
         raise HTTPException(status_code=503, detail="GCS not configured")
     try:
         from google.cloud import storage
-        client = storage.Client(project=settings.gcp_project)
+        client = storage.Client(project=resolve_gcp_project())
         bucket = client.bucket(settings.gcs_bucket_name)
         blob = bucket.blob("models/latest.json")
         if not blob.exists():
@@ -670,7 +730,7 @@ def approve_model_candidate(version: str, _admin: dict = Depends(require_admin))
         raise HTTPException(status_code=503, detail="GCS not configured")
     try:
         from google.cloud import storage
-        client = storage.Client(project=settings.gcp_project)
+        client = storage.Client(project=resolve_gcp_project())
         bucket = client.bucket(settings.gcs_bucket_name)
         candidate = bucket.blob(f"models/candidates/{version}.json")
         if not candidate.exists():
@@ -696,7 +756,7 @@ def download_model_file(filename: str) -> Response:
         raise HTTPException(status_code=503, detail="GCS not configured")
     try:
         from google.cloud import storage
-        client = storage.Client(project=settings.gcp_project)
+        client = storage.Client(project=resolve_gcp_project())
         bucket = client.bucket(settings.gcs_bucket_name)
 
         # Get latest version

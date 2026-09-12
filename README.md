@@ -4,11 +4,26 @@ FastAPI + OpenAI (`gpt-4o-mini`) で、手牌画像から候補抽出し、和�
 
 ## Quickstart
 
+必要なPythonバージョンは3.11です。Dockerだけで起動する場合、ホスト側へのPython環境構築は不要です。
+
 ```bash
 cp .env.example .env
 ./scripts/download_tiles.sh
 docker compose up --build
 ```
+
+ホスト上でテストやスクリプトを実行する場合:
+
+```bash
+python3.11 -m venv venv
+venv/bin/python -m pip install --upgrade pip
+venv/bin/python -m pip install -r requirements.txt
+venv/bin/python -m pytest -q
+```
+
+既存の`venv`がPython 3.9などで作成されている場合は、その環境を削除または別名へ退避してから
+Python 3.11で作り直してください。バックエンドの言語・ランタイム選定理由は
+[`docs/adr/0001-python-runtime.md`](docs/adr/0001-python-runtime.md)に記録しています。
 
 開発時ホットリロード:
 
@@ -27,6 +42,17 @@ Health check:
 ```bash
 curl http://localhost:8000/health
 ```
+
+### Google Cloud project settings
+
+TsumoAIが操作するリソースのproject IDは `GCP_PROJECT=tsumoai` を正本とします。
+`GOOGLE_CLOUD_PROJECT` または `GCLOUD_PROJECT` も設定されている場合、すべて同じ値でなければ
+アプリは起動時に停止します。Application Default Credentials (ADC) から推定されるprojectは、
+これらの明示値が1つもない場合だけfallbackとして使用します。
+
+認証に使うgcloud configurationのactive projectと、処理対象projectは別の概念です。
+ローカルのComposeは `.env` の `GCP_PROJECT` を `GOOGLE_CLOUD_PROJECT` に反映しますが、
+手動のgcloudコマンドでは引き続き `--project=tsumoai` と `--region=asia-northeast1` を明示してください。
 
 ## Deploy (Google Cloud Run)
 
@@ -159,6 +185,17 @@ gcloud run jobs add-iam-policy-binding tsumoai-accuracy-eval \
 - `POST /api/v1/recognize-only/jobs/{job_id}/cancel`
 - `POST /api/v1/score`
   - `application/json`
+- `POST /api/v1/tenpai/analyze`
+  - ユーザーがテンパイ解析を選択した場合に、シャンテン数、有効牌、待ち牌別点数予測を返す
+- `POST /api/v1/discards/analyze`
+  - ユーザーが打牌分析を選択した場合に、打牌候補ごとのシャンテン数、有効牌、残り枚数を返す
+- `POST /api/v1/interpretations`
+  - 牌候補・座標・向き・画像上のグループを、鳴き候補・和了牌候補へ解釈する
+  - 推定根拠と確信度を返し、不明な情報はユーザー確認を要求する
+- `POST /api/v1/confirmed-hands`
+  - ObservationV1とユーザーのConfirmationV1から、推定を含まないConfirmedHandStateV1を構築する
+- `POST /api/v1/recognitions/{recognition_id}/interpret`
+  - 保存済み認識結果を解釈層へ渡し、必要に応じてユーザー確定情報を適用する
 - `POST /api/v1/recognize-and-score`
   - `multipart/form-data`
   - fields: `image` (file), `context_json`, `rules_json`
@@ -181,6 +218,10 @@ gcloud run jobs add-iam-policy-binding tsumoai-accuracy-eval \
   - `app/recognition_postprocess.py`: 識別後処理ポリシー（重み・ルール）を一元管理
   - `app/tile_weighting.py`: 34牌テンプレ画像（上部オレンジ枠を除去）から重み・類似度を算出
   - `app/hand_scoring.py`: 牌姿（和了形）と補完情報から点数算出
+  - `app/domain/`: 牌表現、和了分解、シャンテン、待ち・打牌分析の純粋なドメインロジック
+  - `app/interpretation/`: 画像観測の解釈、確認Policy、ConfirmedHandStateの組み立て
+  - `app/scoring/`: 役・符・ドラ・支払い計算を分離した点数計算コンポーネント
+  - `app/hand_analysis.py`: ドメイン解析と点数予測を組み合わせるユースケース
 - 今後のカメラリアルタイム認識導入メモ: `docs/recognition_roadmap.md`
 - 牌画像は `scripts/download_tiles.sh` でネット上（Wikimedia Commons）から取得し、`app/static/tiles` に保存します。
 - 点数訂正フィードバックは GCS に保存されます。

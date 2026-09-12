@@ -500,7 +500,8 @@ def recognize_tiles_local(image_bytes: bytes) -> dict[str, Any] | None:
         logger.warning("Failed to load image for TFLite: %s", exc)
         return None
 
-    tile_images = _segment_tiles(rgb)
+    tile_boxes = _segment_tile_boxes(rgb)
+    tile_images = [rgb[sy:ey, sx:ex] for sy, ey, sx, ex in tile_boxes]
     if not tile_images or len(tile_images) not in (13, 14):
         logger.info("TFLite segmentation found %d tiles (need 13-14)", len(tile_images) if tile_images else 0)
         return None
@@ -509,7 +510,7 @@ def recognize_tiles_local(image_bytes: bytes) -> dict[str, Any] | None:
     confidences: list[float] = []
     warnings: list[str] = []
 
-    for idx, tile_img in enumerate(tile_images):
+    for idx, (tile_img, (sy, ey, sx, ex)) in enumerate(zip(tile_images, tile_boxes)):
         label, confidence = _classify_tile(tile_img)
         tile_code = _LABEL_TO_TILE.get(label)
         if tile_code is None:
@@ -523,6 +524,8 @@ def recognize_tiles_local(image_bytes: bytes) -> dict[str, Any] | None:
             "candidates": [{"tile": tile_code, "confidence": confidence}],
             "ambiguous": confidence < 0.7,
             "top_confidence": confidence,
+            "observation_id": f"tile-{idx}",
+            "bbox": {"left": sx, "top": sy, "right": ex, "bottom": ey},
         })
 
     if len(slots) not in (13, 14):

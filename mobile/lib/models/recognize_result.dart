@@ -1,39 +1,46 @@
-class TileCandidate {
-  final String tile;
-  final double confidence;
+import 'tile_observation.dart';
 
-  TileCandidate({required this.tile, required this.confidence});
-
-  factory TileCandidate.fromJson(Map<String, dynamic> json) {
-    return TileCandidate(
-      tile: json['tile'] as String,
-      confidence: (json['confidence'] as num).toDouble(),
-    );
-  }
-}
+export 'tile_observation.dart' show ObservationBoundingBox, TileCandidate;
 
 class HandSlot {
   final int index;
   final String top;
   final List<TileCandidate> candidates;
   final bool ambiguous;
+  final String? observationId;
+  final ObservationBoundingBox? bbox;
+  final double? rotationDegrees;
+  final String? visualGroupId;
 
   HandSlot({
     required this.index,
     required this.top,
     required this.candidates,
     required this.ambiguous,
+    this.observationId,
+    this.bbox,
+    this.rotationDegrees,
+    this.visualGroupId,
   });
 
   factory HandSlot.fromJson(Map<String, dynamic> json) {
     return HandSlot(
       index: json['index'] as int,
       top: json['top'] as String,
-      candidates: (json['candidates'] as List?)
+      candidates:
+          (json['candidates'] as List?)
               ?.map((c) => TileCandidate.fromJson(c))
               .toList() ??
           [],
       ambiguous: json['ambiguous'] as bool,
+      observationId: json['observation_id'] as String?,
+      bbox: json['bbox'] == null
+          ? null
+          : ObservationBoundingBox.fromJson(
+              json['bbox'] as Map<String, dynamic>,
+            ),
+      rotationDegrees: (json['rotation_degrees'] as num?)?.toDouble(),
+      visualGroupId: json['visual_group_id'] as String?,
     );
   }
 }
@@ -47,8 +54,7 @@ class HandEstimate {
   factory HandEstimate.fromJson(Map<String, dynamic> json) {
     return HandEstimate(
       tilesCount: json['tiles_count'] as int,
-      slots:
-          (json['slots'] as List).map((s) => HandSlot.fromJson(s)).toList(),
+      slots: (json['slots'] as List).map((s) => HandSlot.fromJson(s)).toList(),
     );
   }
 
@@ -59,6 +65,7 @@ class RecognizeResponse {
   final String recognitionId;
   final HandEstimate handEstimate;
   final List<String> warnings;
+
   /// Raw JSON from the API response (used for feedback submission).
   final Map<String, dynamic> rawJson;
 
