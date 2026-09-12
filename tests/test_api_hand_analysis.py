@@ -58,6 +58,28 @@ def test_discard_analysis_accepts_red_five():
     assert any(item["discard"] == "5m" for item in response.json()["discards"])
 
 
+def test_analyze_reports_score_error_for_yakuless_wait():
+    """A wait that completes the shape but has no yaku must report score_error, not crash."""
+    response = client.post(
+        "/api/v1/tenpai/analyze",
+        json={
+            "closed_tiles": ["1m", "1m", "1m", "2p", "3p", "4p", "5s", "6s", "7s", "9m", "9m", "7p", "8p"],
+            "melds": [],
+            "context": {
+                "win_type": "ron", "is_dealer": False, "round_wind": "W", "seat_wind": "N",
+                "riichi": False, "ippatsu": False, "haitei": False, "houtei": False,
+                "rinshan": False, "chankan": False,
+            },
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["shanten"] == 0
+    for wait in body["improving_tiles"]:
+        assert wait["score"] is None
+        assert wait["score_error"] == "No yaku: dora-only hands cannot win"
+
+
 def test_operations_do_not_switch_implicitly_by_tile_count():
     fourteen_tiles = ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "2p", "3p", "4p", "5p", "C"]
     thirteen_tiles = fourteen_tiles[:-1]

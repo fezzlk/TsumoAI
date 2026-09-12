@@ -178,3 +178,119 @@ def test_observation_geometry_uses_oriented_image_bounds():
     data["observations"][0]["rotation_degrees"] = 180
     with pytest.raises(ValidationError, match="rotation_degrees"):
         ObservationV1.model_validate(data)
+
+
+def test_observation_document_rejects_duplicate_ids_and_indices():
+    data = load("observation-v1.json")
+    data["observations"][1]["observation_id"] = data["observations"][0]["observation_id"]
+    with pytest.raises(ValidationError, match="observation_id must be unique"):
+        ObservationV1.model_validate(data)
+
+    data = load("observation-v1.json")
+    data["observations"][1]["index"] = data["observations"][0]["index"]
+    with pytest.raises(ValidationError, match="observation index must be unique"):
+        ObservationV1.model_validate(data)
+
+
+def test_observation_document_rejects_empty_id_negative_index_and_empty_group():
+    data = load("observation-v1.json")
+    data["observations"][0]["observation_id"] = ""
+    with pytest.raises(ValidationError, match="observation_id must not be empty"):
+        ObservationV1.model_validate(data)
+
+    data = load("observation-v1.json")
+    data["observations"][0]["index"] = -1
+    with pytest.raises(ValidationError, match="index must be non-negative"):
+        ObservationV1.model_validate(data)
+
+    data = load("observation-v1.json")
+    data["observations"][0]["visual_group_id"] = ""
+    with pytest.raises(ValidationError, match="visual_group_id must not be empty"):
+        ObservationV1.model_validate(data)
+
+
+def test_assemble_rejects_invalid_confirmed_tile_code():
+    observation, _ = documents()
+    confirmation_data = load("confirmation-v1.json")
+    confirmation_data["confirmed_tiles"][0]["tile"] = "10m"
+    with pytest.raises(ValueError, match="invalid confirmed tile code"):
+        assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))
+
+
+def test_assemble_rejects_overlapping_melds_added_after_validation():
+    """ConfirmationV1's own validator rejects this at construction time; this
+    guards the service function itself against a mutated-after-validation object."""
+    observation, confirmation = documents()
+    mutated = confirmation.model_copy(deep=True)
+    mutated.confirmed_melds.append(mutated.confirmed_melds[0].model_copy(deep=True))
+    with pytest.raises(ValueError, match="multiple confirmed melds"):
+        assemble_confirmed_hand_state(observation, mutated)
+
+
+def test_assemble_rejects_winning_tile_when_operation_is_not_score():
+    observation, confirmation = documents()
+    non_score = confirmation.model_copy(deep=True)
+    non_score.operation = "tenpai"
+    with pytest.raises(ValueError, match="winning tile must be null unless operation is score"):
+        assemble_confirmed_hand_state(observation, non_score)
+
+
+def test_validate_meld_rejects_wrong_observation_count():
+    observation, _ = documents()
+    confirmation_data = load("confirmation-v1.json")
+    confirmation_data["confirmed_melds"] = [
+        {"observation_ids": ["tile-000", "tile-001", "tile-002", "tile-003"], "type": "pon", "open": True}
+    ]
+    with pytest.raises(ValueError, match="pon must contain exactly 3 observations"):
+        assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))
+
+
+def test_validate_meld_rejects_chi_with_unsuited_tile():
+    observation, _ = documents()
+    confirmation_data = load("confirmation-v1.json")
+    confirmation_data["confirmed_melds"] = [
+        {"observation_ids": ["tile-009", "tile-000", "tile-001"], "type": "chi", "open": True}
+    ]
+    with pytest.raises(ValueError, match="chi must contain suited tiles"):
+        assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))
+
+
+def test_validate_meld_accepts_valid_open_chi():
+    observation, _ = documents()
+    confirmation_data = load("confirmation-v1.json")
+    confirmation_data["confirmed_melds"] = [
+        {"observation_ids": ["tile-000", "tile-001", "tile-002"], "type": "chi", "open": True}
+    ]
+    result = assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))
+    assert result.hand.melds[0].tiles == ["1m", "2m", "3m"]
+
+
+def test_validate_meld_rejects_closed_chi():
+    observation, _ = documents()
+    confirmation_data = load("confirmation-v1.json")
+    confirmation_data["confirmed_melds"] = [
+        {"observation_ids": ["tile-000", "tile-001", "tile-002"], "type": "chi", "open": False}
+    ]
+    with pytest.raises(ValueError, match="chi must be open"):
+        assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))
+
+
+def test_validate_meld_rejects_ankan_declared_open():
+    observation, _ = documents()
+    confirmation_data = load("confirmation-v1.json")
+    confirmation_data["confirmed_tiles"][0]["tile"] = "5s"  # tile-000 -> a 4th "5s" alongside tile-011..013
+    confirmation_data["confirmed_melds"] = [
+        {"observation_ids": ["tile-011", "tile-012", "tile-013", "tile-000"], "type": "ankan", "open": True}
+    ]
+    with pytest.raises(ValueError, match="ankan open must be false"):
+        assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))
+
+
+def test_validate_meld_rejects_pon_with_non_identical_tiles():
+    observation, _ = documents()
+    confirmation_data = load("confirmation-v1.json")
+    confirmation_data["confirmed_melds"] = [
+        {"observation_ids": ["tile-000", "tile-001", "tile-002"], "type": "pon", "open": True}
+    ]
+    with pytest.raises(ValueError, match="do not form pon"):
+        assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))

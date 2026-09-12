@@ -286,8 +286,12 @@ def test_score_endpoint_accepts_kan_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert any(y["name"] == "場風 東" for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_accepts_two_kans_hand():
@@ -300,8 +304,13 @@ def test_score_endpoint_accepts_two_kans_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert any(y["name"] == "場風 東" for y in body["result"]["yaku"])
+    assert any(y["name"] == "自風 南" for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_accepts_three_kans_hand():
@@ -315,8 +324,12 @@ def test_score_endpoint_accepts_three_kans_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert any(y["name"] == "三槓子" and y["han"] == 2 for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_accepts_four_kans_hand():
@@ -331,8 +344,27 @@ def test_score_endpoint_accepts_four_kans_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert "四槓子" in body["result"]["yakuman"]
+    assert "大四喜" in body["result"]["yakuman"]
+    assert body["result"]["point_label"] == "3倍役満"
+
+
+def test_score_endpoint_rejects_riichi_with_open_melds():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "2p", "2p"],
+        "melds": [{"type": "pon", "tiles": ["W", "W", "W"], "open": True}],
+        "win_tile": "2p",
+    }
+    payload["context"]["riichi"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "riichi/double_riichi require a closed hand" in response.text
 
 
 def test_score_endpoint_rejects_five_of_same_tile_including_red_five():
