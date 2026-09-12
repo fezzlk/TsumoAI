@@ -376,7 +376,7 @@ def test_upload_training_data_validates_predicted_tile_code(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: {"uid": "user-1"}
     captured = {}
 
-    def fake_upload(image_bytes, tile_code, source, predicted_tile_code=None):
+    def fake_upload(image_bytes, tile_code, source, predicted_tile_code=None, uid=None):
         captured["predicted"] = predicted_tile_code
         return {"id": "abc", "image_path": "x"}
 
