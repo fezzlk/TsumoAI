@@ -288,12 +288,6 @@ def extract_hand_from_image(image_bytes: bytes, should_cancel: Callable[[], bool
     }
 
 
-def hand_shape_from_estimate(estimate: dict[str, Any]) -> HandInput:
-    """Candidates -> concrete hand shape for downstream scoring."""
-    tiles, _warnings = hand_shape_from_estimate_with_warnings(estimate)
-    return tiles
-
-
 def hand_shape_from_estimate_with_warnings(estimate: dict[str, Any]) -> tuple[HandInput, list[str]]:
     slots = estimate.get("slots", [])
     if not slots:

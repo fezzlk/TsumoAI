@@ -173,6 +173,20 @@ def test_score_hand_shape_adds_seat_wind_yakuhai():
     assert any(y.name == "自風 南" for y in result.yaku)
 
 
+def test_score_hand_shape_double_wind_pair_uses_renpu_fu_rule():
+    """A pair matching both round and seat wind (連風牌) uses the configurable renpu_fu, not the normal 2fu single-wind pair."""
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E", "E", "2p", "2p", "2p"],
+        melds=[],
+        win_tile="2p",
+    )
+    context = base_context(round_wind="E", seat_wind="E", riichi=True, aka_dora_count=0, dora_indicators=[])
+    default_result = score_hand_shape(hand, context, RuleSet())
+    custom_result = score_hand_shape(hand, context, RuleSet(renpu_fu=2))
+    assert any(item.name == "雀頭" and item.fu == 4 for item in default_result.fu_breakdown)
+    assert any(item.name == "雀頭" and item.fu == 2 for item in custom_result.fu_breakdown)
+
+
 def test_score_hand_shape_adds_double_wind_yakuhai():
     context = base_context(round_wind="E", seat_wind="E", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(base_hand(), context, RuleSet())
@@ -351,6 +365,55 @@ def test_score_hand_shape_adds_ryuuiisou():
     context = base_context(round_wind="W", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
     assert "緑一色" in result.yakuman
+
+
+def test_score_hand_shape_adds_chinroutou():
+    hand = HandInput(
+        closed_tiles=["1m", "1m", "1m", "9m", "9m", "9m", "1p", "1p", "1p", "9s", "9s", "9s", "9p", "9p"],
+        melds=[],
+        win_tile="9p",
+    )
+    context = base_context(round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    # An all-terminal hand is necessarily also all-triplets, so this is a
+    # genuine compound yakuman (same convention as test_score_hand_shape_adds_daisangen).
+    assert "清老頭" in result.yakuman
+
+
+def test_score_hand_shape_adds_shousuushii():
+    hand = HandInput(
+        closed_tiles=["E", "E", "E", "S", "S", "S", "W", "W", "W", "N", "N", "1m", "2m", "3m"],
+        melds=[],
+        win_tile="3m",
+    )
+    context = base_context(round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.yakuman == ["小四喜"]
+
+
+def test_score_hand_shape_adds_impure_chuuren_poutou():
+    """Winning on a tile other than the one creating the doubled position -> impure (not double yakuman)."""
+    hand = HandInput(
+        closed_tiles=["1m", "1m", "1m", "2m", "3m", "4m", "4m", "5m", "6m", "7m", "8m", "9m", "9m", "9m"],
+        melds=[],
+        win_tile="9m",
+    )
+    context = base_context(round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet(double_yakuman_ari=True))
+    assert result.yakuman == ["九蓮宝燈"]
+    assert result.point_label == "役満"
+
+
+def test_score_hand_shape_suuankou_non_tanki_wait():
+    """Tsumo completing the last triplet (not the pair) -> plain suuankou, not tanki."""
+    hand = HandInput(
+        closed_tiles=["5p", "5p", "2m", "2m", "2m", "3m", "3m", "3m", "4m", "4m", "4m", "1m", "1m", "1m"],
+        melds=[],
+        win_tile="1m",
+    )
+    context = base_context(win_type="tsumo", round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.yakuman == ["四暗刻"]
 
 
 def test_score_hand_shape_adds_chuuren_poutou():
@@ -556,6 +619,18 @@ def test_score_hand_shape_ryanpeikou():
     assert all(y.name != "一盃口" for y in result.yaku)
 
 
+def test_score_hand_shape_adds_rinshan_with_kan():
+    """Rinshan flag with an actual kan present -> rinshan kaihou is granted."""
+    hand = HandInput(
+        closed_tiles=["2p", "2p", "1m", "2m", "3m", "2m", "3m", "4m", "5m", "6m", "7m"],
+        melds=[{"type": "kan", "tiles": ["9s", "9s", "9s", "9s"], "open": False}],
+        win_tile="6m",
+    )
+    context = base_context(win_type="tsumo", riichi=False, aka_dora_count=0, dora_indicators=["F"], rinshan=True)
+    result = score_hand_shape(hand, context, RuleSet())
+    assert any(y.name == "嶺上開花" and y.han == 1 for y in result.yaku)
+
+
 def test_score_hand_shape_rinshan_requires_kan():
     """Rinshan flag without any kan -> rinshan yaku should not be added."""
     hand = HandInput(
@@ -590,3 +665,170 @@ def test_score_hand_shape_does_not_add_pinfu_for_value_pair():
     context = base_context(round_wind="E", seat_wind="S", riichi=True, aka_dora_count=0, dora_indicators=[])
     result = score_hand_shape(hand, context, RuleSet())
     assert all(y.name != "平和" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_shousangen():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4p", "5p", "6p", "C", "C"],
+        melds=[
+            {"type": "pon", "tiles": ["P", "P", "P"], "open": True},
+            {"type": "pon", "tiles": ["F", "F", "F"], "open": True},
+        ],
+        win_tile="C",
+    )
+    context = base_context(round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 4
+    assert any(y.name == "小三元" and y.han == 2 for y in result.yaku)
+    assert any(y.name == "役牌 白" for y in result.yaku)
+    assert any(y.name == "役牌 發" for y in result.yaku)
+
+
+def test_score_hand_shape_adds_sankantsu():
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "2p", "2p"],
+        melds=[
+            {"type": "kan", "tiles": ["E", "E", "E", "E"], "open": True},
+            {"type": "kan", "tiles": ["S", "S", "S", "S"], "open": True},
+            {"type": "kan", "tiles": ["W", "W", "W", "W"], "open": True},
+        ],
+        win_tile="2p",
+    )
+    context = base_context(round_wind="N", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.han == 2
+    assert any(y.name == "三槓子" and y.han == 2 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_suukantsu():
+    """Four kans on number tiles only, to isolate suukantsu from daisuushii."""
+    hand = HandInput(
+        closed_tiles=["5p", "5p"],
+        melds=[
+            {"type": "kan", "tiles": ["1m", "1m", "1m", "1m"], "open": True},
+            {"type": "kan", "tiles": ["9m", "9m", "9m", "9m"], "open": True},
+            {"type": "kan", "tiles": ["1p", "1p", "1p", "1p"], "open": True},
+            {"type": "kan", "tiles": ["9s", "9s", "9s", "9s"], "open": True},
+        ],
+        win_tile="5p",
+    )
+    context = base_context(round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert result.yakuman == ["四槓子"]
+    assert result.point_label == "役満"
+
+
+def test_score_hand_shape_adds_daisuushii_with_suukantsu():
+    """All four winds as kans -> compound yakuman (daisuushii + suukantsu)."""
+    hand = HandInput(
+        closed_tiles=["5p", "5p"],
+        melds=[
+            {"type": "kan", "tiles": ["E", "E", "E", "E"], "open": True},
+            {"type": "kan", "tiles": ["S", "S", "S", "S"], "open": True},
+            {"type": "kan", "tiles": ["W", "W", "W", "W"], "open": True},
+            {"type": "kan", "tiles": ["N", "N", "N", "N"], "open": True},
+        ],
+        win_tile="5p",
+    )
+    context = base_context(round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    result = score_hand_shape(hand, context, RuleSet())
+    assert "大四喜" in result.yakuman
+    assert "四槓子" in result.yakuman
+    assert result.point_label == "3倍役満"
+
+
+def test_score_hand_shape_adds_tenhou():
+    context = base_context(
+        win_type="tsumo", is_dealer=True, round_wind="W", seat_wind="N",
+        riichi=False, aka_dora_count=0, dora_indicators=[], tenhou=True,
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.yakuman == ["天和"]
+    assert result.han == 13
+    assert result.point_label == "役満"
+
+
+def test_score_hand_shape_adds_chiihou():
+    context = base_context(
+        win_type="tsumo", is_dealer=False, round_wind="W", seat_wind="N",
+        riichi=False, aka_dora_count=0, dora_indicators=[], chiihou=True,
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.yakuman == ["地和"]
+    assert result.han == 13
+
+
+def test_score_hand_shape_adds_haitei():
+    context = base_context(
+        win_type="tsumo", round_wind="W", seat_wind="N",
+        riichi=False, aka_dora_count=0, dora_indicators=[], haitei=True,
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert any(y.name == "海底摸月" and y.han == 1 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_houtei():
+    context = base_context(
+        win_type="ron", round_wind="W", seat_wind="N",
+        riichi=False, aka_dora_count=0, dora_indicators=[], houtei=True,
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert any(y.name == "河底撈魚" and y.han == 1 for y in result.yaku)
+
+
+def test_score_hand_shape_adds_chankan():
+    context = base_context(
+        win_type="ron", round_wind="W", seat_wind="N",
+        riichi=False, aka_dora_count=0, dora_indicators=[], chankan=True,
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert any(y.name == "槍槓" and y.han == 1 for y in result.yaku)
+
+
+def test_score_hand_shape_denies_tanyao_when_kuitan_nashi():
+    """Open hand + kuitan_ari=False -> tanyao must not apply, leaving no yaku."""
+    hand = HandInput(
+        closed_tiles=["2m", "3m", "4m", "3p", "4p", "5p", "4s", "5s", "6s", "6p", "6p"],
+        melds=[{"type": "chi", "tiles": ["6m", "7m", "8m"], "open": True}],
+        win_tile="6p",
+    )
+    context = base_context(round_wind="W", seat_wind="N", riichi=False, aka_dora_count=0, dora_indicators=[])
+    with pytest.raises(ValueError):
+        score_hand_shape(hand, context, RuleSet(kuitan_ari=False))
+
+
+def test_score_hand_shape_denies_pinfu_for_penchan_1_2_wait():
+    """1m2m3m completed on 3m via penchan (1-2 wait) must not grant pinfu."""
+    hand = HandInput(
+        closed_tiles=["1m", "2m", "3m", "4m", "5m", "6m", "2p", "3p", "4p", "6s", "7s", "8s", "5p", "5p"],
+        melds=[],
+        win_tile="3m",
+    )
+    context = base_context(round_wind="E", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    with pytest.raises(ValueError):
+        score_hand_shape(hand, context, RuleSet())
+
+
+def test_score_hand_shape_denies_pinfu_for_penchan_8_9_wait():
+    """7m8m9m completed on 7m via penchan (8-9 wait) must not grant pinfu."""
+    hand = HandInput(
+        closed_tiles=["7m", "8m", "9m", "4m", "5m", "6m", "2p", "3p", "4p", "6s", "7s", "8s", "5p", "5p"],
+        melds=[],
+        win_tile="7m",
+    )
+    context = base_context(round_wind="E", seat_wind="S", riichi=False, aka_dora_count=0, dora_indicators=[])
+    with pytest.raises(ValueError):
+        score_hand_shape(hand, context, RuleSet())
+
+
+def test_score_hand_shape_tsumo_fu_includes_tsumo_and_rounds_up():
+    """Non-pinfu tsumo adds the 2fu 'ツモ' item, and odd totals round up (切り上げ)."""
+    context = base_context(
+        win_type="tsumo", round_wind="E", seat_wind="S",
+        riichi=False, aka_dora_count=0, dora_indicators=[],
+    )
+    result = score_hand_shape(base_hand(), context, RuleSet())
+    assert result.fu == 40
+    breakdown = {item.name: item.fu for item in result.fu_breakdown}
+    assert breakdown["ツモ"] == 2
+    assert breakdown["切り上げ"] == 8

@@ -21,6 +21,7 @@ services:
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcloud/application_default_credentials.json
       - GOOGLE_CLOUD_PROJECT=${GCP_PROJECT:-tsumoai}
+      - GCP_REGION=${GCP_REGION:-asia-northeast1}
     volumes:
       - ./app:/app/app
       - ~/.config/gcloud:/tmp/gcloud:ro
