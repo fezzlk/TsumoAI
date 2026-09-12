@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, confloat, model_validator
+from pydantic import BaseModel, ConfigDict, Field, confloat, model_validator
 
 from app.schemas import MeldType, TileCandidate
 
@@ -135,6 +135,22 @@ class InterpretationRequest(BaseModel):
     observations: list[TileObservation]
     confirmed_winning_tile_id: str | None = None
     confirmed_melds: list[ConfirmedMeld] = Field(default_factory=list)
+
+
+class InterpretationV1Request(ObservationV1):
+    """Versioned public API request for interpreting image observations."""
+
+    confirmed_winning_tile_id: str | None = None
+    confirmed_melds: list[ConfirmedMeld] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+    def to_interpretation_request(self) -> InterpretationRequest:
+        return InterpretationRequest(
+            observations=self.observations,
+            confirmed_winning_tile_id=self.confirmed_winning_tile_id,
+            confirmed_melds=self.confirmed_melds,
+        )
 
 
 class RecognitionInterpretationRequest(BaseModel):

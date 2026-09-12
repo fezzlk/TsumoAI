@@ -22,6 +22,7 @@ import '../services/tile_segmenter.dart';
 import '../services/tile_assets.dart';
 import '../models/tile_quad.dart';
 import '../services/scan_observation_builder.dart';
+import '../services/request_epoch.dart';
 import 'tile_box_editor_screen.dart';
 
 class ScanScreen extends StatefulWidget {
@@ -95,13 +96,19 @@ class _ScanScreenState extends State<ScanScreen> {
   final List<ConfirmedMeld> _confirmedMelds = [];
   HandOperation _operation = HandOperation.score;
   Map<String, dynamic>? _analysisResult;
+  final RequestEpoch _requestEpoch = RequestEpoch();
 
   ContextInput _context = ContextInput();
 
   void _invalidateInterpretation() {
+    _invalidateAnalysis();
     _interpretation = null;
     _confirmedWinningTileId = null;
     _confirmedMelds.clear();
+  }
+
+  void _invalidateAnalysis() {
+    _requestEpoch.invalidate();
     _analysisResult = null;
     _scoreResult = null;
     _isNotWinning = false;
@@ -535,14 +542,17 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
       _invalidateInterpretation();
     });
+    final requestEpoch = _requestEpoch.current;
     try {
       final result = await _api.interpret(
         InterpretationRequest(observation: _buildObservation()),
       );
-      if (!mounted) return;
+      if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
       setState(() => _interpretation = result);
     } catch (error) {
-      if (mounted) setState(() => _errorMessage = '画像解釈エラー: $error');
+      if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+        setState(() => _errorMessage = '画像解釈エラー: $error');
+      }
     } finally {
       if (mounted) setState(() => _isInterpreting = false);
     }
@@ -579,6 +589,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _isNotWinning = false;
       _errorMessage = null;
     });
+    final requestEpoch = _requestEpoch.current;
     try {
       final state = await _api.confirmHand(
         request: InterpretationRequest(
@@ -586,6 +597,7 @@ class _ScanScreenState extends State<ScanScreen> {
           confirmation: confirmation,
         ),
       );
+      if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
       final rules = RuleSet();
       switch (_operation) {
         case HandOperation.score:
@@ -610,7 +622,7 @@ class _ScanScreenState extends State<ScanScreen> {
               rules: rules,
             ),
           );
-          if (!mounted) return;
+          if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
           setState(() {
             _scoreResult = result;
             _isNotWinning = result == null;
@@ -622,7 +634,9 @@ class _ScanScreenState extends State<ScanScreen> {
             context: _context,
             rules: rules,
           );
-          if (mounted) setState(() => _analysisResult = result);
+          if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+            setState(() => _analysisResult = result);
+          }
           break;
         case HandOperation.discardAnalysis:
           final result = await _api.analyzeDiscards(
@@ -630,11 +644,15 @@ class _ScanScreenState extends State<ScanScreen> {
             context: _context,
             rules: rules,
           );
-          if (mounted) setState(() => _analysisResult = result);
+          if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+            setState(() => _analysisResult = result);
+          }
           break;
       }
     } catch (error) {
-      if (mounted) setState(() => _errorMessage = '解析エラー: $error');
+      if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+        setState(() => _errorMessage = '解析エラー: $error');
+      }
     } finally {
       if (mounted) setState(() => _isScoring = false);
     }
@@ -830,7 +848,12 @@ class _ScanScreenState extends State<ScanScreen> {
         },
       ),
     );
-    if (meld != null && mounted) setState(() => _confirmedMelds.add(meld));
+    if (meld != null && mounted) {
+      setState(() {
+        _confirmedMelds.add(meld);
+        _invalidateAnalysis();
+      });
+    }
   }
 
   Widget _buildInterpretationConfirmation() {
@@ -870,10 +893,11 @@ class _ScanScreenState extends State<ScanScreen> {
                       selected:
                           _confirmedWinningTileId ==
                           'tile-${index.toString().padLeft(3, '0')}',
-                      onSelected: (_) => setState(
-                        () => _confirmedWinningTileId =
-                            'tile-${index.toString().padLeft(3, '0')}',
-                      ),
+                      onSelected: (_) => setState(() {
+                        _confirmedWinningTileId =
+                            'tile-${index.toString().padLeft(3, '0')}';
+                        _invalidateAnalysis();
+                      }),
                     ),
               ],
             ),
@@ -894,8 +918,10 @@ class _ScanScreenState extends State<ScanScreen> {
               ),
               trailing: IconButton(
                 icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                onPressed: () =>
-                    setState(() => _confirmedMelds.removeAt(index)),
+                onPressed: () => setState(() {
+                  _confirmedMelds.removeAt(index);
+                  _invalidateAnalysis();
+                }),
               ),
             ),
           TextButton.icon(

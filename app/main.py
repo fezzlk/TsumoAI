@@ -28,6 +28,7 @@ from app.interpretation.models import (
     ConfirmedHandStateV1,
     InterpretationRequest,
     InterpretationResponse,
+    InterpretationV1Request,
     RecognitionInterpretationRequest,
 )
 from app.repository import InMemoryRepository
@@ -306,9 +307,9 @@ def analyze_discards_endpoint(req: DiscardAnalysisRequest) -> DiscardAnalysisRes
 
 
 @app.post("/api/v1/interpretations", response_model=InterpretationResponse)
-def create_interpretation(req: InterpretationRequest) -> InterpretationResponse:
+def create_interpretation(req: InterpretationV1Request) -> InterpretationResponse:
     try:
-        return interpret_observations(req)
+        return interpret_observations(req.to_interpretation_request())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

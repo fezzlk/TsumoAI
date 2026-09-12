@@ -24,6 +24,15 @@ def observation(index: int, tile: str, *, left: float | None = None, group: str 
     return item
 
 
+def versioned_request(observations, **confirmation):
+    return {
+        "schema_version": "1",
+        "image": {"width": 200, "height": 100, "coordinate_space": "oriented_image_pixels"},
+        "observations": observations,
+        **confirmation,
+    }
+
+
 def test_winning_tile_stays_unknown_without_geometry():
     result = interpret_observations(
         InterpretationRequest.model_validate({"observations": [observation(0, "1m"), observation(1, "2m")]})
@@ -95,10 +104,12 @@ def test_valid_group_without_open_evidence_requires_confirmation():
 def test_api_rejects_invalid_confirmed_meld():
     response = TestClient(app).post(
         "/api/v1/interpretations",
-        json={
-            "observations": [observation(0, "1m"), observation(1, "2m"), observation(2, "4m")],
-            "confirmed_melds": [{"observation_ids": ["tile-0", "tile-1", "tile-2"], "type": "chi", "open": True}],
-        },
+        json=versioned_request(
+            [observation(0, "1m"), observation(1, "2m"), observation(2, "4m")],
+            confirmed_melds=[
+                {"observation_ids": ["tile-0", "tile-1", "tile-2"], "type": "chi", "open": True}
+            ],
+        ),
     )
     assert response.status_code == 422
 
