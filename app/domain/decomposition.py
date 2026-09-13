@@ -75,4 +75,3 @@ def is_winning_hand(counts: tuple[int, ...], completed_melds: int = 0) -> bool:
     return bool(standard_decompositions(counts, completed_melds)) or is_seven_pairs(
         counts, completed_melds
     ) or is_thirteen_orphans(counts, completed_melds)
-

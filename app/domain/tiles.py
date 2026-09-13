@@ -51,4 +51,3 @@ def validate_counts(counts: tuple[int, ...]) -> None:
         raise ValueError("tile counts must have exactly 34 entries")
     if any(count < 0 or count > 4 for count in counts):
         raise ValueError("each normalized tile count must be between 0 and 4")
-

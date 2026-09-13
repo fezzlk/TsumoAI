@@ -174,5 +174,3 @@ def _yakuman_hits(hand: HandInput, context: ContextInput, rules: RuleSet) -> tup
         multiplier += 1
 
     return hits, multiplier
-
-

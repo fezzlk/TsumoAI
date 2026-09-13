@@ -181,4 +181,3 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
             f"Rules snapshot: aka_ari={rules.aka_ari}, kuitan_ari={rules.kuitan_ari}, renpu_fu={rules.renpu_fu}.",
         ],
     )
-

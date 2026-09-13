@@ -64,6 +64,8 @@ def validate_score_request(req: ScoreRequest) -> None:
 
     if req.context.riichi and req.context.double_riichi:
         raise HTTPException(status_code=422, detail="riichi and double_riichi cannot both be true")
+    if (req.context.riichi or req.context.double_riichi) and any(meld.open for meld in req.hand.melds):
+        raise HTTPException(status_code=422, detail="riichi/double_riichi require a closed hand (no open melds)")
     if not (req.context.riichi or req.context.double_riichi) and req.context.ippatsu:
         raise HTTPException(status_code=422, detail="ippatsu cannot be true when riichi/double_riichi is false")
     if req.context.win_type == "ron" and req.context.haitei:

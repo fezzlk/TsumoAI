@@ -3,11 +3,9 @@ from __future__ import annotations
 from collections import Counter
 
 from app.domain.decomposition import standard_decompositions
-from app.domain.tiles import index_to_tile, normalize_tile, tile_to_index, tiles_to_counts
+from app.domain.tiles import normalize_tile, tile_to_index, tiles_to_counts
 from app.schemas import ContextInput, HandInput, RuleSet, YakuItem
 
-TERMINAL_HONOR_TILES = {"1m", "9m", "1p", "9p", "1s", "9s", "E", "S", "W", "N", "P", "F", "C"}
-GREEN_TILES = {"2s", "3s", "4s", "6s", "8s", "F"}
 
 def _normalize_tile(tile: str) -> str:
     return normalize_tile(tile)
@@ -42,59 +40,12 @@ def _append_yakuhai_yaku(yaku: list[YakuItem], hand: HandInput, context: Context
     return han
 
 
-def _has_ittsuu(hand: HandInput) -> bool:
-    counts = Counter(_all_tiles(hand))
-    for suit in ("m", "p", "s"):
-        if all(counts.get(f"{n}{suit}", 0) >= 1 for n in range(1, 10)):
-            return True
-    return False
-
-
 def _tile_to_index(tile: str) -> int:
     return tile_to_index(tile)
 
 
-def _index_to_tile(index: int) -> str:
-    return index_to_tile(index)
-
-
 def _closed_tile_counts(hand: HandInput) -> list[int]:
     return list(tiles_to_counts(hand.closed_tiles))
-
-
-def _collect_closed_meld_patterns(counts: list[int], needed_melds: int) -> list[list[tuple[str, str]]]:
-    patterns: list[list[tuple[str, str]]] = []
-
-    def dfs(work: list[int], remain: int, current: list[tuple[str, str]]) -> None:
-        if remain == 0:
-            if all(c == 0 for c in work):
-                patterns.append(current.copy())
-            return
-
-        first = next((i for i, c in enumerate(work) if c > 0), -1)
-        if first == -1:
-            return
-
-        if work[first] >= 3:
-            work[first] -= 3
-            current.append(("pon", _index_to_tile(first)))
-            dfs(work, remain - 1, current)
-            current.pop()
-            work[first] += 3
-
-        if first < 27 and first % 9 <= 6 and work[first + 1] > 0 and work[first + 2] > 0:
-            work[first] -= 1
-            work[first + 1] -= 1
-            work[first + 2] -= 1
-            current.append(("chi", _index_to_tile(first)))
-            dfs(work, remain - 1, current)
-            current.pop()
-            work[first] += 1
-            work[first + 1] += 1
-            work[first + 2] += 1
-
-    dfs(counts[:], needed_melds, [])
-    return patterns
 
 
 def _open_meld_patterns(hand: HandInput) -> list[tuple[str, str]]:
@@ -108,10 +59,6 @@ def _open_meld_patterns(hand: HandInput) -> list[tuple[str, str]]:
     return open_melds
 
 
-def _all_meld_patterns(hand: HandInput) -> list[list[tuple[str, str]]]:
-    return [melds for melds, _ in _all_meld_patterns_with_pair(hand)]
-
-
 def _all_meld_patterns_with_pair(hand: HandInput) -> list[tuple[list[tuple[str, str]], str]]:
     open_melds = _open_meld_patterns(hand)
     decompositions = standard_decompositions(tiles_to_counts(hand.closed_tiles), len(open_melds))
@@ -119,27 +66,6 @@ def _all_meld_patterns_with_pair(hand: HandInput) -> list[tuple[list[tuple[str, 
         (open_melds + [(meld.kind, meld.tile) for meld in decomposition.melds], decomposition.pair)
         for decomposition in decompositions
     ]
-
-
-def _has_toitoi(hand: HandInput) -> bool:
-    for pattern in _all_meld_patterns(hand):
-        if all(kind == "pon" for kind, _ in pattern):
-            return True
-    return False
-
-
-def _has_sanshoku_doukou(hand: HandInput) -> bool:
-    for pattern in _all_meld_patterns(hand):
-        ranks_by_suit = {"m": set(), "p": set(), "s": set()}
-        for kind, tile in pattern:
-            if kind != "pon":
-                continue
-            t = _normalize_tile(tile)
-            if len(t) == 2 and t[0].isdigit() and t[1] in {"m", "p", "s"}:
-                ranks_by_suit[t[1]].add(int(t[0]))
-        if ranks_by_suit["m"] & ranks_by_suit["p"] & ranks_by_suit["s"]:
-            return True
-    return False
 
 
 def _has_chiitoitsu(hand: HandInput) -> bool:
@@ -162,28 +88,6 @@ def _has_honroutou(hand: HandInput) -> bool:
     return all(_is_terminal_or_honor(tile) for tile in _all_tiles(hand))
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def _is_simple_tile(tile: str) -> bool:
     t = _normalize_tile(tile)
     return len(t) == 2 and t[1] in {"m", "p", "s"} and t[0] in {"2", "3", "4", "5", "6", "7", "8"}
@@ -200,44 +104,6 @@ def _meld_has_terminal_or_honor(kind: str, tile: str) -> bool:
     if kind == "chi":
         return len(t) == 2 and t[1] in {"m", "p", "s"} and t[0] in {"1", "7"}
     return _is_terminal_or_honor(t)
-
-
-def _has_chanta(hand: HandInput) -> bool:
-    for melds, pair in _all_meld_patterns_with_pair(hand):
-        if not _is_terminal_or_honor(pair):
-            continue
-        if not all(_meld_has_terminal_or_honor(kind, tile) for kind, tile in melds):
-            continue
-        tiles = _all_tiles(hand)
-        if any(len(_normalize_tile(t)) == 1 for t in tiles):
-            return True
-    return False
-
-
-def _has_junchan(hand: HandInput) -> bool:
-    for melds, pair in _all_meld_patterns_with_pair(hand):
-        if not _is_terminal_or_honor(pair):
-            continue
-        if len(_normalize_tile(pair)) != 2:
-            continue
-        if not all(_meld_has_terminal_or_honor(kind, tile) for kind, tile in melds):
-            continue
-        if any(len(_normalize_tile(t)) == 1 for t in _all_tiles(hand)):
-            continue
-        return True
-    return False
-
-
-def _has_sanshoku_doujun(hand: HandInput) -> bool:
-    for melds, _ in _all_meld_patterns_with_pair(hand):
-        starts = {"m": set(), "p": set(), "s": set()}
-        for kind, tile in melds:
-            t = _normalize_tile(tile)
-            if kind == "chi" and len(t) == 2 and t[1] in {"m", "p", "s"}:
-                starts[t[1]].add(int(t[0]))
-        if starts["m"] & starts["p"] & starts["s"]:
-            return True
-    return False
 
 
 def _has_honitsu(hand: HandInput) -> bool:
@@ -263,42 +129,6 @@ def _has_sankantsu(hand: HandInput) -> bool:
     return sum(1 for m in hand.melds if m.type in {"kan", "ankan", "kakan"}) == 3
 
 
-def _has_sanankou(hand: HandInput, context: ContextInput) -> bool:
-    open_pon_like_count = sum(
-        1 for meld in hand.melds if meld.open and meld.type in {"pon", "kan", "ankan", "kakan"}
-    )
-    win = _normalize_tile(hand.win_tile)
-    for melds, pair in _all_meld_patterns_with_pair(hand):
-        concealed_pon_count = sum(1 for kind, _ in melds if kind == "pon") - open_pon_like_count
-        if context.win_type == "ron" and _normalize_tile(pair) != win:
-            ron_completes_pon = any(
-                kind == "pon" and _normalize_tile(tile) == win
-                for kind, tile in melds
-                if (kind, tile) not in [(k, t) for k, t in _open_meld_patterns(hand)]
-            )
-            if ron_completes_pon:
-                concealed_pon_count -= 1
-        if concealed_pon_count >= 3:
-            return True
-    return False
-
-
-def _count_peikou(hand: HandInput) -> int:
-    if hand.melds:
-        return 0
-    best = 0
-    for melds, _ in _all_meld_patterns_with_pair(hand):
-        seq_counts: dict[tuple[str, int], int] = {}
-        for kind, tile in melds:
-            t = _normalize_tile(tile)
-            if kind == "chi" and len(t) == 2 and t[1] in {"m", "p", "s"}:
-                key = (t[1], int(t[0]))
-                seq_counts[key] = seq_counts.get(key, 0) + 1
-        pairs = sum(v // 2 for v in seq_counts.values())
-        best = max(best, pairs)
-    return best
-
-
 def _is_value_pair(tile: str, context: ContextInput) -> bool:
     t = _normalize_tile(tile)
     return t in {context.round_wind.value, context.seat_wind.value, "P", "F", "C"}
@@ -322,26 +152,6 @@ def _is_ryanmen_wait(start_tile: str, win_tile: str) -> bool:
     if win == start + 2 and start == 1:
         return False  # penchan 3 wait (1-2)
     return True
-
-
-def _has_pinfu(hand: HandInput, context: ContextInput) -> bool:
-    if hand.melds:
-        return False
-    if len(_normalize_tile(hand.win_tile)) != 2:
-        return False
-
-    for melds, pair in _all_meld_patterns_with_pair(hand):
-        if any(kind != "chi" for kind, _ in melds):
-            continue
-        if _is_value_pair(pair, context):
-            continue
-        if any(_is_ryanmen_wait(tile, hand.win_tile) for kind, tile in melds if kind == "chi"):
-            return True
-    return False
-
-
-
-
 
 
 def _check_pattern_yaku(

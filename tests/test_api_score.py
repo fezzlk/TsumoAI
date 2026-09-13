@@ -259,6 +259,136 @@ def test_score_endpoint_rejects_rinshan_on_ron():
     assert "rinshan cannot be true on ron" in response.text
 
 
+def test_score_endpoint_rejects_invalid_ura_dora_indicator():
+    payload = valid_payload()
+    payload["context"]["ura_dora_indicators"] = ["10m"]
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "Invalid tile code" in response.text
+
+
+def test_score_endpoint_rejects_chi_with_wrong_tile_count():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["4m", "5m", "6m", "7p", "8p", "9p", "2s", "2s"],
+        "melds": [{"type": "chi", "tiles": ["1m", "2m", "3m", "4m"], "open": True}],
+        "win_tile": "2s",
+    }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "chi must contain exactly 3 tiles" in response.text
+
+
+def test_score_endpoint_rejects_kan_with_wrong_tile_count():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "2p"],
+        "melds": [{"type": "kan", "tiles": ["E", "E", "E"], "open": True}],
+        "win_tile": "2p",
+    }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "kan must contain exactly 4 tiles" in response.text
+
+
+def test_score_endpoint_rejects_pon_with_non_identical_tiles():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["4m", "5m", "6m", "7p", "8p", "9p", "2s", "2s"],
+        "melds": [{"type": "pon", "tiles": ["1m", "2m", "3m"], "open": True}],
+        "win_tile": "2s",
+    }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "pon tiles must all be the same tile" in response.text
+
+
+def test_score_endpoint_rejects_riichi_and_double_riichi_together():
+    payload = valid_payload()
+    payload["context"]["riichi"] = True
+    payload["context"]["double_riichi"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "riichi and double_riichi cannot both be true" in response.text
+
+
+def test_score_endpoint_rejects_ippatsu_without_riichi():
+    payload = valid_payload()
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
+    payload["context"]["ippatsu"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "ippatsu cannot be true when riichi/double_riichi is false" in response.text
+
+
+def test_score_endpoint_rejects_haitei_on_ron():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "ron"
+    payload["context"]["haitei"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "haitei cannot be true on ron" in response.text
+
+
+def test_score_endpoint_rejects_houtei_on_tsumo():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "tsumo"
+    payload["context"]["riichi"] = False
+    payload["context"]["houtei"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "houtei cannot be true on tsumo" in response.text
+
+
+def test_score_endpoint_rejects_chiihou_and_tenhou_together():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "tsumo"
+    payload["context"]["riichi"] = False
+    payload["context"]["chiihou"] = True
+    payload["context"]["tenhou"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "chiihou and tenhou cannot both be true" in response.text
+
+
+def test_score_endpoint_rejects_tenhou_on_ron():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "ron"
+    payload["context"]["tenhou"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "chiihou/tenhou require tsumo" in response.text
+
+
+def test_score_endpoint_rejects_tenhou_for_non_dealer():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "tsumo"
+    payload["context"]["riichi"] = False
+    payload["context"]["seat_wind"] = "S"  # non-dealer
+    payload["context"]["tenhou"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "tenhou requires dealer" in response.text
+
+
+def test_score_endpoint_rejects_chiihou_for_dealer():
+    payload = valid_payload()
+    payload["context"]["win_type"] = "tsumo"
+    payload["context"]["riichi"] = False
+    payload["context"]["seat_wind"] = "E"  # dealer
+    payload["context"]["chiihou"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "chiihou requires non-dealer" in response.text
+
+
 def test_score_endpoint_includes_payment_breakdown():
     payload = valid_payload()
     payload["context"]["honba"] = 2
@@ -286,8 +416,12 @@ def test_score_endpoint_accepts_kan_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert any(y["name"] == "場風 東" for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_accepts_two_kans_hand():
@@ -300,8 +434,13 @@ def test_score_endpoint_accepts_two_kans_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert any(y["name"] == "場風 東" for y in body["result"]["yaku"])
+    assert any(y["name"] == "自風 南" for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_accepts_three_kans_hand():
@@ -315,8 +454,12 @@ def test_score_endpoint_accepts_three_kans_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert any(y["name"] == "三槓子" and y["han"] == 2 for y in body["result"]["yaku"])
 
 
 def test_score_endpoint_accepts_four_kans_hand():
@@ -331,8 +474,27 @@ def test_score_endpoint_accepts_four_kans_hand():
         ],
         "win_tile": "2p",
     }
+    payload["context"]["riichi"] = False
+    payload["context"]["double_riichi"] = False
     response = client.post("/api/v1/score", json=payload)
     assert response.status_code == 200
+    body = response.json()
+    assert "四槓子" in body["result"]["yakuman"]
+    assert "大四喜" in body["result"]["yakuman"]
+    assert body["result"]["point_label"] == "3倍役満"
+
+
+def test_score_endpoint_rejects_riichi_with_open_melds():
+    payload = valid_payload()
+    payload["hand"] = {
+        "closed_tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "2p", "2p"],
+        "melds": [{"type": "pon", "tiles": ["W", "W", "W"], "open": True}],
+        "win_tile": "2p",
+    }
+    payload["context"]["riichi"] = True
+    response = client.post("/api/v1/score", json=payload)
+    assert response.status_code == 422
+    assert "riichi/double_riichi require a closed hand" in response.text
 
 
 def test_score_endpoint_rejects_five_of_same_tile_including_red_five():

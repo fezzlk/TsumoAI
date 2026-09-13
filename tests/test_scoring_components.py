@@ -2,6 +2,7 @@ from app.scoring.fu import calculate_fu
 from app.scoring.dora import evaluate_dora
 from app.scoring.payments import base_points, calculate_payments, point_label, yakuman_label
 from app.scoring.yaku import evaluate_context_yaku
+from app.scoring.yakuman import _is_suuankou_tanki
 from app.schemas import ContextInput, HandInput, RuleSet
 
 
@@ -18,6 +19,7 @@ def context(**updates) -> ContextInput:
 def test_limit_labels_and_base_points():
     assert point_label(4, 40) == "満貫"
     assert point_label(6, 30) == "跳満"
+    assert point_label(11, 30) == "三倍満"
     assert point_label(13, 30) == "数え役満"
     assert base_points(4, 40) == 2000
     assert yakuman_label(2) == "ダブル役満"
@@ -57,3 +59,27 @@ def test_dora_component_handles_normal_red_and_ura_dora():
     )
     assert breakdown.model_dump() == {"dora": 2, "aka_dora": 1, "ura_dora": 1}
     assert [item.name for item in items] == ["ドラ", "赤ドラ", "裏ドラ"]
+
+
+def test_dora_component_cycles_dragon_tile_indicators():
+    """Dragon dora order is 白(P)→發(F)→中(C)→白, independent of the wind cycle."""
+    hand = HandInput(closed_tiles=["C", "C", "2p"], melds=[], win_tile="2p")
+    breakdown, _items = evaluate_dora(hand, context(dora_indicators=["F"]))
+    assert breakdown.dora == 2
+
+
+def test_dora_component_cycles_wind_tile_indicators():
+    """Wind dora order is 東(E)→南(S)→西(W)→北(N)→東, independent of the dragon cycle."""
+    hand = HandInput(closed_tiles=["S", "S", "2p"], melds=[], win_tile="2p")
+    breakdown, _items = evaluate_dora(hand, context(dora_indicators=["E"]))
+    assert breakdown.dora == 2
+
+
+def test_is_suuankou_tanki_is_false_for_an_open_hand():
+    """An open meld already rules out suuankou entirely, tanki or not."""
+    hand = HandInput(
+        closed_tiles=["2m", "2m", "2m", "3m", "3m", "3m", "4m", "4m", "4m", "5p", "5p"],
+        melds=[{"type": "chi", "tiles": ["1m", "2m", "3m"], "open": True}],
+        win_tile="5p",
+    )
+    assert _is_suuankou_tanki(hand, context(win_type="ron")) is False
