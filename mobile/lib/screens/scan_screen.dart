@@ -88,10 +88,11 @@ class _ScanScreenState extends State<ScanScreen> {
   // camera preview stream and captures automatically once a full 14-tile
   // detection has stayed stable for a few frames in a row, instead of
   // requiring the user to judge readiness and tap the shutter themselves.
-  // Kept toggleable — this is the first on-device verification of the
-  // approach (interval/streak below are unverified guesses), so falling
-  // back to the existing manual button must stay one tap away.
-  bool _autoCaptureEnabled = true;
+  // Opt-in — this is the first on-device verification of the approach
+  // (interval/streak below are unverified guesses, and detection only
+  // checks the tile count, not that the same tiles/positions held
+  // steady), so it defaults off until real-device behavior is confirmed.
+  bool _autoCaptureEnabled = false;
   bool _isLiveStreamActive = false;
   bool _isAnalyzingFrame = false;
   CameraImage? _latestFrame;
