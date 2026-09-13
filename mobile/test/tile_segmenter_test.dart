@@ -204,6 +204,57 @@ void main() {
         reason: 'straightened+tight crop should be mostly tile, not background');
   });
 
+  test('refineTileCrop straightens a tilted tile even with a TIGHT (nominal-size) roughBox', () {
+    // Regression test for FEZ-122: unlike the test above (whose roughBox is
+    // deliberately the tilted tile's own full rotated AABB, already
+    // containing its whole footprint), segmentTiles' curved-row slots are
+    // the NOMINAL (unrotated) tile size — the same size the tile would be
+    // if perfectly straight — because each slot tracks the blob's local
+    // centerline, not a size inflated for its own tilt. On a real curved
+    // hand, this tight roughBox no longer matched the earlier (already-
+    // fixed) full-AABB assumption, and a pre-straightening guard here
+    // (meant to reject a neighbor-contaminated blob) was rejecting a
+    // legitimate single tile's own rotation-driven bbox growth before ever
+    // attempting to straighten it — so real curved-row tiles came out
+    // un-rotated. See tile_segmenter.dart's `refineTileCropWithRect` for
+    // the fix (a looser pre-straightening bound; the actual neighbor-bleed
+    // guards, downstream of the rotation search, are untouched).
+    const canvasW = 1200, canvasH = 1200;
+    const tileW = 340.0, tileH = 500.0;
+    const cx = 600.0, cy = 600.0;
+    for (final angleDeg in [15.0, 20.0, 25.0, 30.0]) {
+      final canvas = _darkBackground(canvasW, canvasH);
+      _fillRotatedTile(canvas, cx, cy, tileW, tileH, angleDeg);
+      final roughBox = Rect.fromLTWH(cx - tileW / 2, cy - tileH / 2, tileW, tileH);
+      final naive = img.copyCrop(canvas,
+          x: roughBox.left.round(), y: roughBox.top.round(),
+          width: roughBox.width.round(), height: roughBox.height.round());
+      final refined = refineTileCrop(canvas, roughBox);
+
+      expect(_whiteFraction(refined), greaterThan(_whiteFraction(naive) + 0.05),
+          reason: 'a $angleDeg° tilted tile should still be noticeably straightened from a tight roughBox');
+    }
+  });
+
+  test('refineTileCrop does not grow into a neighboring touching tile', () {
+    // Companion guard for the fix above: loosening the pre-straightening
+    // bound must not let a genuine two-tile merge (touching tiles, no
+    // rotation involved) through as if it were one legitimately-tilted
+    // tile. The downstream checks (on the tight-cropped / straightened
+    // blob, not the raw padded one) are what should catch this, unchanged.
+    const canvasW = 1200, canvasH = 800;
+    const tileW = 340.0, tileH = 500.0;
+    final canvas = _darkBackground(canvasW, canvasH);
+    _fillTile(canvas, 100, 150, tileW.round(), tileH.round());
+    _fillTile(canvas, (100 + tileW).round(), 150, tileW.round(), tileH.round()); // touching, no gap
+    final roughBox = Rect.fromLTWH(100, 150, tileW, tileH);
+
+    final refined = refineTileCrop(canvas, roughBox);
+
+    expect(refined.width, lessThan(tileW + tileW * 0.5),
+        reason: 'refined crop must not balloon out to include most of the touching neighbor tile');
+  });
+
   test('segmentTiles keeps each slot aligned to one tile on a curved (bent) row', () {
     // Regression test for the curved-row bug: the last few tiles of a
     // physical hand bend away from a straight line (confirmed on real
