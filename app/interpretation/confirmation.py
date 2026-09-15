@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from app.domain.melds import validate_meld
 from app.domain.tiles import is_tile_code, normalize_tile
 from app.interpretation.models import (
     ConfirmationV1,
@@ -106,20 +107,4 @@ def _validate_meld(kind: str, tiles: list[str], is_open: bool) -> None:
     if len(tiles) != expected:
         raise ValueError(f"{kind} must contain exactly {expected} observations")
 
-    normalized = [normalize_tile(tile) for tile in tiles]
-    if kind == "chi":
-        if not is_open:
-            raise ValueError("chi must be open")
-        if any(len(tile) != 2 or tile[1] not in "mps" for tile in normalized):
-            raise ValueError("chi must contain suited tiles")
-        suits = {tile[1] for tile in normalized}
-        numbers = sorted(int(tile[0]) for tile in normalized)
-        if len(suits) != 1 or numbers != list(range(numbers[0], numbers[0] + 3)):
-            raise ValueError(f"confirmed tiles do not form chi: {tiles}")
-        return
-
-    if len(set(normalized)) != 1:
-        raise ValueError(f"confirmed tiles do not form {kind}: {tiles}")
-    required_open = kind != "ankan"
-    if is_open != required_open:
-        raise ValueError(f"{kind} open must be {str(required_open).lower()}")
+    validate_meld(kind, tiles, is_open)

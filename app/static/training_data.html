@@ -6,6 +6,7 @@
 <title>学習データ一覧 - TsumoAI</title>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="/static/firebase_config.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
@@ -235,12 +236,7 @@ async function loadRetrainingHistory() {
 // ── Auth (Firebase Google sign-in; the admin APIs below require the
 // resulting ID token, verified server-side via app/auth.py) ──
 
-firebase.initializeApp({
-  apiKey: "AIzaSyCDpbHBTH3kz2yrZL2tchFgznkr_TZfbC8",
-  authDomain: "tsumoai.firebaseapp.com",
-  projectId: "tsumoai",
-  appId: "1:1046222816103:web:a2bd096c9a191d5015a5c2",
-});
+firebase.initializeApp(window.TsumoFirebaseConfig);
 const auth = firebase.auth();
 
 function signIn() {

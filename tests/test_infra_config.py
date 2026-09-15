@@ -19,6 +19,13 @@ def test_cloudbuild_targets_the_tsumoai_runtime_identity():
     assert "_REGION: asia-northeast1" in cloudbuild
 
 
+def test_deploy_preserves_existing_runtime_environment():
+    cloudbuild = (ROOT / "cloudbuild.yaml").read_text(encoding="utf-8")
+    assert "--update-env-vars=GCP_PROJECT=$PROJECT_ID,GCP_REGION=${_REGION},GCS_BUCKET_NAME=${_GCS_BUCKET_NAME}" in cloudbuild
+    assert "--set-env-vars=" not in cloudbuild
+    assert "--clear-env-vars" not in cloudbuild
+
+
 def test_python_minor_version_is_consistent_across_local_ci_and_containers():
     expected = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
     assert expected == "3.11"

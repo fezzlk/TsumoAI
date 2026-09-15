@@ -11,7 +11,8 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from PIL import Image
+from PIL import Image, ImageOps
+from starlette.concurrency import run_in_threadpool
 
 from app.config import resolve_gcp_project, settings
 from app.auth import get_current_user, require_admin
@@ -153,8 +154,14 @@ def score_dataset() -> FileResponse:
 
 def _to_recognition_image_bytes(upload: UploadFile, image_bytes: bytes) -> tuple[int, int, bytes]:
     try:
-        img = Image.open(BytesIO(image_bytes))
-        width, height = img.size
+        with Image.open(BytesIO(image_bytes)) as source:
+            # Freeze the displayed orientation into pixels before stripping EXIF.
+            # Both returned dimensions and recognition bboxes use these pixels.
+            img = ImageOps.exif_transpose(source)
+            width, height = img.size
+            rgb = img.convert("RGB")
+            out = BytesIO()
+            rgb.save(out, format="JPEG", quality=95)
     except Exception as exc:  # pragma: no cover
         filename = (upload.filename or "").lower()
         content_type = (upload.content_type or "").lower()
@@ -165,9 +172,6 @@ def _to_recognition_image_bytes(upload: UploadFile, image_bytes: bytes) -> tuple
             ) from exc
         raise HTTPException(status_code=400, detail="invalid image file") from exc
 
-    rgb = img.convert("RGB")
-    out = BytesIO()
-    rgb.save(out, format="JPEG", quality=95)
     return width, height, out.getvalue()
 
 
@@ -211,8 +215,8 @@ def _build_recognize_response(width: int, height: int, game_id: str | None, payl
 async def recognize(image: UploadFile = File(...), game_id: str | None = Form(None)) -> RecognizeResponse:
     image_bytes = await _read_limited_image(image)
 
-    width, height, recognition_image_bytes = _to_recognition_image_bytes(image, image_bytes)
-    payload = extract_hand_from_image(recognition_image_bytes)
+    width, height, recognition_image_bytes = await run_in_threadpool(_to_recognition_image_bytes, image, image_bytes)
+    payload = await run_in_threadpool(extract_hand_from_image, recognition_image_bytes)
     return _build_recognize_response(width=width, height=height, game_id=game_id, payload=payload)
 
 
@@ -225,7 +229,7 @@ async def recognize_only(image: UploadFile = File(...), game_id: str | None = Fo
 @app.post("/api/v1/recognize-only/jobs", response_model=RecognizeJobCreateResponse)
 async def create_recognize_job(image: UploadFile = File(...), game_id: str | None = Form(None)) -> RecognizeJobCreateResponse:
     image_bytes = await _read_limited_image(image)
-    width, height, recognition_image_bytes = _to_recognition_image_bytes(image, image_bytes)
+    width, height, recognition_image_bytes = await run_in_threadpool(_to_recognition_image_bytes, image, image_bytes)
     job = recognition_jobs.create_job(
         image_bytes=recognition_image_bytes,
         width=width,
@@ -350,7 +354,9 @@ async def recognize_and_score(
         raise HTTPException(status_code=422, detail=f"Invalid JSON payload: {exc}") from exc
 
     try:
-        hand_input, conversion_warnings = hand_shape_from_estimate_with_warnings(recognized.hand_estimate.model_dump())
+        hand_input, conversion_warnings = await run_in_threadpool(
+            hand_shape_from_estimate_with_warnings, recognized.hand_estimate.model_dump()
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -360,7 +366,7 @@ async def recognize_and_score(
         context=context,
         rules=rules,
     )
-    scored = score(score_req)
+    scored = await run_in_threadpool(score, score_req)
     scored.warnings = recognized.warnings + conversion_warnings
     return RecognizeAndScoreResponse(recognition=recognized, score=scored)
 

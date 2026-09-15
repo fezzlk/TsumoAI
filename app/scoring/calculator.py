@@ -35,12 +35,14 @@ def _yakuman_label(multiplier: int) -> str:
     return yakuman_label(multiplier)
 
 
-def _point_label_from_han_fu(han: int, fu: int) -> str:
-    return point_label(han, fu)
+def _point_label_from_han_fu(han: int, fu: int, rules: RuleSet) -> str:
+    return point_label(han, fu, kazoe_yakuman_ari=rules.kazoe_yakuman_ari)
 
 
-def _calc_points(context: ContextInput, han: int, fu: int, base_override: int | None = None) -> tuple[Points, Payments]:
-    return calculate_payments(context, han, fu, base_override)
+def _calc_points(
+    context: ContextInput, han: int, fu: int, rules: RuleSet, base_override: int | None = None
+) -> tuple[Points, Payments]:
+    return calculate_payments(context, han, fu, base_override, kazoe_yakuman_ari=rules.kazoe_yakuman_ari)
 
 
 def _calc_fu_for_pattern(
@@ -62,7 +64,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     yakuman_hits, yakuman_multiplier = _yakuman_hits(hand, context, rules)
     if yakuman_hits:
         han = 13 * yakuman_multiplier
-        points, payments = _calc_points(context, han=han, fu=0, base_override=8000 * yakuman_multiplier)
+        points, payments = _calc_points(context, han=han, fu=0, rules=rules, base_override=8000 * yakuman_multiplier)
         return ScoreResult(
             han=han,
             fu=0,
@@ -116,7 +118,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
         tile_han += honitsu_han
 
     # Dora (same for all interpretations)
-    dora, dora_items = evaluate_dora(hand, context)
+    dora, dora_items = evaluate_dora(hand, context, rules)
     dora_yaku = list(dora_items)
     dora_han_total = dora.dora + dora.aka_dora + dora.ura_dora
 
@@ -138,8 +140,8 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
             melds, pair, hand, context, rules, has_pinfu, n_open,
         )
         all_yaku = ctx_yaku + tile_yaku + pat_yaku + dora_yaku
-        label = _point_label_from_han_fu(total_han, fu)
-        points, payments = _calc_points(context, total_han, fu)
+        label = _point_label_from_han_fu(total_han, fu, rules)
+        points, payments = _calc_points(context, total_han, fu, rules)
         if payments.total_received > best_received:
             best_received = payments.total_received
             best_result = (total_han, fu, fu_breakdown, all_yaku, label, points, payments)
@@ -154,8 +156,8 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
             fu = 25
             fu_breakdown = [FuBreakdownItem(name="七対子", fu=25)]
             all_yaku = ctx_yaku + tile_yaku + pat_yaku + dora_yaku
-            label = _point_label_from_han_fu(total_han, fu)
-            points, payments = _calc_points(context, total_han, fu)
+            label = _point_label_from_han_fu(total_han, fu, rules)
+            points, payments = _calc_points(context, total_han, fu, rules)
             if payments.total_received > best_received:
                 best_received = payments.total_received
                 best_result = (total_han, fu, fu_breakdown, all_yaku, label, points, payments)

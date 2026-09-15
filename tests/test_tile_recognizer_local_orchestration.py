@@ -7,6 +7,7 @@ segmentation pipeline (on a real eval photo) still runs unmodified."""
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -85,13 +86,13 @@ def test_classify_tile_returns_unknown_for_out_of_range_index():
     assert label == "unknown"
 
 
-def test_recognize_tiles_local_returns_none_when_model_unavailable():
-    """On this dev machine neither tflite_runtime nor tensorflow is
-    installed, so the real _load_model() call genuinely fails -- this
-    exercises the real fallback path, not a mock."""
-    trl._interpreter = None
+def test_recognize_tiles_local_returns_none_when_model_unavailable(monkeypatch):
+    """Exercise runtime unavailability even when Linux has TFLite installed."""
+    load_model = Mock(side_effect=ModuleNotFoundError("TFLite runtime is unavailable"))
+    monkeypatch.setattr(trl, "_load_model", load_model)
     result = trl.recognize_tiles_local(b"irrelevant, load_model fails first")
     assert result is None
+    load_model.assert_called_once_with()
 
 
 def test_recognize_tiles_local_returns_none_on_unreadable_image(monkeypatch):

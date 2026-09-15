@@ -70,6 +70,11 @@ def calculate_fu(
                 details.append(FuBreakdownItem(name="面子", fu=meld_fu))
                 total += meld_fu
 
+        # An open all-sequence ron has a 30-fu minimum even without fu
+        # from its pair or wait (the closed pinfu cases returned above).
+        if total == 20 and context.win_type == "ron" and any(meld.open for meld in hand.melds):
+            details.append(FuBreakdownItem(name="喰い平和形ロン", fu=10))
+            total = 30
         rounded = ((total + 9) // 10) * 10
         if rounded > total:
             details.append(FuBreakdownItem(name="切り上げ", fu=rounded - total))

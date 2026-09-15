@@ -373,6 +373,12 @@
   <body>
     <main class="wrap">
       <h1>麻雀 点数算出モジュール</h1>
+      <section class="card" aria-label="ログイン" style="margin-bottom:16px;">
+        <div id="webAuthStatus" role="status">ログイン状態を確認中...</div>
+        <p class="hint">点数計算と画像認識はログインせずに利用できます。訂正・コメントの投稿にはログインが必要です。</p>
+        <button id="webLoginBtn" type="button">Googleでログイン</button>
+        <button id="webLogoutBtn" type="button" hidden>ログアウト</button>
+      </section>
       <p class="hint">手入力は <code>/api/v1/score</code>、画像入力は <code>/api/v1/recognize-and-score</code> を呼び出します。</p>
       <div class="grid">
         <section class="card">
@@ -600,6 +606,10 @@
       </div>
     </div>
 
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="/static/firebase_config.js"></script>
+    <script src="/static/web_auth.js"></script>
     <script>
       const KOKUSHI_TILES = ["1m","9m","1p","9p","1s","9s","E","S","W","N","P","F","C"];
       const TILE_LIST = [
@@ -1513,17 +1523,21 @@
           score_response: lastScoreResponse,
           comment
         };
-        const res = await fetch("/api/v1/score/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          status.textContent = `送信失敗: ${data.detail || "unknown error"}`;
-          return;
+        try {
+          const res = await TsumoAuth.fetch("/api/v1/score/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            status.textContent = `送信失敗: ${data.detail || "unknown error"}`;
+            return;
+          }
+          status.textContent = `送信完了: gs://${data.storage.bucket}/${data.storage.object_name}`;
+        } catch (e) {
+          status.textContent = `送信失敗: ${e.message}`;
         }
-        status.textContent = `送信完了: gs://${data.storage.bucket}/${data.storage.object_name}`;
       }
 
       async function sendRecognitionFeedback() {
@@ -1546,17 +1560,21 @@
           corrected_tiles: corrected,
           comment: value("recognitionFeedbackComment").trim(),
         };
-        const res = await fetch("/api/v1/recognition/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          status.textContent = `送信失敗: ${data.detail || "unknown error"}`;
-          return;
+        try {
+          const res = await TsumoAuth.fetch("/api/v1/recognition/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            status.textContent = `送信失敗: ${data.detail || "unknown error"}`;
+            return;
+          }
+          status.textContent = `送信完了: ${data.storage.path} (${data.storage.feedback_id})`;
+        } catch (e) {
+          status.textContent = `送信失敗: ${e.message}`;
         }
-        status.textContent = `送信完了: ${data.storage.path} (${data.storage.feedback_id})`;
       }
 
       function scrollToResultCard() {

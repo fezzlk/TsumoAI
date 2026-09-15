@@ -55,7 +55,7 @@ def test_fu_component_calculates_pinfu_tsumo():
 def test_dora_component_handles_normal_red_and_ura_dora():
     hand = HandInput(closed_tiles=["5mr", "5m", "2p"], melds=[], win_tile="2p")
     breakdown, items = evaluate_dora(
-        hand, context(dora_indicators=["4m"], ura_dora_indicators=["1p"], aka_dora_count=1)
+        hand, context(riichi=True, dora_indicators=["4m"], ura_dora_indicators=["1p"], aka_dora_count=1)
     )
     assert breakdown.model_dump() == {"dora": 2, "aka_dora": 1, "ura_dora": 1}
     assert [item.name for item in items] == ["ドラ", "赤ドラ", "裏ドラ"]

@@ -12,6 +12,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY ml/output/tile_classifier.tflite ml/output/labels.txt ./ml/output/
 
+# Fail the build if the shipped Linux runtime cannot load and invoke the model.
+# This is local inference only; it never enters the paid recognition fallback.
+RUN python -c "import numpy as np; from app.tile_recognizer_local import _classify_tile; label, confidence = _classify_tile(np.zeros((224, 224, 3), dtype=np.uint8)); assert label != 'unknown' and 0 <= confidence <= 1, (label, confidence)"
+
 # Used only by the scheduled accuracy-eval Cloud Run Job (scripts/evaluate_recognition_set.py),
 # not by the API service itself. Kept in the same image so both the service and the job
 # deploy from a single build (see cloudbuild.yaml).

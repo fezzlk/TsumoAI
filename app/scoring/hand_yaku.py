@@ -219,7 +219,11 @@ def _check_pattern_yaku(
             break
 
     # 純全帯么九 / 混全帯么九
-    if _is_terminal_or_honor(pair) and all(_meld_has_terminal_or_honor(k, t) for k, t in melds):
+    if (
+        any(kind == "chi" for kind, _ in melds)
+        and _is_terminal_or_honor(pair)
+        and all(_meld_has_terminal_or_honor(k, t) for k, t in melds)
+    ):
         pair_is_number = len(_normalize_tile(pair)) == 2
         if not has_honor and pair_is_number:
             j_han = 2 if is_open else 3
