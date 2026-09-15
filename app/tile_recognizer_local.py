@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 import cv2
@@ -38,50 +39,59 @@ _LABEL_TO_TILE: dict[str, str] = {
 
 _interpreter = None
 _labels: list[str] = []
+# TFLite releases the GIL during invoke; all operations on the shared
+# interpreter, including initialization, must hold this lock.
+_interpreter_lock = RLock()
 
 
 def _load_model() -> None:
     """Lazily load the TFLite interpreter and labels."""
     global _interpreter, _labels
 
-    if _interpreter is not None:
-        return
+    with _interpreter_lock:
+        if _interpreter is not None:
+            return
 
-    if not _TFLITE_PATH.exists() or not _LABELS_PATH.exists():
-        raise FileNotFoundError(f"TFLite model not found at {_TFLITE_PATH}")
+        if not _TFLITE_PATH.exists() or not _LABELS_PATH.exists():
+            raise FileNotFoundError(f"TFLite model not found at {_TFLITE_PATH}")
 
-    try:
-        import tflite_runtime.interpreter as tflite
-        _interpreter = tflite.Interpreter(model_path=str(_TFLITE_PATH))
-    except ImportError:
-        import tensorflow as tf
-        _interpreter = tf.lite.Interpreter(model_path=str(_TFLITE_PATH))
+        try:
+            import tflite_runtime.interpreter as tflite
+            interpreter = tflite.Interpreter(model_path=str(_TFLITE_PATH))
+        except ImportError:
+            import tensorflow as tf
+            interpreter = tf.lite.Interpreter(model_path=str(_TFLITE_PATH))
 
-    _interpreter.allocate_tensors()
-    _labels = _LABELS_PATH.read_text().strip().splitlines()
+        interpreter.allocate_tensors()
+        labels = _LABELS_PATH.read_text().strip().splitlines()
+        # Publish only after both steps succeed, so another worker cannot see
+        # partial state and a failed initialization can be retried next time.
+        _labels = labels
+        _interpreter = interpreter
 
 
 def _classify_tile(tile_img: np.ndarray) -> tuple[str, float]:
     """Classify a single tile image. Returns (label, confidence)."""
-    _load_model()
-    assert _interpreter is not None
+    with _interpreter_lock:
+        _load_model()
+        assert _interpreter is not None
 
-    input_details = _interpreter.get_input_details()
-    output_details = _interpreter.get_output_details()
+        input_details = _interpreter.get_input_details()
+        output_details = _interpreter.get_output_details()
 
-    # Resize to model input size (224x224)
-    h, w = input_details[0]["shape"][1], input_details[0]["shape"][2]
-    resized = cv2.resize(tile_img, (w, h))
-    input_data = np.expand_dims(resized, axis=0).astype(np.float32) / 127.5 - 1.0
+        # Resize to model input size (224x224)
+        h, w = input_details[0]["shape"][1], input_details[0]["shape"][2]
+        resized = cv2.resize(tile_img, (w, h))
+        input_data = np.expand_dims(resized, axis=0).astype(np.float32) / 127.5 - 1.0
 
-    _interpreter.set_tensor(input_details[0]["index"], input_data)
-    _interpreter.invoke()
-    output_data = _interpreter.get_tensor(output_details[0]["index"])[0]
+        _interpreter.set_tensor(input_details[0]["index"], input_data)
+        _interpreter.invoke()
+        output_data = _interpreter.get_tensor(output_details[0]["index"])[0]
 
-    idx = int(np.argmax(output_data))
-    confidence = float(output_data[idx])
-    label = _labels[idx] if idx < len(_labels) else "unknown"
-    return label, confidence
+        idx = int(np.argmax(output_data))
+        confidence = float(output_data[idx])
+        label = _labels[idx] if idx < len(_labels) else "unknown"
+        return label, confidence
 
 
 def _find_local_maxima(seg: np.ndarray, prominence: float = 0.02) -> list[int]:

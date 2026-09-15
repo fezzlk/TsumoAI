@@ -11,8 +11,9 @@ def yakuman_label(multiplier: int) -> str:
     return f"{multiplier}倍役満"
 
 
-def point_label(han: int, fu: int) -> str:
-    if han >= 13:
+def point_label(han: int, fu: int, *, kazoe_yakuman_ari: bool = True) -> str:
+    """Disabling counted yakuman caps ordinary hands at sanbaiman, even at 13+ han."""
+    if han >= 13 and kazoe_yakuman_ari:
         return "数え役満"
     if han >= 11:
         return "三倍満"
@@ -25,16 +26,17 @@ def point_label(han: int, fu: int) -> str:
     return "通常"
 
 
-def base_points(han: int, fu: int) -> int:
-    label = point_label(han, fu)
+def base_points(han: int, fu: int, *, kazoe_yakuman_ari: bool = True) -> int:
+    label = point_label(han, fu, kazoe_yakuman_ari=kazoe_yakuman_ari)
     limits = {"満貫": 2000, "跳満": 3000, "倍満": 4000, "三倍満": 6000, "数え役満": 8000}
     return limits.get(label, fu * (2 ** (han + 2)))
 
 
 def calculate_payments(
-    context: ContextInput, han: int, fu: int, base_override: int | None = None
+    context: ContextInput, han: int, fu: int, base_override: int | None = None,
+    *, kazoe_yakuman_ari: bool = True,
 ) -> tuple[Points, Payments]:
-    base = base_override if base_override is not None else base_points(han, fu)
+    base = base_override if base_override is not None else base_points(han, fu, kazoe_yakuman_ari=kazoe_yakuman_ari)
     is_dealer = context.seat_wind.value == "E"
     honba_bonus = context.honba * 300
     kyotaku_bonus = context.kyotaku * 1000

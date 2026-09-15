@@ -3,14 +3,18 @@ from __future__ import annotations
 from collections import Counter
 
 from app.domain.tiles import normalize_tile
-from app.schemas import ContextInput, DoraBreakdown, HandInput, YakuItem
+from app.schemas import ContextInput, DoraBreakdown, HandInput, RuleSet, YakuItem
 
 
-def evaluate_dora(hand: HandInput, context: ContextInput) -> tuple[DoraBreakdown, tuple[YakuItem, ...]]:
+def evaluate_dora(
+    hand: HandInput, context: ContextInput, rules: RuleSet | None = None
+) -> tuple[DoraBreakdown, tuple[YakuItem, ...]]:
+    rules = rules or RuleSet()
+    ura_eligible = (context.riichi or context.double_riichi) and not any(meld.open for meld in hand.melds)
     breakdown = DoraBreakdown(
         dora=_count_dora(hand, context.dora_indicators),
-        aka_dora=context.aka_dora_count,
-        ura_dora=_count_dora(hand, context.ura_dora_indicators),
+        aka_dora=context.aka_dora_count if rules.aka_ari else 0,
+        ura_dora=_count_dora(hand, context.ura_dora_indicators) if ura_eligible else 0,
     )
     items = []
     if breakdown.dora:

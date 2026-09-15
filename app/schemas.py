@@ -142,7 +142,10 @@ class RuleSet(BaseModel):
     aka_ari: bool = True
     kuitan_ari: bool = True
     double_yakuman_ari: bool = True
-    kazoe_yakuman_ari: bool = True
+    kazoe_yakuman_ari: bool = Field(
+        default=True,
+        description="When false, ordinary hands with 13+ han are capped at sanbaiman (base 6000); natural yakuman are unaffected.",
+    )
     renpu_fu: Literal[2, 4] = 4
 
 

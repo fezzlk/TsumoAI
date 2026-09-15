@@ -292,5 +292,5 @@ def test_validate_meld_rejects_pon_with_non_identical_tiles():
     confirmation_data["confirmed_melds"] = [
         {"observation_ids": ["tile-000", "tile-001", "tile-002"], "type": "pon", "open": True}
     ]
-    with pytest.raises(ValueError, match="do not form pon"):
+    with pytest.raises(ValueError, match="pon tiles must all be the same tile"):
         assemble_confirmed_hand_state(observation, ConfirmationV1.model_validate(confirmation_data))

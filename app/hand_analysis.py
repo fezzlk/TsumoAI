@@ -4,6 +4,7 @@ from app.domain.analysis import analyze_discards, enumerate_improving_tiles
 from app.domain.shanten import calculate_shanten
 from app.domain.tiles import index_to_tile, tile_to_index, tiles_to_counts
 from app.hand_scoring import score_hand_shape
+from app.hand_validation import validate_hand_context, validate_hand_tiles_and_melds, validate_winning_hand
 from app.schemas import (
     AnalysisRequestBase,
     DiscardAnalysisRequest,
@@ -28,6 +29,7 @@ def _score_wait(request: AnalysisRequestBase, base_tiles: list[str], tile: str):
         return None, None
     hand = HandInput(closed_tiles=[*base_tiles, tile], melds=request.melds, win_tile=tile)
     try:
+        validate_winning_hand(hand, request.context)
         return score_hand_shape(hand, request.context, request.rules), None
     except ValueError as exc:
         return None, str(exc)
@@ -44,6 +46,9 @@ def _wait_results(
 
 
 def _validated_counts(request: AnalysisRequestBase, expected: int, operation: str):
+    validate_hand_tiles_and_melds(request.closed_tiles, request.melds)
+    if request.context is not None:
+        validate_hand_context(request.melds, request.context)
     closed_counts = tiles_to_counts(request.closed_tiles)
     visible_counts = _all_visible_counts(request)
     if len(request.closed_tiles) != expected:

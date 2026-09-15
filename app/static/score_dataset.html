@@ -337,6 +337,12 @@
   <body>
     <main class="wrap">
       <h1>点数データセット生成</h1>
+      <section class="card" aria-label="ログイン" style="margin-bottom:16px;">
+        <div id="webAuthStatus" role="status">ログイン状態を確認中...</div>
+        <p class="hint">点数計算・ローカルでのJSON生成とコピーはログインせずに利用できます。投稿にはログイン、保存済みデータセットの一覧・ダウンロードには管理者権限が必要です。</p>
+        <button id="webLoginBtn" type="button">Googleでログイン</button>
+        <button id="webLogoutBtn" type="button" hidden>ログアウト</button>
+      </section>
       <p class="hint">牌姿と条件を入力し、点数計算結果と合わせてJSON形式のデータセットを生成します。</p>
       <div style="max-width:400px;margin-bottom:12px;">
         <label for="contributorName">送信者名</label>
@@ -500,7 +506,7 @@
             </div>
 
             <div style="display:flex;gap:8px;margin-top:10px;">
-              <button id="confirmEntryBtn" type="button">確定してアップロード</button>
+              <button id="confirmEntryBtn" type="button">ローカルに確定</button>
             </div>
           </div>
           <div id="editPlaceholder" class="hint">左の入力欄で条件を設定し「点数計算して編集」を押すと、ここに編集フォームが表示されます。</div>
@@ -544,6 +550,10 @@
       </div>
     </div>
 
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="/static/firebase_config.js"></script>
+    <script src="/static/web_auth.js"></script>
     <script>
       const KOKUSHI_TILES = ["1m","9m","1p","9p","1s","9s","E","S","W","N","P","F","C"];
       const TILE_LIST = [
@@ -1420,7 +1430,7 @@
           `${han}翻 ${fu}符 → ${parts.join(" ")}`;
       }
 
-      function confirmEntry() {
+      async function confirmEntry() {
         if (!editState) return;
         const han = parseInt(document.getElementById("editHan").value) || 0;
         const fu = parseInt(document.getElementById("editFu").value) || 0;
@@ -1440,11 +1450,16 @@
         if (editState.editingIndex != null) {
           datasetEntries[editState.editingIndex] = entry;
         } else {
+          editState.editingIndex = datasetEntries.length;
           datasetEntries.push(entry);
         }
         renderDatasetList();
+        if (!TsumoAuth.user) {
+          document.getElementById("uploadStatus").textContent = "この画面に確定しました。JSONをコピーできます。アップロードするにはGoogleでログインして、もう一度確定してください。";
+          return;
+        }
         closeEditForm();
-        uploadToGcs();
+        await uploadToGcs();
       }
 
       /* ── Dataset rendering ── */
@@ -1560,7 +1575,7 @@
         }
         status.textContent = "アップロード中...";
         try {
-          const res = await fetch("/api/v1/dataset/upload", {
+          const res = await TsumoAuth.fetch("/api/v1/dataset/upload", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ entries: datasetEntries, contributor: getContributor() })
@@ -1572,25 +1587,34 @@
           }
           const data = await res.json();
           status.textContent = `アップロード完了: gs://${data.storage.bucket}/${data.storage.object_name} (${data.count}件)`;
-          refreshGcsList();
+          if (TsumoAuth.isAdmin) refreshGcsList();
         } catch (e) {
           status.textContent = `通信エラー: ${e.message}`;
         }
       }
 
+      let gcsListGeneration = 0;
       async function refreshGcsList() {
+        await TsumoAuth.ready;
+        const generation = ++gcsListGeneration;
+        const requestUser = TsumoAuth.user;
+        const sessionGeneration = TsumoAuth.sessionGeneration;
+        const isCurrent = () => generation === gcsListGeneration && TsumoAuth.isCurrentSession(requestUser, sessionGeneration);
         const listEl = document.getElementById("gcsFileList");
         const status = document.getElementById("gcsListStatus");
         status.textContent = "読み込み中...";
         listEl.innerHTML = "";
         try {
-          const res = await fetch("/api/v1/dataset/list");
+          const res = await TsumoAuth.fetch("/api/v1/dataset/list", {}, { admin: true });
+          if (!isCurrent()) return;
           if (!res.ok) {
             const text = await res.text();
+            if (!isCurrent()) return;
             try { status.textContent = `取得失敗: ${JSON.parse(text).detail}`; } catch { status.textContent = `取得失敗 (${res.status}): ${text}`; }
             return;
           }
           const data = await res.json();
+          if (!isCurrent() || !TsumoAuth.isAdmin) return;
           const files = data.files || [];
           if (!files.length) {
             status.textContent = "保存済みデータセットはありません。";
@@ -1640,35 +1664,58 @@
             listEl.appendChild(item);
           });
         } catch (e) {
+          if (!isCurrent()) return;
           status.textContent = `通信エラー: ${e.message}`;
         }
       }
 
-      function downloadGcsFile(name) {
+      async function downloadGcsFile(name) {
+        await TsumoAuth.ready;
+        const requestUser = TsumoAuth.user;
+        const sessionGeneration = TsumoAuth.sessionGeneration;
+        const isCurrent = () => TsumoAuth.isCurrentSession(requestUser, sessionGeneration);
+        const status = document.getElementById("gcsListStatus");
         const url = `/api/v1/dataset/download?name=${encodeURIComponent(name)}`;
-        fetch(url)
-          .then((res) => res.json())
-          .then((data) => {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = name.split("/").pop();
-            a.click();
-            URL.revokeObjectURL(a.href);
-          })
-          .catch((e) => alert(`ダウンロード失敗: ${e.message}`));
+        try {
+          const res = await TsumoAuth.fetch(url, {}, { admin: true });
+          if (!isCurrent()) return;
+          if (!res.ok) {
+            status.textContent = `ダウンロード失敗 (${res.status})`;
+            return;
+          }
+          const data = await res.json();
+          if (!isCurrent() || !TsumoAuth.isAdmin) return;
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = name.split("/").pop();
+          a.click();
+          URL.revokeObjectURL(a.href);
+        } catch (e) {
+          if (!isCurrent()) return;
+          status.textContent = `ダウンロード失敗: ${e.message}`;
+        }
       }
 
       async function loadGcsFile(name) {
+        await TsumoAuth.ready;
+        const requestUser = TsumoAuth.user;
+        const sessionGeneration = TsumoAuth.sessionGeneration;
+        const isCurrent = () => TsumoAuth.isCurrentSession(requestUser, sessionGeneration);
         const status = document.getElementById("gcsListStatus");
         try {
-          const res = await fetch(`/api/v1/dataset/download?name=${encodeURIComponent(name)}`);
+          const res = await TsumoAuth.fetch(
+            `/api/v1/dataset/download?name=${encodeURIComponent(name)}`, {}, { admin: true }
+          );
+          if (!isCurrent()) return;
           if (!res.ok) {
             const text = await res.text();
+            if (!isCurrent()) return;
             try { status.textContent = `読込失敗: ${JSON.parse(text).detail}`; } catch { status.textContent = `読込失敗 (${res.status}): ${text}`; }
             return;
           }
           const data = await res.json();
+          if (!isCurrent() || !TsumoAuth.isAdmin) return;
           const entries = data.payload?.entries || data.entries || [];
           if (!entries.length) {
             status.textContent = "データセットが空です。";
@@ -1679,6 +1726,7 @@
           renderDatasetList();
           status.textContent = `${entries.length}件を読み込みました。`;
         } catch (e) {
+          if (!isCurrent()) return;
           status.textContent = `通信エラー: ${e.message}`;
         }
       }
@@ -1736,7 +1784,19 @@
       switchPattern("standard");
       renderDoraInputs();
       syncHandJsonFromState();
-      refreshGcsList();
+      TsumoAuth.subscribe(({ user, isAdmin }) => {
+        document.getElementById("confirmEntryBtn").textContent = user ? "確定してアップロード" : "ローカルに確定";
+        ++gcsListGeneration;
+        document.getElementById("gcsFileList").innerHTML = "";
+        document.getElementById("refreshGcsListBtn").disabled = !isAdmin;
+        if (isAdmin) {
+          refreshGcsList();
+        } else {
+          document.getElementById("gcsListStatus").textContent = user
+            ? "投稿できます。一覧・ダウンロードには管理者権限が必要です。"
+            : "一覧・ダウンロードには管理者アカウントでログインしてください。";
+        }
+      });
     </script>
   </body>
 </html>

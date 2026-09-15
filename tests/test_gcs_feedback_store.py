@@ -43,10 +43,22 @@ def _reset_fake_client_counter():
     yield
 
 
-def test_save_raises_when_bucket_not_configured():
+def test_save_raises_when_bucket_not_configured(monkeypatch):
+    monkeypatch.setattr("app.gcs_feedback_store.settings.gcs_bucket_name", None)
     store = GCSFeedbackStore(bucket_name=None)
     with pytest.raises(ValueError, match="GCS bucket is not configured"):
         store.save({"comment": "hello"})
+
+
+def test_none_bucket_uses_configured_bucket_with_mock_storage(monkeypatch):
+    monkeypatch.setattr("app.gcs_feedback_store.settings.gcs_bucket_name", "configured-bucket")
+    monkeypatch.setattr("app.gcs_feedback_store.storage.Client", _FakeClient)
+    store = GCSFeedbackStore(bucket_name=None)
+
+    result = store.save({"comment": "local-only test"})
+
+    assert result["bucket"] == "configured-bucket"
+    assert result["object_name"] in store._client.uploaded
 
 
 def test_save_uploads_payload_with_expected_object_naming(monkeypatch):

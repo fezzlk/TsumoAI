@@ -11,7 +11,8 @@ def _standard_search(
 ) -> int:
     first = next((index for index, count in enumerate(counts) if count), -1)
     if first < 0:
-        usable_shapes = min(shapes, 4 - completed_melds - melds)
+        # One pair is the head; every additional pair can become a triplet.
+        usable_shapes = min(shapes + max(pairs - 1, 0), 4 - completed_melds - melds)
         return 8 - 2 * (completed_melds + melds) - usable_shapes - min(pairs, 1)
 
     def branch(removals: tuple[int, ...], next_melds: int, next_pairs: int, next_shapes: int) -> int:
