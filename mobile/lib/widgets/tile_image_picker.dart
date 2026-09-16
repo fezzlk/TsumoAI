@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../services/tile_assets.dart';
 
@@ -50,7 +51,23 @@ class TileImagePicker extends StatelessWidget {
           const headerHeight = 4.0 + 12 + 18 + 12; // handle + spacing + label + spacing
           const rowSpacing = 6.0;
           final gridHeight = constraints.maxHeight - headerHeight - rowSpacing * 3;
-          final cellHeight = (gridHeight / 4 - 6).clamp(28.0, 64.0);
+          final maxHeightPerCell = (gridHeight / 4 - 6);
+          // A cell size derived from height alone assumed the resulting row
+          // (label + 10 columns, each with horizontal margin) would always
+          // fit the available width — true in this app's original
+          // landscape-only screens, but not once a screen (single-tile
+          // training-data capture) started allowing portrait too: on a
+          // narrow portrait width, that row overflowed sideways with no
+          // scroll, making the last few tiles of each suit (e.g. 8m/9m)
+          // unreachable. Cap by width too, and take whichever is smaller so
+          // the grid never exceeds the actual available space either way.
+          const labelColumnWidth = 20.0;
+          const perCellHorizontalMargin = 2.0; // 1px each side, from _buildRow
+          final maxWidthPerCell =
+              (constraints.maxWidth - labelColumnWidth - _columns * perCellHorizontalMargin) /
+                  _columns /
+                  0.75; // convert a width budget to the equivalent height at aspect 0.75
+          final cellHeight = math.min(maxHeightPerCell, maxWidthPerCell).clamp(28.0, 64.0);
           final cellWidth = cellHeight * 0.75;
 
           return Column(
@@ -89,6 +106,7 @@ class TileImagePicker extends StatelessWidget {
           child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
         ),
         ...tiles.map((tile) => GestureDetector(
+          key: ValueKey('tile_picker_cell_$tile'),
           onTap: () => onTileSelected(tile),
           child: Container(
             width: cellWidth,

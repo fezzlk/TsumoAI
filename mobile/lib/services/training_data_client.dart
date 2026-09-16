@@ -63,29 +63,45 @@ class TrainingDataClient {
   /// throwing it once all tiles have been attempted and at least one
   /// failed, so the caller/UI can show what actually went wrong instead of
   /// just an opaque "0 uploaded".
+  // Up to 18 tiles (kan hands), each its own HTTP round-trip: run them
+  // concurrently rather than one at a time. Network latency, not the
+  // per-request work, dominates the time either way takes, so this cuts
+  // total wall-clock roughly by however many requests fit in flight at
+  // once, instead of multiplying one request's latency by the tile count.
   Future<TrainingUploadResult> uploadBatch({
     required List<img.Image> images,
     required List<String> tileCodes,
     required List<String> predictedTileCodes,
     String source = 'user',
   }) async {
-    final entryIds = <String>[];
-    Object? firstError;
-    for (int i = 0; i < images.length && i < tileCodes.length; i++) {
-      try {
-        final response = await uploadTile(
-          tileImage: images[i],
-          tileCode: tileCodes[i],
-          predictedTileCode: i < predictedTileCodes.length
-              ? predictedTileCodes[i]
-              : null,
-          source: source,
-        );
-        entryIds.add(response['id'] as String);
-      } catch (e) {
-        firstError ??= e;
-      }
-    }
+    final count = images.length < tileCodes.length
+        ? images.length
+        : tileCodes.length;
+    final results = await Future.wait(
+      List.generate(count, (i) async {
+        try {
+          final response = await uploadTile(
+            tileImage: images[i],
+            tileCode: tileCodes[i],
+            predictedTileCode: i < predictedTileCodes.length
+                ? predictedTileCodes[i]
+                : null,
+            source: source,
+          );
+          return (id: response['id'] as String, error: null as Object?);
+        } catch (e) {
+          return (id: null as String?, error: e);
+        }
+      }),
+    );
+    final entryIds = [
+      for (final r in results)
+        if (r.id != null) r.id!,
+    ];
+    final firstError = results.firstWhere(
+      (r) => r.error != null,
+      orElse: () => (id: null, error: null),
+    ).error;
     if (entryIds.isEmpty && firstError != null) {
       throw firstError;
     }
@@ -97,23 +113,28 @@ class TrainingDataClient {
 
   /// Undo a previous [uploadBatch] by deleting the uploaded entries. The
   /// server-side delete endpoint is admin-only, so this will throw (with the
-  /// server's 403) if the signed-in account isn't an admin. Mirrors
-  /// [uploadBatch]'s keep-going/surface-first-failure behavior.
+  /// server's 403) if the signed-in account isn't an admin. Concurrent for
+  /// the same reason as [uploadBatch].
   Future<int> deleteEntries(List<String> ids) async {
     final token = await AuthService.idToken(interactive: true);
-    int deleted = 0;
-    Object? firstError;
-    for (final id in ids) {
-      try {
-        await _dio.delete(
-          '$_baseUrl/api/v1/training-data/$id',
-          options: Options(headers: {'Authorization': 'Bearer $token'}),
-        );
-        deleted++;
-      } catch (e) {
-        firstError ??= e;
-      }
-    }
+    final results = await Future.wait(
+      ids.map((id) async {
+        try {
+          await _dio.delete(
+            '$_baseUrl/api/v1/training-data/$id',
+            options: Options(headers: {'Authorization': 'Bearer $token'}),
+          );
+          return null;
+        } catch (e) {
+          return e;
+        }
+      }),
+    );
+    final deleted = results.where((e) => e == null).length;
+    final firstError = results.firstWhere(
+      (e) => e != null,
+      orElse: () => null,
+    );
     if (deleted == 0 && firstError != null) {
       throw firstError;
     }

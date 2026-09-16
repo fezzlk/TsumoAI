@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/score_request.dart';
+import '../services/tile_assets.dart';
+import 'tile_image_picker.dart';
 
 /// Compact panel for game context input.
 /// Basic options always visible; advanced options in expandable section.
@@ -95,7 +97,27 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
                 _chip('天和', _ctx.tenhou, (v) => _update(_ctx.copyWith(tenhou: v))),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
+
+            // ドラ表示牌 (always relevant) / 裏ドラ表示牌 (only meaningful
+            // under riichi, so only shown then). Aka-dora is NOT entered
+            // here — it's counted automatically from the actual recognized
+            // hand tiles (see scan_screen.dart's `_confirmAndAnalyze`),
+            // since the app already knows which tiles are red fives.
+            _doraIndicatorRow(
+              'ドラ表示牌',
+              _ctx.doraIndicators,
+              (list) => _update(_ctx.copyWith(doraIndicators: list)),
+            ),
+            if (_ctx.riichi || _ctx.doubleRiichi) ...[
+              const SizedBox(height: 6),
+              _doraIndicatorRow(
+                '裏ドラ表示牌',
+                _ctx.uraDoraIndicators,
+                (list) => _update(_ctx.copyWith(uraDoraIndicators: list)),
+              ),
+            ],
+            const SizedBox(height: 8),
 
             // Row 4: Honba, Kyotaku
             Row(
@@ -213,6 +235,87 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
         ),
       ),
     );
+  }
+
+  Widget _doraIndicatorRow(
+    String label,
+    List<String> indicators,
+    ValueChanged<List<String>> onChanged,
+  ) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (int i = 0; i < indicators.length; i++)
+                GestureDetector(
+                  onTap: () {
+                    final next = [...indicators]..removeAt(i);
+                    onChanged(next);
+                  },
+                  child: Container(
+                    width: 26,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: _tileImageOrText(indicators[i]),
+                          ),
+                        ),
+                        const Positioned(
+                          right: 0,
+                          top: 0,
+                          child: Icon(Icons.close, size: 10, color: Colors.redAccent),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              GestureDetector(
+                onTap: () async {
+                  final tile = await TileImagePicker.show(context);
+                  if (tile != null) onChanged([...indicators, tile]);
+                },
+                child: Container(
+                  width: 26,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.white24, style: BorderStyle.solid),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.add, size: 16, color: Colors.white54),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _tileImageOrText(String tileCode) {
+    final path = tileAssetPath(tileCode);
+    if (path == null) {
+      return Center(
+        child: Text(tileDisplayName(tileCode), style: const TextStyle(color: Colors.white, fontSize: 10)),
+      );
+    }
+    return Image.asset(path, fit: BoxFit.contain);
   }
 
   Widget _numberInput(String label, int value, ValueChanged<int> onChanged) {

@@ -28,6 +28,7 @@ import '../services/tile_assets.dart';
 import '../models/tile_quad.dart';
 import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
+import '../services/gesture_transform.dart';
 import 'tile_box_editor_screen.dart';
 
 class ScanScreen extends StatefulWidget {
@@ -658,7 +659,22 @@ class _ScanScreenState extends State<ScanScreen> {
         InterpretationRequest(observation: _buildObservation()),
       );
       if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-      setState(() => _interpretation = result);
+      setState(() {
+        _interpretation = result;
+        // Pre-fill the winning-tile marker (the actual selection UI, in
+        // the thumbnail row above) from the image's own reading, when it
+        // found one and the user hasn't already picked one themselves —
+        // this replaces a separate, confusing "suggested winning tile"
+        // text block that duplicated this same information without
+        // driving the real control.
+        final suggestedId = result.winningTile.observationId;
+        if (_operation == HandOperation.score &&
+            _confirmedWinningTileId == null &&
+            suggestedId != null &&
+            result.winningTile.status != FactStatus.unknown) {
+          _confirmedWinningTileId = suggestedId;
+        }
+      });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
         setState(() => _errorMessage = '画像解釈エラー: $error');
@@ -713,6 +729,16 @@ class _ScanScreenState extends State<ScanScreen> {
         case HandOperation.score:
           final winTile = state.hand.winTile;
           if (winTile == null) throw StateError('確定済みのあがり牌がありません');
+          // Red-five tiles ("5mr"/"5pr"/"5sr") are already identified as
+          // such by the recognizer — count them directly from the
+          // confirmed hand instead of asking the user to separately keep
+          // a manual 赤ドラ counter in sync with what they just
+          // photographed (a duplicate, easy-to-forget input for
+          // information the app already has).
+          final akaDoraCount = [
+            ...state.hand.closedTiles,
+            for (final meld in state.hand.melds) ...meld.tiles,
+          ].where((tile) => tile.endsWith('r')).length;
           final result = await _api.calculateScore(
             ScoreRequest(
               hand: HandInput(
@@ -728,7 +754,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     .toList(growable: false),
                 winTile: winTile,
               ),
-              context: _context,
+              context: _context.copyWith(akaDora: akaDoraCount),
               rules: rules,
             ),
           );
@@ -844,6 +870,30 @@ class _ScanScreenState extends State<ScanScreen> {
     HandOperation.discardAnalysis => '打牌分析',
   };
 
+  String _meldTypeLabel(String type) => switch (type) {
+    'chi' => 'チー',
+    'pon' => 'ポン',
+    'kan' => '明槓',
+    'ankan' => '暗槓',
+    'kakan' => '加槓',
+    _ => type,
+  };
+
+  String _factStatusLabel(FactStatus status) => switch (status) {
+    FactStatus.confirmed => '確定',
+    FactStatus.inferred => '推定',
+    FactStatus.unknown => '不明',
+  };
+
+  /// Resolves a `tile-XXX` observation id (as used in `ConfirmedMeld`
+  /// /confirmed winning tile) back to the tile code the user actually
+  /// identified at that slot, for display — never show the raw id itself.
+  String? _tileCodeForObservationId(String observationId) {
+    final index = int.tryParse(observationId.split('-').last);
+    if (index == null || index < 0 || index >= _maxPhysicalTiles) return null;
+    return _tiles[index];
+  }
+
   String _analysisSummary(Map<String, dynamic> result) {
     final shanten = result['shanten'];
     final improving = result['improving_tiles'];
@@ -899,7 +949,6 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget _buildInterpretationConfirmation() {
     final interpretation = _interpretation;
     if (interpretation == null) return const SizedBox.shrink();
-    final suggested = interpretation.winningTile;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -914,24 +963,17 @@ class _ScanScreenState extends State<ScanScreen> {
             '画像解釈の確認',
             style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
           ),
-          Text(
-            suggested.observationId == null
-                ? 'あがり牌候補: 不明（選択してください）'
-                : 'あがり牌候補: ${suggested.tile} / ${suggested.status.wireValue}',
-            style: const TextStyle(color: Colors.white70),
-          ),
           if (_operation == HandOperation.score &&
               _confirmedWinningTileId == null) ...[
-            const SizedBox(height: 8),
             const Text(
               'あがり牌: 上の牌画像下のマークをタップして選択',
               style: TextStyle(color: Colors.white70),
             ),
+            const SizedBox(height: 8),
           ],
-          const SizedBox(height: 8),
           if (interpretation.melds.isNotEmpty)
             Text(
-              '画像からの鳴き候補: ${interpretation.melds.map((meld) => '${meld.type}/${meld.status.wireValue}').join('、')}',
+              '画像からの鳴き検出: ${interpretation.melds.map((meld) => '${_meldTypeLabel(meld.type)}(${_factStatusLabel(meld.status)})').join('、')}',
               style: const TextStyle(color: Colors.white70),
             ),
           for (int index = 0; index < _confirmedMelds.length; index++)
@@ -939,7 +981,8 @@ class _ScanScreenState extends State<ScanScreen> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               title: Text(
-                '${_confirmedMelds[index].type}: ${_confirmedMelds[index].observationIds.join(', ')}',
+                '${_meldTypeLabel(_confirmedMelds[index].type)}: '
+                '${_confirmedMelds[index].observationIds.map((id) => _tileCodeForObservationId(id) ?? '?').join(', ')}',
                 style: const TextStyle(color: Colors.white),
               ),
               trailing: IconButton(
@@ -1954,36 +1997,3 @@ class _SlotOverlayPainter extends CustomPainter {
       slotRect != old.slotRect || slotCount != old.slotCount;
 }
 
-/// Composes the display transform for one pan/zoom/rotate gesture update.
-///
-/// [scaleFactorSinceStart] and [rotationSinceStart] are the cumulative values
-/// Flutter's scale gesture recognizer reports relative to gesture start (as
-/// in [ScaleUpdateDetails.scale]/[.rotation]), not per-frame deltas. The
-/// whole current gesture's transform is rebuilt from [startTransform] on
-/// every call, pivoting scale and rotation around [startFocalLocal] — the
-/// point that was under the fingers when the gesture began — so that point
-/// stays under [currentFocalLocal] regardless of any rotation already
-/// applied before the gesture started. Coordinates are all in the same
-/// "local" space (i.e. relative to the transformed widget's own origin).
-Matrix4 composeGestureTransform({
-  required Matrix4 startTransform,
-  required Offset startFocalLocal,
-  required double startScale,
-  required Offset currentFocalLocal,
-  required double scaleFactorSinceStart,
-  required double rotationSinceStart,
-  double minScale = 0.5,
-  double maxScale = 5.0,
-}) {
-  final targetScale = (startScale * scaleFactorSinceStart).clamp(
-    minScale,
-    maxScale,
-  );
-  final relativeScale = targetScale / startScale;
-  final delta = Matrix4.identity()
-    ..translateByDouble(currentFocalLocal.dx, currentFocalLocal.dy, 0, 1)
-    ..rotateZ(rotationSinceStart)
-    ..scaleByDouble(relativeScale, relativeScale, relativeScale, 1)
-    ..translateByDouble(-startFocalLocal.dx, -startFocalLocal.dy, 0, 1);
-  return delta.multiplied(startTransform);
-}

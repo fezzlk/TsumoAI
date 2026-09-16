@@ -2,10 +2,13 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show DeviceOrientation, SystemChrome;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import '../services/training_data_client.dart';
-import '../widgets/tile_keyboard.dart';
+import '../services/gesture_transform.dart';
+import '../widgets/tile_image_picker.dart';
+import '../services/tile_assets.dart';
 
 /// Screen for collecting single-tile training data.
 /// Flow: Camera → Capture → Align → Select label → Send → Repeat
@@ -19,7 +22,8 @@ class TrainingDataScreen extends StatefulWidget {
 
 enum _TDPhase { camera, align, label }
 
-class _TrainingDataScreenState extends State<TrainingDataScreen> {
+class _TrainingDataScreenState extends State<TrainingDataScreen>
+    with WidgetsBindingObserver {
   CameraController? _controller;
   final TrainingDataClient _client = TrainingDataClient();
 
@@ -27,22 +31,40 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
   Uint8List? _capturedBytes;
   img.Image? _capturedImage;
 
-  // Image transform
-  Offset _imageOffset = Offset.zero;
-  double _imageScale = 1.0;
-  double _imageRotation = 0.0;
-  double _lastScaleValue = 1.0;
-  double _lastRotationValue = 0.0;
+  // Single source of truth for the display transform applied to the
+  // captured photo during alignment (pan/zoom/rotate) — see
+  // `services/gesture_transform.dart` for why this replaced separate
+  // offset/scale/rotation fields (same fix already applied in
+  // `scan_screen.dart`: a naive per-axis composition pivoted zoom on the
+  // image center instead of the pinch point, and made post-rotation drags
+  // feel reversed).
+  Matrix4 _imageTransform = Matrix4.identity();
+  Matrix4? _gestureStartTransform;
+  Offset? _gestureStartFocalPoint;
+  double _gestureStartScale = 1.0;
 
   // Result
   img.Image? _croppedTile;
   String? _selectedTileCode;
-  bool _isSending = false;
   int _sentCount = 0;
+  // Uploads run detached from the capture flow (see `_send`) so the user
+  // can keep photographing the next tile immediately instead of waiting
+  // on each upload's network round-trip; this just tracks how many are
+  // still in flight, for a small status indicator.
+  int _pendingSends = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Unlike the 14-tile scan screen (inherently a wide shot, kept
+    // landscape-only app-wide via `main.dart`), a single tile is
+    // comfortable to photograph either way — allow portrait here too.
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _initCamera();
   }
 
@@ -51,12 +73,53 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
     _controller = CameraController(widget.cameras.first, ResolutionPreset.high, enableAudio: false);
     try {
       await _controller!.initialize();
+      await _syncCaptureOrientation();
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  // The phone is held nearly flat, pointed down at the tile — the
+  // accelerometer can't reliably tell landscape from portrait in that
+  // position, so the camera plugin's own ambient-orientation fallback
+  // (what both the live preview and the captured photo would otherwise
+  // rely on) is unusable here, same reasoning as `scan_screen.dart`'s
+  // capture flow. Since this screen (unlike the always-landscape scan
+  // screen) now allows the user to hold it either way, a single fixed
+  // lock doesn't work either — instead, re-derive the lock from Flutter's
+  // own settled orientation (from `PlatformDispatcher`'s reported view
+  // size, which only flips when the OS actually commits to a rotation,
+  // not the raw jittery accelerometer) every time the device's reported
+  // orientation changes, via `didChangeMetrics` below.
+  DeviceOrientation _bestGuessOrientation() {
+    final size = WidgetsBinding.instance.platformDispatcher.views.first.physicalSize;
+    return size.width < size.height
+        ? DeviceOrientation.portraitUp
+        : DeviceOrientation.landscapeLeft;
+  }
+
+  Future<void> _syncCaptureOrientation() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    try {
+      await controller.lockCaptureOrientation(_bestGuessOrientation());
       if (mounted) setState(() {});
     } catch (_) {}
   }
 
   @override
+  void didChangeMetrics() {
+    _syncCaptureOrientation();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // Restore the app-wide landscape-only lock for whatever screen the
+    // user navigates to next (e.g. back to the 14-tile scan screen).
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _controller?.dispose();
     super.dispose();
   }
@@ -72,62 +135,92 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
       _capturedBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: 90));
       _capturedImage = decoded;
       _phase = _TDPhase.align;
-      _imageOffset = Offset.zero;
-      _imageScale = 1.0;
-      _imageRotation = 0.0;
+      _imageTransform = Matrix4.identity();
     });
   }
 
-  void _cropAndSelectLabel(Size displaySize, Rect slotRect) {
-    var image = _capturedImage!;
+  void _cropAndSelectLabel(
+    Rect slotScreenRect,
+    double baseLeft,
+    double baseTop,
+    double baseW,
+    double baseH,
+  ) {
+    final image = _capturedImage!;
+    final origin = Offset(baseLeft, baseTop);
+    final origW = image.width.toDouble();
+    final origH = image.height.toDouble();
+    final inverse = Matrix4.inverted(_imageTransform);
 
-    if (_imageRotation.abs() > 0.01) {
-      image = img.copyRotate(image, angle: -_imageRotation * 180 / math.pi);
+    // Map a screen point back through the (pan/zoom/rotate) display
+    // transform to a pixel coordinate in the original captured image —
+    // same approach as `scan_screen.dart`'s `_classifyFromGrid`, applied to
+    // a single fixed slot instead of 14.
+    Offset toImagePixel(Offset screenPoint) {
+      final content = MatrixUtils.transformPoint(inverse, screenPoint - origin);
+      return Offset(content.dx * (origW / baseW), content.dy * (origH / baseH));
     }
 
-    final scaleX = image.width / displaySize.width;
-    final scaleY = image.height / displaySize.height;
-    final pad = slotRect.width * 0.1;
+    final tl = toImagePixel(slotScreenRect.topLeft);
+    final tr = toImagePixel(slotScreenRect.topRight);
+    final bl = toImagePixel(slotScreenRect.bottomLeft);
+    final br = toImagePixel(slotScreenRect.bottomRight);
 
-    final cropX = ((slotRect.left - pad) * scaleX).round().clamp(0, image.width - 1);
-    final cropY = ((slotRect.top - pad) * scaleY).round().clamp(0, image.height - 1);
-    final cropW = ((slotRect.width + pad * 2) * scaleX).round().clamp(1, image.width - cropX);
-    final cropH = ((slotRect.height + pad * 2) * scaleY).round().clamp(1, image.height - cropY);
+    final minX = [tl.dx, tr.dx, bl.dx, br.dx].reduce(math.min).round().clamp(0, image.width - 1);
+    final minY = [tl.dy, tr.dy, bl.dy, br.dy].reduce(math.min).round().clamp(0, image.height - 1);
+    final maxX = [tl.dx, tr.dx, bl.dx, br.dx].reduce(math.max).round().clamp(0, image.width - 1);
+    final maxY = [tl.dy, tr.dy, bl.dy, br.dy].reduce(math.max).round().clamp(0, image.height - 1);
+    final cropW = (maxX - minX).clamp(1, image.width - minX);
+    final cropH = (maxY - minY).clamp(1, image.height - minY);
 
     setState(() {
-      _croppedTile = img.copyCrop(image, x: cropX, y: cropY, width: cropW, height: cropH);
+      _croppedTile = img.copyCrop(image, x: minX, y: minY, width: cropW, height: cropH);
       _selectedTileCode = null;
       _phase = _TDPhase.label;
     });
   }
 
-  Future<void> _send() async {
+  void _send() {
     if (_croppedTile == null || _selectedTileCode == null) return;
-    setState(() => _isSending = true);
+    // Capture this tile's data now, then immediately hand the screen back
+    // to the camera for the next shot — the upload itself continues
+    // independently in the background (`_uploadInBackground`), so the
+    // user isn't blocked waiting on a network round-trip between tiles.
+    final tileImage = _croppedTile!;
+    final tileCode = _selectedTileCode!;
+    setState(() {
+      _phase = _TDPhase.camera;
+      _capturedBytes = null;
+      _capturedImage = null;
+      _croppedTile = null;
+      _selectedTileCode = null;
+      _pendingSends++;
+    });
+    _uploadInBackground(tileImage, tileCode);
+  }
+
+  Future<void> _uploadInBackground(img.Image tileImage, String tileCode) async {
     try {
-      await _client.uploadTile(tileImage: _croppedTile!, tileCode: _selectedTileCode!);
-      setState(() => _sentCount++);
+      await _client.uploadTile(tileImage: tileImage, tileCode: tileCode);
       if (mounted) {
+        setState(() {
+          _sentCount++;
+          _pendingSends--;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('送信完了 ($_sentCount枚目)'), duration: const Duration(seconds: 1)),
+          SnackBar(
+            content: Text('送信完了 ($_sentCount枚目: ${tileDisplayName(tileCode)})'),
+            duration: const Duration(seconds: 1),
+          ),
         );
       }
-      // Go back to camera for next tile
-      setState(() {
-        _phase = _TDPhase.camera;
-        _capturedBytes = null;
-        _capturedImage = null;
-        _croppedTile = null;
-        _selectedTileCode = null;
-      });
     } catch (e) {
       if (mounted) {
+        setState(() => _pendingSends--);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('送信エラー: $e')),
+          SnackBar(content: Text('送信エラー (${tileDisplayName(tileCode)}): $e')),
         );
       }
-    } finally {
-      setState(() => _isSending = false);
     }
   }
 
@@ -136,7 +229,11 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Text('学習データ作成 ($_sentCount枚送信済み)'),
+        title: Text(
+          _pendingSends > 0
+              ? '学習データ作成 ($_sentCount枚送信済み・送信中$_pendingSends件)'
+              : '学習データ作成 ($_sentCount枚送信済み)',
+        ),
         backgroundColor: Colors.black87,
         foregroundColor: Colors.white,
       ),
@@ -157,7 +254,11 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        CameraPreview(_controller!),
+        // Centered rather than a direct Stack.expand child, so
+        // CameraPreview's own internal AspectRatio determines its size
+        // instead of being force-stretched to fill — matches
+        // `scan_screen.dart`'s `_buildCameraPhase`.
+        Center(child: CameraPreview(_controller!)),
         Positioned(
           top: 20, left: 0, right: 0,
           child: Center(
@@ -199,48 +300,65 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
       final slotH = slotW / 0.75;
       final slotRect = Rect.fromLTWH((viewW - slotW) / 2, (viewH - slotH) / 2, slotW, slotH);
 
-      // Image positioning
       final imgW = _capturedImage!.width.toDouble();
       final imgH = _capturedImage!.height.toDouble();
       final imgAspect = imgW / imgH;
       late final double baseW, baseH;
       if (imgAspect > viewW / viewH) { baseW = viewW; baseH = viewW / imgAspect; }
       else { baseH = viewH; baseW = viewH * imgAspect; }
-      final scaledW = baseW * _imageScale;
-      final scaledH = baseH * _imageScale;
-      final imgLeft = (viewW - scaledW) / 2 + _imageOffset.dx;
-      final imgTop = (viewH - scaledH) / 2 + _imageOffset.dy;
-
-      final gridInImgX = (slotRect.left - imgLeft) / _imageScale;
-      final gridInImgY = (slotRect.top - imgTop) / _imageScale;
-      final slotInImage = Rect.fromLTWH(gridInImgX, gridInImgY, slotW / _imageScale, slotH / _imageScale);
-      final displaySize = Size(baseW, baseH);
+      final baseLeft = (viewW - baseW) / 2;
+      final baseTop = (viewH - baseH) / 2;
+      final origin = Offset(baseLeft, baseTop);
 
       return Stack(
+        clipBehavior: Clip.none,
         children: [
-          Positioned(left: imgLeft, top: imgTop, width: scaledW, height: scaledH,
-            child: Transform.rotate(angle: _imageRotation,
-              child: Image.memory(_capturedBytes!, fit: BoxFit.fill))),
+          Positioned(
+            left: baseLeft,
+            top: baseTop,
+            width: baseW,
+            height: baseH,
+            child: Transform(
+              transform: _imageTransform,
+              child: Image.memory(_capturedBytes!, fit: BoxFit.fill, gaplessPlayback: true),
+            ),
+          ),
 
           // Overlay with single slot cutout
           ClipRect(child: CustomPaint(size: Size(viewW, viewH),
             painter: _SingleSlotPainter(slotRect: slotRect))),
 
-          // Gesture
+          // Gesture: drag/pinch/rotate the IMAGE, pivoting correctly around
+          // the actual gesture focal point (see `gesture_transform.dart`).
           Positioned.fill(child: GestureDetector(
-            onScaleStart: (_) { _lastScaleValue = _imageScale; _lastRotationValue = _imageRotation; },
-            onScaleUpdate: (d) => setState(() {
-              _imageOffset += d.focalPointDelta;
-              if (d.pointerCount >= 2) {
-                _imageScale = (_lastScaleValue * d.scale).clamp(0.5, 5.0);
-                _imageRotation = _lastRotationValue + d.rotation;
-              }
-            }),
+            onScaleStart: (details) {
+              _gestureStartTransform = _imageTransform.clone();
+              _gestureStartFocalPoint = details.localFocalPoint - origin;
+              _gestureStartScale = _gestureStartTransform!.getMaxScaleOnAxis();
+            },
+            onScaleUpdate: (details) {
+              final startFocal = _gestureStartFocalPoint;
+              final startTransform = _gestureStartTransform;
+              if (startFocal == null || startTransform == null) return;
+              setState(() {
+                _imageTransform = composeGestureTransform(
+                  startTransform: startTransform,
+                  startFocalLocal: startFocal,
+                  startScale: _gestureStartScale,
+                  currentFocalLocal: details.localFocalPoint - origin,
+                  scaleFactorSinceStart: details.scale,
+                  rotationSinceStart: details.rotation,
+                );
+              });
+            },
+            onScaleEnd: (_) {},
           )),
 
           // 90° button
           Positioned(top: 12, right: 12, child: IconButton(
-            onPressed: () => setState(() => _imageRotation += math.pi / 2),
+            onPressed: () => setState(() {
+              _imageTransform = Matrix4.rotationZ(math.pi / 2).multiplied(_imageTransform);
+            }),
             icon: const Icon(Icons.rotate_right, color: Colors.white70, size: 28),
             style: IconButton.styleFrom(backgroundColor: Colors.black54),
           )),
@@ -256,7 +374,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
               )),
               const SizedBox(width: 12),
               Expanded(flex: 2, child: ElevatedButton.icon(
-                onPressed: () => _cropAndSelectLabel(displaySize, slotInImage),
+                onPressed: () => _cropAndSelectLabel(slotRect, baseLeft, baseTop, baseW, baseH),
                 icon: const Icon(Icons.crop, size: 20),
                 label: const Text('切り出し'),
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green.withValues(alpha: 0.7), foregroundColor: Colors.white),
@@ -271,14 +389,22 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
   Widget _buildLabel() {
     final jpgBytes = _croppedTile != null ? Uint8List.fromList(img.encodeJpg(_croppedTile!)) : null;
 
-    return Padding(
+    // Whole content scrolls: this screen is locked to landscape (short
+    // screen height), and an un-scrollable fixed Column here previously
+    // overflowed past the visible area — the tile keyboard and even the
+    // send button could render below the screen with no way to reach them.
+    // Also replaced the always-visible text `TileKeyboard` with a button
+    // that opens `TileImagePicker` (a bottom sheet, already sized safely
+    // for this exact landscape constraint), matching how tile selection
+    // works everywhere else in the app now.
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           // Cropped tile preview
           if (jpgBytes != null)
             Container(
-              height: 200,
+              height: 160,
               decoration: BoxDecoration(border: Border.all(color: Colors.white24), borderRadius: BorderRadius.circular(8)),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
@@ -287,20 +413,38 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
             ),
           const SizedBox(height: 16),
 
-          // Selected tile display
-          Text(
-            _selectedTileCode ?? '牌を選択してください',
-            style: TextStyle(
-              color: _selectedTileCode != null ? Colors.greenAccent : Colors.white54,
-              fontSize: 24, fontWeight: FontWeight.bold,
+          // Tap to open the image-based tile picker.
+          GestureDetector(
+            onTap: () async {
+              final tile = await TileImagePicker.show(context, currentTile: _selectedTileCode);
+              if (tile != null) setState(() => _selectedTileCode = tile);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _selectedTileCode != null ? Colors.greenAccent : Colors.white24,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _selectedTileCode == null
+                        ? '牌を選択してください'
+                        : tileDisplayName(_selectedTileCode!),
+                    style: TextStyle(
+                      color: _selectedTileCode != null ? Colors.greenAccent : Colors.white54,
+                      fontSize: 22, fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.touch_app, color: Colors.white38, size: 20),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-
-          // Tile keyboard inline
-          TileKeyboard(
-            currentTile: _selectedTileCode,
-            onTileSelected: (tile) => setState(() => _selectedTileCode = tile),
           ),
           const SizedBox(height: 16),
 
@@ -314,10 +458,8 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
               )),
               const SizedBox(width: 12),
               Expanded(flex: 2, child: ElevatedButton.icon(
-                onPressed: _selectedTileCode != null && !_isSending ? _send : null,
-                icon: _isSending
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.send, size: 20),
+                onPressed: _selectedTileCode != null ? _send : null,
+                icon: const Icon(Icons.send, size: 20),
                 label: const Text('送信'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _selectedTileCode != null ? Colors.orange.withValues(alpha: 0.7) : Colors.white.withValues(alpha: 0.1),

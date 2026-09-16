@@ -103,6 +103,17 @@ class TileClassifier {
     final scores = (outputTensor[0] as List<double>);
     final results = <TileClassification>[];
     for (int i = 0; i < scores.length; i++) {
+      // The model's label space (`assets/ml/labels.txt`) includes 8 "bonus"
+      // flower/season tiles from the training dataset's source game
+      // variant — these never appear in Japanese riichi mahjong (this
+      // app's only domain) and have no valid tile code (see
+      // `_labelToTileCode`'s fallback to a raw kanji string like '梅' for
+      // them). Excluding them here, before ranking, lets a real hand photo
+      // fall through to its best *valid* class instead of surfacing one of
+      // these as a top candidate — which the backend's interpretation API
+      // would reject outright with a 422 (invalid tile code), a confusing
+      // dead end for the user.
+      if (_labels[i].startsWith('bonus-')) continue;
       results.add(TileClassification(
         label: _labels[i],
         tileCode: _labelToTileCode(_labels[i]),
