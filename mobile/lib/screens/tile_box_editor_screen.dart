@@ -18,8 +18,8 @@ import '../models/tile_quad.dart';
 /// A fifth handle at the quad's center translates all four corners together,
 /// for repositioning the whole box without reshaping it.
 ///
-/// Returns the edited [TileQuad] (in the same pixel space as [initialQuad])
-/// via `Navigator.pop` on confirm, or `null` on cancel.
+/// Returns a [TileBoxEditorResult] via `Navigator.pop` on confirm or
+/// delete, or `null` on cancel (back button / gesture).
 class TileBoxEditorScreen extends StatefulWidget {
   final Uint8List rawImageBytes;
   final int rawWidth;
@@ -36,6 +36,23 @@ class TileBoxEditorScreen extends StatefulWidget {
 
   @override
   State<TileBoxEditorScreen> createState() => _TileBoxEditorScreenState();
+}
+
+/// What the user did in [TileBoxEditorScreen]. `null` (a plain
+/// `Navigator.pop` with no value, e.g. the back button) means cancelled —
+/// distinct from [TileBoxEditorDeleted], which is an explicit choice to
+/// remove the tile.
+sealed class TileBoxEditorResult {
+  const TileBoxEditorResult();
+}
+
+class TileBoxEditorConfirmed extends TileBoxEditorResult {
+  final TileQuad quad;
+  const TileBoxEditorConfirmed(this.quad);
+}
+
+class TileBoxEditorDeleted extends TileBoxEditorResult {
+  const TileBoxEditorDeleted();
 }
 
 enum _DragMode { body, background }
@@ -62,6 +79,29 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
   void initState() {
     super.initState();
     _focusRegion = _computeFocusRegion(widget.initialQuad);
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('この枠を削除しますか？'),
+        content: const Text('この牌枠と識別結果が削除されます。この操作は取り消せません。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('削除', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      Navigator.pop(context, const TileBoxEditorDeleted());
+    }
   }
 
   Rect _computeFocusRegion(TileQuad quad) {
@@ -99,8 +139,14 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
             icon: Icon(_zoomedIn ? Icons.zoom_out_map : Icons.zoom_in_map),
             tooltip: _zoomedIn ? '全体表示' : '枠付近を拡大',
           ),
+          IconButton(
+            onPressed: () => _confirmDelete(context),
+            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+            tooltip: 'この枠を削除',
+          ),
           TextButton(
-            onPressed: () => Navigator.pop(context, _quad),
+            onPressed: () =>
+                Navigator.pop(context, TileBoxEditorConfirmed(_quad)),
             child: const Text('確定', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
           ),
         ],
