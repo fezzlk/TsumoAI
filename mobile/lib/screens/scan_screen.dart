@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart' show compute, debugPrint;
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
+import 'package:url_launcher/url_launcher.dart';
+import '../config.dart';
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../services/tile_detector.dart';
@@ -16,6 +18,7 @@ import '../models/interpretation_request.dart';
 import '../models/interpretation_result.dart';
 import '../models/tile_observation.dart';
 import '../widgets/tile_image_picker.dart';
+import '../widgets/meld_tile_picker.dart';
 import '../widgets/context_input_panel.dart';
 import '../widgets/score_result_panel.dart';
 import '../widgets/tile_marker_overlay.dart';
@@ -108,6 +111,8 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isInterpreting = false;
   bool _isSendingTraining = false;
   bool _trainingDataSent = false;
+  bool _isUndoingTraining = false;
+  List<String> _sentTrainingEntryIds = [];
   ScoreResponse? _scoreResult;
   bool _isNotWinning = false;
   String? _errorMessage;
@@ -795,6 +800,8 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
       _isSendingTraining = false;
       _trainingDataSent = false;
+      _isUndoingTraining = false;
+      _sentTrainingEntryIds = [];
     });
     _startLiveDetection();
   }
@@ -808,9 +815,20 @@ class _ScanScreenState extends State<ScanScreen> {
         detected.every((index) => _tiles[index] != null);
   }
 
-  bool get _trainingTilesReady =>
-      _tiles.take(14).every((tile) => tile != null) &&
-      _tiles.skip(14).every((tile) => tile == null);
+  // Any number of created boxes (13-18, to also cover kan hands) counts as
+  // ready, as long as every one of them has been classified — not just
+  // exactly 14, which used to make training-data submission impossible for
+  // any hand with a kan (see "鳴き・槓を追加").
+  bool get _trainingTilesReady {
+    final created = [
+      for (int index = 0; index < _maxPhysicalTiles; index++)
+        if (_croppedImages[index] != null) index,
+    ];
+    return created.isNotEmpty &&
+        created.every(
+          (index) => _tiles[index] != null && _predictedTiles[index] != null,
+        );
+  }
 
   int get _visibleSlotCount {
     var last = -1;
@@ -865,94 +883,10 @@ class _ScanScreenState extends State<ScanScreen> {
             ))
           index,
     ];
-    final selected = <int>{};
-    var type = 'pon';
-    var isOpen = true;
-    final meld = await showDialog<ConfirmedMeld>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final expected = {'chi', 'pon'}.contains(type) ? 3 : 4;
-          return AlertDialog(
-            title: const Text('鳴き・槓を確定'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: type,
-                    decoration: const InputDecoration(labelText: '種類'),
-                    items: const [
-                      DropdownMenuItem(value: 'chi', child: Text('チー')),
-                      DropdownMenuItem(value: 'pon', child: Text('ポン')),
-                      DropdownMenuItem(value: 'kan', child: Text('明槓')),
-                      DropdownMenuItem(value: 'ankan', child: Text('暗槓')),
-                      DropdownMenuItem(value: 'kakan', child: Text('加槓')),
-                    ],
-                    onChanged: (value) => setDialogState(() {
-                      type = value!;
-                      isOpen = type != 'ankan';
-                      selected.clear();
-                    }),
-                  ),
-                  const SizedBox(height: 8),
-                  Text('$expected枚を選択'),
-                  Wrap(
-                    spacing: 6,
-                    children: available
-                        .map((index) {
-                          final isSelected = selected.contains(index);
-                          return FilterChip(
-                            label: Text('${index + 1}:${_tiles[index]}'),
-                            selected: isSelected,
-                            onSelected: (value) => setDialogState(() {
-                              if (value && selected.length < expected) {
-                                selected.add(index);
-                              } else if (!value) {
-                                selected.remove(index);
-                              }
-                            }),
-                          );
-                        })
-                        .toList(growable: false),
-                  ),
-                  SwitchListTile(
-                    title: const Text('副露（open）'),
-                    value: isOpen,
-                    onChanged: type == 'ankan'
-                        ? null
-                        : (value) => setDialogState(() => isOpen = value),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('キャンセル'),
-              ),
-              FilledButton(
-                onPressed: selected.length == expected
-                    ? () => Navigator.pop(
-                        dialogContext,
-                        ConfirmedMeld(
-                          observationIds: selected
-                              .map(
-                                (index) =>
-                                    'tile-${index.toString().padLeft(3, '0')}',
-                              )
-                              .toList(growable: false),
-                          type: type,
-                          open: isOpen,
-                        ),
-                      )
-                    : null,
-                child: const Text('確定'),
-              ),
-            ],
-          );
-        },
-      ),
+    final meld = await MeldTilePicker.show(
+      context,
+      availableIndices: available,
+      tileCodeOf: (index) => _tiles[index],
     );
     if (meld != null && mounted) {
       setState(() {
@@ -986,26 +920,12 @@ class _ScanScreenState extends State<ScanScreen> {
                 : 'あがり牌候補: ${suggested.tile} / ${suggested.status.wireValue}',
             style: const TextStyle(color: Colors.white70),
           ),
-          if (_operation == HandOperation.score) ...[
+          if (_operation == HandOperation.score &&
+              _confirmedWinningTileId == null) ...[
             const SizedBox(height: 8),
-            const Text('あがり牌を明示選択', style: TextStyle(color: Colors.white)),
-            Wrap(
-              spacing: 5,
-              children: [
-                for (int index = 0; index < _maxPhysicalTiles; index++)
-                  if (_tiles[index] != null)
-                    ChoiceChip(
-                      label: Text('${index + 1}:${_tiles[index]}'),
-                      selected:
-                          _confirmedWinningTileId ==
-                          'tile-${index.toString().padLeft(3, '0')}',
-                      onSelected: (_) => setState(() {
-                        _confirmedWinningTileId =
-                            'tile-${index.toString().padLeft(3, '0')}';
-                        _invalidateAnalysis();
-                      }),
-                    ),
-              ],
+            const Text(
+              'あがり牌: 上の牌画像下のマークをタップして選択',
+              style: TextStyle(color: Colors.white70),
             ),
           ],
           const SizedBox(height: 8),
@@ -1042,13 +962,20 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future<void> _sendTrainingData() async {
     if (_isSendingTraining || _trainingDataSent) return;
-    final images = _croppedImages.whereType<img.Image>().toList();
-    final tiles = _tiles.whereType<String>().toList();
-    final predictedTiles = _predictedTiles.whereType<String>().toList();
-    if (images.length != 14 ||
-        tiles.length != 14 ||
-        predictedTiles.length != 14) {
-      setState(() => _errorMessage = '14枚すべての識別結果が必要です');
+    final createdIndices = [
+      for (int index = 0; index < _maxPhysicalTiles; index++)
+        if (_croppedImages[index] != null) index,
+    ];
+    final images = [for (final index in createdIndices) _croppedImages[index]!];
+    final tiles = [for (final index in createdIndices) _tiles[index]!];
+    final predictedTiles = [
+      for (final index in createdIndices) _predictedTiles[index]!,
+    ];
+    if (images.isEmpty ||
+        !createdIndices.every(
+          (index) => _tiles[index] != null && _predictedTiles[index] != null,
+        )) {
+      setState(() => _errorMessage = '全ての牌の識別結果が必要です');
       return;
     }
 
@@ -1057,7 +984,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _errorMessage = null;
     });
     try {
-      final count = await _trainingClient.uploadBatch(
+      final result = await _trainingClient.uploadBatch(
         images: images,
         tileCodes: tiles,
         predictedTileCodes: predictedTiles,
@@ -1065,15 +992,44 @@ class _ScanScreenState extends State<ScanScreen> {
       if (mounted) {
         setState(() {
           _trainingDataSent = true;
+          _sentTrainingEntryIds = result.entryIds;
         });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$count枚の学習データを送信しました')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${result.uploadedCount}枚の学習データを送信しました')),
+        );
       }
     } catch (e) {
       setState(() => _errorMessage = '送信エラー: $e');
     } finally {
       if (mounted) setState(() => _isSendingTraining = false);
+    }
+  }
+
+  Future<void> _undoTrainingData() async {
+    if (_isUndoingTraining || !_trainingDataSent) return;
+    setState(() {
+      _isUndoingTraining = true;
+      _errorMessage = null;
+    });
+    try {
+      final deletedCount = await _trainingClient.deleteEntries(
+        _sentTrainingEntryIds,
+      );
+      if (mounted) {
+        setState(() {
+          _trainingDataSent = false;
+          _sentTrainingEntryIds = [];
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$deletedCount枚の学習データを取り消しました')),
+        );
+      }
+    } catch (e) {
+      setState(
+        () => _errorMessage = '取り消しエラー: $e（管理者権限のアカウントが必要です）',
+      );
+    } finally {
+      if (mounted) setState(() => _isUndoingTraining = false);
     }
   }
 
@@ -1605,7 +1561,7 @@ class _ScanScreenState extends State<ScanScreen> {
               // (`_openBoxEditor`); tapping the illustration opens the
               // image-based picker (`_onSlotTap`) to correct it manually.
               SizedBox(
-                height: 100,
+                height: 118,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: _visibleSlotCount,
@@ -1614,6 +1570,10 @@ class _ScanScreenState extends State<ScanScreen> {
                     if (thumb == null) return const SizedBox(width: 40);
                     final tile = _tiles[i];
                     final tileAsset = tile == null ? null : tileAssetPath(tile);
+                    final winningTileId =
+                        'tile-${i.toString().padLeft(3, '0')}';
+                    final isWinningTile =
+                        _confirmedWinningTileId == winningTileId;
                     return Padding(
                       padding: const EdgeInsets.only(right: 4),
                       child: Column(
@@ -1659,6 +1619,29 @@ class _ScanScreenState extends State<ScanScreen> {
                                     ),
                             ),
                           ),
+                          // Winning-tile marker: lets the user mark this
+                          // physical tile as the あがり牌 right where its
+                          // identification result already is, instead of a
+                          // separate text-chip list elsewhere on the screen.
+                          if (_operation == HandOperation.score &&
+                              tile != null) ...[
+                            const SizedBox(height: 2),
+                            GestureDetector(
+                              onTap: () => setState(() {
+                                _confirmedWinningTileId = winningTileId;
+                                _invalidateAnalysis();
+                              }),
+                              child: Icon(
+                                isWinningTile
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_unchecked,
+                                size: 16,
+                                color: isWinningTile
+                                    ? Colors.amber
+                                    : Colors.white38,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     );
@@ -1832,16 +1815,39 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
               ],
 
-              // Training data send button
+              // Open the admin web dashboard in the device browser.
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => launchUrl(
+                    Uri.parse(AppConfig.apiBaseUrl),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  icon: const Icon(
+                    Icons.dashboard_outlined,
+                    size: 18,
+                    color: Colors.white70,
+                  ),
+                  label: const Text(
+                    'Webダッシュボードを開く',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+              ),
+
+              // Training data send/undo button.
               if (_trainingTilesReady) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: 4),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _isSendingTraining || _trainingDataSent
+                    onPressed: _isSendingTraining || _isUndoingTraining
                         ? null
+                        : _trainingDataSent
+                        ? _undoTrainingData
                         : _sendTrainingData,
-                    icon: _isSendingTraining
+                    icon: _isSendingTraining || _isUndoingTraining
                         ? const SizedBox(
                             width: 16,
                             height: 16,
@@ -1851,19 +1857,21 @@ class _ScanScreenState extends State<ScanScreen> {
                             ),
                           )
                         : Icon(
-                            _trainingDataSent ? Icons.check : Icons.school,
+                            _trainingDataSent ? Icons.undo : Icons.school,
                             size: 18,
                           ),
                     label: Text(
                       _isSendingTraining
                           ? '送信中...'
+                          : _isUndoingTraining
+                          ? '取り消し中...'
                           : _trainingDataSent
-                          ? '送信済み'
+                          ? '取り消す'
                           : '学習データとして送信',
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _trainingDataSent
-                          ? Colors.grey.withValues(alpha: 0.3)
+                          ? Colors.grey.withValues(alpha: 0.5)
                           : Colors.orange.withValues(alpha: 0.5),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),

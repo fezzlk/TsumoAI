@@ -4,6 +4,18 @@ import 'package:image/image.dart' as img;
 import '../config.dart';
 import 'auth_service.dart';
 
+/// Result of a batch upload: how many tiles made it, and their server-side
+/// entry ids (for a later [TrainingDataClient.deleteEntries] undo).
+class TrainingUploadResult {
+  final int uploadedCount;
+  final List<String> entryIds;
+
+  const TrainingUploadResult({
+    required this.uploadedCount,
+    required this.entryIds,
+  });
+}
+
 /// Client for uploading training data to the backend.
 class TrainingDataClient {
   late final Dio _dio;
@@ -51,17 +63,17 @@ class TrainingDataClient {
   /// throwing it once all tiles have been attempted and at least one
   /// failed, so the caller/UI can show what actually went wrong instead of
   /// just an opaque "0 uploaded".
-  Future<int> uploadBatch({
+  Future<TrainingUploadResult> uploadBatch({
     required List<img.Image> images,
     required List<String> tileCodes,
     required List<String> predictedTileCodes,
     String source = 'user',
   }) async {
-    int uploaded = 0;
+    final entryIds = <String>[];
     Object? firstError;
     for (int i = 0; i < images.length && i < tileCodes.length; i++) {
       try {
-        await uploadTile(
+        final response = await uploadTile(
           tileImage: images[i],
           tileCode: tileCodes[i],
           predictedTileCode: i < predictedTileCodes.length
@@ -69,14 +81,42 @@ class TrainingDataClient {
               : null,
           source: source,
         );
-        uploaded++;
+        entryIds.add(response['id'] as String);
       } catch (e) {
         firstError ??= e;
       }
     }
-    if (uploaded == 0 && firstError != null) {
+    if (entryIds.isEmpty && firstError != null) {
       throw firstError;
     }
-    return uploaded;
+    return TrainingUploadResult(
+      uploadedCount: entryIds.length,
+      entryIds: entryIds,
+    );
+  }
+
+  /// Undo a previous [uploadBatch] by deleting the uploaded entries. The
+  /// server-side delete endpoint is admin-only, so this will throw (with the
+  /// server's 403) if the signed-in account isn't an admin. Mirrors
+  /// [uploadBatch]'s keep-going/surface-first-failure behavior.
+  Future<int> deleteEntries(List<String> ids) async {
+    final token = await AuthService.idToken(interactive: true);
+    int deleted = 0;
+    Object? firstError;
+    for (final id in ids) {
+      try {
+        await _dio.delete(
+          '$_baseUrl/api/v1/training-data/$id',
+          options: Options(headers: {'Authorization': 'Bearer $token'}),
+        );
+        deleted++;
+      } catch (e) {
+        firstError ??= e;
+      }
+    }
+    if (deleted == 0 && firstError != null) {
+      throw firstError;
+    }
+    return deleted;
   }
 }

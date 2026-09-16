@@ -38,24 +38,34 @@ class TileBoxEditorScreen extends StatefulWidget {
   State<TileBoxEditorScreen> createState() => _TileBoxEditorScreenState();
 }
 
+enum _DragMode { body, background }
+
 class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
   late TileQuad _quad = widget.initialQuad;
 
   // Starts zoomed in on the box being edited (its bounding rect padded out
   // to roughly 2x its own size) rather than fitting the whole photo — the
   // box is normally a small fraction of the frame, so fitting the whole
-  // photo left handles small and imprecise to drag. A fixed region
-  // computed once from the *initial* box (not continuously re-fit around
-  // the box as it moves, to avoid the view jumping under the user's
-  // finger); a toggle falls back to the full photo in case a corner needs
-  // to move somewhere outside this initial region.
-  late final Rect _focusRegion = _computeFocusRegion();
+  // photo left handles small and imprecise to drag. Reframed (not just
+  // fixed once) from the box's *current* position whenever the toggle
+  // switches into zoomed-in mode (see the toggle button below), and
+  // pannable in between via `panRegion` so a corner that lands outside the
+  // initial frame is still reachable without dropping to the tiny
+  // zoomed-out view.
+  late Rect _focusRegion;
   bool _zoomedIn = true;
+  _DragMode? _dragMode;
 
   static const double _handleSize = 52;
 
-  Rect _computeFocusRegion() {
-    final box = widget.initialQuad.boundingRect;
+  @override
+  void initState() {
+    super.initState();
+    _focusRegion = _computeFocusRegion(widget.initialQuad);
+  }
+
+  Rect _computeFocusRegion(TileQuad quad) {
+    final box = quad.boundingRect;
     final pad = math.max(box.width, box.height) * 0.6;
     final expanded = box.inflate(pad);
     final left = expanded.left.clamp(0, widget.rawWidth.toDouble()).toDouble();
@@ -75,7 +85,17 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
         title: const Text('枠を補正'),
         actions: [
           IconButton(
-            onPressed: () => setState(() => _zoomedIn = !_zoomedIn),
+            onPressed: () => setState(() {
+              _zoomedIn = !_zoomedIn;
+              _focusRegion = _zoomedIn
+                  ? _computeFocusRegion(_quad)
+                  : Rect.fromLTWH(
+                      0,
+                      0,
+                      widget.rawWidth.toDouble(),
+                      widget.rawHeight.toDouble(),
+                    );
+            }),
             icon: Icon(_zoomedIn ? Icons.zoom_out_map : Icons.zoom_in_map),
             tooltip: _zoomedIn ? '全体表示' : '枠付近を拡大',
           ),
@@ -92,9 +112,7 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
             builder: (context, constraints) {
               final viewW = constraints.maxWidth;
               final viewH = constraints.maxHeight;
-              final region = _zoomedIn
-                  ? _focusRegion
-                  : Rect.fromLTWH(0, 0, widget.rawWidth.toDouble(), widget.rawHeight.toDouble());
+              final region = _focusRegion;
               final regionAspect = region.width / region.height;
               final viewAspect = viewW / viewH;
 
@@ -113,6 +131,9 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
               Offset toScreen(Offset p) =>
                   Offset(dispLeft + (p.dx - region.left) * scale, dispTop + (p.dy - region.top) * scale);
 
+              Offset toImage(Offset screenPoint) =>
+                  region.topLeft + (screenPoint - Offset(dispLeft, dispTop)) / scale;
+
               void moveCorner(TileQuadCorner corner, Offset current, Offset delta) {
                 setState(() {
                   _quad = _quad.withCorner(corner, current + delta / scale);
@@ -122,6 +143,32 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
               void moveAll(Offset delta) {
                 setState(() {
                   _quad = _quad.translate(delta / scale);
+                });
+              }
+
+              // Pans the visible region opposite the finger's motion ("content
+              // follows the finger", matching moveCorner/moveAll's feel),
+              // clamped so it never leaves the photo. When zoomed out the
+              // region already spans the whole photo, so the clamp makes this
+              // a natural no-op there.
+              void panRegion(Offset screenDelta) {
+                setState(() {
+                  final imageDelta = screenDelta / scale;
+                  final shifted = _focusRegion.shift(-imageDelta);
+                  final maxW = widget.rawWidth.toDouble();
+                  final maxH = widget.rawHeight.toDouble();
+                  final left = shifted.width >= maxW
+                      ? (maxW - shifted.width) / 2
+                      : shifted.left.clamp(0.0, maxW - shifted.width);
+                  final top = shifted.height >= maxH
+                      ? (maxH - shifted.height) / 2
+                      : shifted.top.clamp(0.0, maxH - shifted.height);
+                  _focusRegion = Rect.fromLTWH(
+                    left,
+                    top,
+                    shifted.width,
+                    shifted.height,
+                  );
                 });
               }
 
@@ -146,28 +193,54 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
                 );
               }
 
-              // Moves all four corners together (translation only — doesn't
-              // touch the quad's shape/size), for repositioning the whole
-              // box without having to drag each corner individually.
-              // Rendered before the corner handles so a corner handle wins
-              // hit-testing when the two overlap (small/zoomed-out quads).
-              Widget centerHandle(Offset point) {
-                final screenPoint = toScreen(point);
-                return Positioned(
-                  left: screenPoint.dx - _handleSize / 2,
-                  top: screenPoint.dy - _handleSize / 2,
-                  width: _handleSize,
-                  height: _handleSize,
+              // Dragging inside the quad's body moves the whole box (like the
+              // old centerHandle, but over the whole interior rather than a
+              // small circle at the centroid — a fixed-size circle there
+              // necessarily collides with the corner handles once the quad
+              // is small, e.g. in the zoomed-out view, making it impossible
+              // to grab reliably). Dragging outside the quad instead pans
+              // the visible region, so a corner that's off-screen while
+              // zoomed in can be brought into view. Placed before the corner
+              // handles so a corner handle wins hit-testing when the two
+              // overlap.
+              Widget bodyAndBackgroundLayer() {
+                return Positioned.fill(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onPanUpdate: (details) => moveAll(details.delta),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.orangeAccent.withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.black.withValues(alpha: 0.6), width: 2),
-                      ),
-                      child: const Icon(Icons.open_with, size: 18, color: Colors.black),
+                    onPanStart: (details) {
+                      _dragMode =
+                          _quad.boundingRect.contains(
+                            toImage(details.localPosition),
+                          )
+                          ? _DragMode.body
+                          : _DragMode.background;
+                    },
+                    onPanUpdate: (details) {
+                      if (_dragMode == _DragMode.body) {
+                        moveAll(details.delta);
+                      } else {
+                        panRegion(details.delta);
+                      }
+                    },
+                    onPanEnd: (_) => _dragMode = null,
+                  ),
+                );
+              }
+
+              // Purely cosmetic marker at the quad's center (no longer a
+              // drag target itself — see bodyAndBackgroundLayer above).
+              Widget centerGlyph(Offset point) {
+                final screenPoint = toScreen(point);
+                return Positioned(
+                  left: screenPoint.dx - 12,
+                  top: screenPoint.dy - 12,
+                  width: 24,
+                  height: 24,
+                  child: const IgnorePointer(
+                    child: Icon(
+                      Icons.open_with,
+                      size: 20,
+                      color: Colors.orangeAccent,
                     ),
                   ),
                 );
@@ -193,11 +266,35 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
                         ),
                       ),
                     ),
-                    centerHandle(_quad.center),
+                    bodyAndBackgroundLayer(),
+                    centerGlyph(_quad.center),
                     handle(TileQuadCorner.topLeft, _quad.topLeft),
                     handle(TileQuadCorner.topRight, _quad.topRight),
                     handle(TileQuadCorner.bottomLeft, _quad.bottomLeft),
                     handle(TileQuadCorner.bottomRight, _quad.bottomRight),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 8,
+                      child: IgnorePointer(
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Text(
+                              '内側をドラッグで移動 / 外側をドラッグで表示範囲を移動',
+                              style: TextStyle(color: Colors.white70, fontSize: 11),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               );
