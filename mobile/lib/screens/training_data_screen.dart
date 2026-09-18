@@ -7,6 +7,7 @@ import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import '../services/training_data_client.dart';
 import '../services/gesture_transform.dart';
+import '../widgets/tile_glyph.dart';
 import '../widgets/tile_image_picker.dart';
 import '../services/tile_assets.dart';
 
@@ -431,6 +432,14 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  // Shows the tile's illustration alongside its name (not
+                  // image-only, unlike most other tile displays in the app)
+                  // — this screen labels training data, so misreading a
+                  // similar-looking tile here is more costly than elsewhere.
+                  if (_selectedTileCode != null) ...[
+                    SizedBox(width: 32, height: 44, child: TileGlyph(tileCode: _selectedTileCode!)),
+                    const SizedBox(width: 8),
+                  ],
                   Text(
                     _selectedTileCode == null
                         ? '牌を選択してください'

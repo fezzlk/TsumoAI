@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/score_request.dart';
-import '../services/tile_assets.dart';
+import 'tile_glyph.dart';
 import 'tile_image_picker.dart';
 
 /// Compact panel for game context input.
@@ -272,7 +272,10 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
                         Positioned.fill(
                           child: Padding(
                             padding: const EdgeInsets.all(2),
-                            child: _tileImageOrText(indicators[i]),
+                            child: TileGlyph(
+                              tileCode: indicators[i],
+                              fallbackTextStyle: const TextStyle(color: Colors.white, fontSize: 10),
+                            ),
                           ),
                         ),
                         const Positioned(
@@ -306,16 +309,6 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
         ),
       ],
     );
-  }
-
-  Widget _tileImageOrText(String tileCode) {
-    final path = tileAssetPath(tileCode);
-    if (path == null) {
-      return Center(
-        child: Text(tileDisplayName(tileCode), style: const TextStyle(color: Colors.white, fontSize: 10)),
-      );
-    }
-    return Image.asset(path, fit: BoxFit.contain);
   }
 
   Widget _numberInput(String label, int value, ValueChanged<int> onChanged) {

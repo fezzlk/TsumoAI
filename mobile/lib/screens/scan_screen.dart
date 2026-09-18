@@ -28,7 +28,6 @@ import '../services/tile_assets.dart';
 import '../models/tile_quad.dart';
 import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
-import '../services/gesture_transform.dart';
 import 'tile_box_editor_screen.dart';
 
 class ScanScreen extends StatefulWidget {
@@ -39,7 +38,7 @@ class ScanScreen extends StatefulWidget {
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-enum _ScanPhase { camera, detecting, align, results }
+enum _ScanPhase { camera, detecting, results }
 
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
@@ -55,14 +54,6 @@ class _ScanScreenState extends State<ScanScreen> {
   // no separate raw/corrected buffer or coordinate space to keep in sync.
   Uint8List? _capturedBytes;
   img.Image? _capturedImage;
-
-  // Image transform: pan/zoom/rotate combined into a single matrix so that
-  // scale and rotation always pivot around the gesture's own focal point
-  // instead of the image's center (see _buildAlignPhase for the composition).
-  Matrix4 _imageTransform = Matrix4.identity();
-  Matrix4? _gestureStartTransform;
-  Offset? _gestureStartFocalPoint;
-  double _gestureStartScale = 1.0;
 
   // Tile results
   final List<String?> _tiles = List.filled(_maxPhysicalTiles, null);
@@ -116,7 +107,6 @@ class _ScanScreenState extends State<ScanScreen> {
   List<String> _sentTrainingEntryIds = [];
   ScoreResponse? _scoreResult;
   bool _isNotWinning = false;
-  String? _errorMessage;
   InterpretationResult? _interpretation;
   String? _confirmedWinningTileId;
   final List<ConfirmedMeld> _confirmedMelds = [];
@@ -140,6 +130,13 @@ class _ScanScreenState extends State<ScanScreen> {
     _isNotWinning = false;
   }
 
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -153,9 +150,7 @@ class _ScanScreenState extends State<ScanScreen> {
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Classifier init error: $e');
-      if (mounted) {
-        setState(() => _errorMessage = '牌識別モデル読込エラー: $e');
-      }
+      _showError('牌識別モデル読込エラー: $e');
     }
   }
 
@@ -200,7 +195,10 @@ class _ScanScreenState extends State<ScanScreen> {
       debugPrint('Live detection stream start error: $e');
       return;
     }
-    _analysisTimer = Timer.periodic(_analysisInterval, (_) => _analyzeLatestFrame());
+    _analysisTimer = Timer.periodic(
+      _analysisInterval,
+      (_) => _analyzeLatestFrame(),
+    );
   }
 
   Future<void> _stopLiveDetection() async {
@@ -233,7 +231,9 @@ class _ScanScreenState extends State<ScanScreen> {
       final isFullDetection = result.tileCount == TileDetector.targetTileCount;
       setState(() {
         _liveDetectorResult = result;
-        _stableDetectionStreak = isFullDetection ? _stableDetectionStreak + 1 : 0;
+        _stableDetectionStreak = isFullDetection
+            ? _stableDetectionStreak + 1
+            : 0;
       });
 
       if (_autoCaptureEnabled &&
@@ -298,8 +298,6 @@ class _ScanScreenState extends State<ScanScreen> {
         _capturedBytes = bytes;
         _capturedImage = decoded;
         _phase = _ScanPhase.detecting;
-        _imageTransform = Matrix4.identity();
-        _errorMessage = null;
         for (int i = 0; i < _maxPhysicalTiles; i++) {
           _tiles[i] = null;
           _predictedTiles[i] = null;
@@ -325,7 +323,7 @@ class _ScanScreenState extends State<ScanScreen> {
         angleHints: detected.angleHints,
       );
     } catch (e) {
-      setState(() => _errorMessage = '撮影エラー: $e');
+      _showError('撮影エラー: $e');
       // If capture/decode itself failed, stay on the camera phase; if it was
       // detection that failed after a successful capture, still move on to
       // the results phase (empty boxes) rather than getting stuck on the
@@ -340,94 +338,10 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  // ── Phase 2: Align grid & classify ──
-
-  Future<void> _classifyFromGrid(
-    Rect gridScreenRect,
-    double baseLeft,
-    double baseTop,
-    double baseW,
-    double baseH,
-  ) async {
-    final srcImage = _capturedImage;
-    if (srcImage == null) return;
-
-    final origin = Offset(baseLeft, baseTop);
-    final origW = srcImage.width.toDouble();
-    final origH = srcImage.height.toDouble();
-    final inverse = Matrix4.inverted(_imageTransform);
-
-    // Map a screen point back through the (pan/zoom/rotate) display transform
-    // to a pixel coordinate in the original captured image.
-    Offset toImagePixel(Offset screenPoint) {
-      final content = MatrixUtils.transformPoint(inverse, screenPoint - origin);
-      return Offset(content.dx * (origW / baseW), content.dy * (origH / baseH));
-    }
-
-    final slotW = gridScreenRect.width / 14;
-    final padX = slotW * 0.2;
-    final padY = gridScreenRect.height * 0.2;
-
-    final boxes = <Rect>[];
-    for (int i = 0; i < 14; i++) {
-      // Grid slot corners in screen space
-      final slotLeft = gridScreenRect.left + i * slotW - padX;
-      final slotTop = gridScreenRect.top - padY;
-      final slotRight = slotLeft + slotW + padX * 2;
-      final slotBottom = slotTop + gridScreenRect.height + padY * 2;
-
-      // Map all 4 corners to image pixels
-      final tl = toImagePixel(Offset(slotLeft, slotTop));
-      final tr = toImagePixel(Offset(slotRight, slotTop));
-      final bl = toImagePixel(Offset(slotLeft, slotBottom));
-      final br = toImagePixel(Offset(slotRight, slotBottom));
-
-      // Bounding box in image pixels
-      final minX = [
-        tl.dx,
-        tr.dx,
-        bl.dx,
-        br.dx,
-      ].reduce(math.min).round().clamp(0, srcImage.width - 1);
-      final minY = [
-        tl.dy,
-        tr.dy,
-        bl.dy,
-        br.dy,
-      ].reduce(math.min).round().clamp(0, srcImage.height - 1);
-      final maxX = [
-        tl.dx,
-        tr.dx,
-        bl.dx,
-        br.dx,
-      ].reduce(math.max).round().clamp(0, srcImage.width - 1);
-      final maxY = [
-        tl.dy,
-        tr.dy,
-        bl.dy,
-        br.dy,
-      ].reduce(math.max).round().clamp(0, srcImage.height - 1);
-
-      final cropW = (maxX - minX).clamp(1, srcImage.width - minX);
-      final cropH = (maxY - minY).clamp(1, srcImage.height - minY);
-      boxes.add(
-        Rect.fromLTWH(
-          minX.toDouble(),
-          minY.toDouble(),
-          cropW.toDouble(),
-          cropH.toDouble(),
-        ),
-      );
-    }
-
-    await _classifyBoxesAndFinish(boxes);
-  }
-
   /// Crop and on-device-classify each of [boxes] (in `_capturedImage`'s pixel
   /// coordinate space), populating `_tiles`/`_croppedImages`/`_tileQuads`,
-  /// then move to the results phase. Shared by both the automatic-detection
-  /// path (which has [angleHints], one per box — see `segmentTilesWithHints`)
-  /// and the manual grid-alignment fallback (which doesn't).
+  /// then move to the results phase. [angleHints] has one entry per box —
+  /// see `segmentTilesWithHints`.
   Future<void> _classifyBoxesAndFinish(
     List<Rect> boxes, {
     List<double>? angleHints,
@@ -446,7 +360,6 @@ class _ScanScreenState extends State<ScanScreen> {
         _tileQuads[i] = null;
       }
       _invalidateInterpretation();
-      _errorMessage = null;
     });
 
     for (int i = 0; i < boxes.length && i < _maxPhysicalTiles; i++) {
@@ -475,7 +388,7 @@ class _ScanScreenState extends State<ScanScreen> {
   /// "識別実行" button.
   Future<void> _runClassification() async {
     if (!_classifier.isReady) {
-      setState(() => _errorMessage = '牌識別モデルが読み込まれていません');
+      _showError('牌識別モデルが読み込まれていません');
       return;
     }
 
@@ -483,7 +396,6 @@ class _ScanScreenState extends State<ScanScreen> {
       for (int i = 0; i < _maxPhysicalTiles; i++) {
         if (_croppedImages[i] != null) _isClassifying[i] = true;
       }
-      _errorMessage = null;
     });
 
     for (int i = 0; i < _maxPhysicalTiles; i++) {
@@ -650,7 +562,6 @@ class _ScanScreenState extends State<ScanScreen> {
     if (!_allDetectedTilesReady) return;
     setState(() {
       _isInterpreting = true;
-      _errorMessage = null;
       _invalidateInterpretation();
     });
     final requestEpoch = _requestEpoch.current;
@@ -677,7 +588,7 @@ class _ScanScreenState extends State<ScanScreen> {
       });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        setState(() => _errorMessage = '画像解釈エラー: $error');
+        _showError('画像解釈エラー: $error');
       }
     } finally {
       if (mounted) setState(() => _isInterpreting = false);
@@ -687,7 +598,7 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _confirmAndAnalyze() async {
     if (_interpretation == null) return;
     if (_operation == HandOperation.score && _confirmedWinningTileId == null) {
-      setState(() => _errorMessage = 'あがり牌を選択してください');
+      _showError('あがり牌を選択してください');
       return;
     }
 
@@ -713,7 +624,6 @@ class _ScanScreenState extends State<ScanScreen> {
       _scoreResult = null;
       _analysisResult = null;
       _isNotWinning = false;
-      _errorMessage = null;
     });
     final requestEpoch = _requestEpoch.current;
     try {
@@ -787,7 +697,7 @@ class _ScanScreenState extends State<ScanScreen> {
       }
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        setState(() => _errorMessage = '解析エラー: $error');
+        _showError('解析エラー: $error');
       }
     } finally {
       if (mounted) setState(() => _isScoring = false);
@@ -823,7 +733,6 @@ class _ScanScreenState extends State<ScanScreen> {
         _tileQuads[i] = null;
       }
       _invalidateInterpretation();
-      _errorMessage = null;
       _isSendingTraining = false;
       _trainingDataSent = false;
       _isUndoingTraining = false;
@@ -1018,14 +927,11 @@ class _ScanScreenState extends State<ScanScreen> {
         !createdIndices.every(
           (index) => _tiles[index] != null && _predictedTiles[index] != null,
         )) {
-      setState(() => _errorMessage = '全ての牌の識別結果が必要です');
+      _showError('全ての牌の識別結果が必要です');
       return;
     }
 
-    setState(() {
-      _isSendingTraining = true;
-      _errorMessage = null;
-    });
+    setState(() => _isSendingTraining = true);
     try {
       final result = await _trainingClient.uploadBatch(
         images: images,
@@ -1042,7 +948,7 @@ class _ScanScreenState extends State<ScanScreen> {
         );
       }
     } catch (e) {
-      setState(() => _errorMessage = '送信エラー: $e');
+      _showError('送信エラー: $e');
     } finally {
       if (mounted) setState(() => _isSendingTraining = false);
     }
@@ -1050,10 +956,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future<void> _undoTrainingData() async {
     if (_isUndoingTraining || !_trainingDataSent) return;
-    setState(() {
-      _isUndoingTraining = true;
-      _errorMessage = null;
-    });
+    setState(() => _isUndoingTraining = true);
     try {
       final deletedCount = await _trainingClient.deleteEntries(
         _sentTrainingEntryIds,
@@ -1063,14 +966,12 @@ class _ScanScreenState extends State<ScanScreen> {
           _trainingDataSent = false;
           _sentTrainingEntryIds = [];
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$deletedCount枚の学習データを取り消しました')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$deletedCount枚の学習データを取り消しました')));
       }
     } catch (e) {
-      setState(
-        () => _errorMessage = '取り消しエラー: $e（管理者権限のアカウントが必要です）',
-      );
+      _showError('取り消しエラー: $e（管理者権限のアカウントが必要です）');
     } finally {
       if (mounted) setState(() => _isUndoingTraining = false);
     }
@@ -1078,16 +979,19 @@ class _ScanScreenState extends State<ScanScreen> {
 
   @override
   Widget build(BuildContext context) {
-    switch (_phase) {
-      case _ScanPhase.camera:
-        return _buildCameraPhase();
-      case _ScanPhase.detecting:
-        return _buildDetectingPhase();
-      case _ScanPhase.align:
-        return _buildAlignPhase();
-      case _ScanPhase.results:
-        return _buildResultsPhase();
-    }
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('牌をスキャン'),
+        backgroundColor: Colors.black87,
+        foregroundColor: Colors.white,
+      ),
+      body: switch (_phase) {
+        _ScanPhase.camera => _buildCameraPhase(),
+        _ScanPhase.detecting => _buildDetectingPhase(),
+        _ScanPhase.results => _buildResultsPhase(),
+      },
+    );
   }
 
   // ════════════════════════════════════════
@@ -1095,33 +999,30 @@ class _ScanScreenState extends State<ScanScreen> {
   // ════════════════════════════════════════
 
   Widget _buildDetectingPhase() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (_capturedBytes != null)
-              Opacity(
-                opacity: 0.4,
-                child: Image.memory(
-                  _capturedBytes!,
-                  fit: BoxFit.contain,
-                  gaplessPlayback: true,
-                ),
-              ),
-            const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(color: Colors.greenAccent),
-                  SizedBox(height: 12),
-                  Text('牌を検出中...', style: TextStyle(color: Colors.white70)),
-                ],
+    return SafeArea(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_capturedBytes != null)
+            Opacity(
+              opacity: 0.4,
+              child: Image.memory(
+                _capturedBytes!,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
               ),
             ),
-          ],
-        ),
+          const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Colors.greenAccent),
+                SizedBox(height: 12),
+                Text('牌を検出中...', style: TextStyle(color: Colors.white70)),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1132,105 +1033,88 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildCameraPhase() {
     if (_controller == null || !_controller!.value.isInitialized) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: Text('カメラ初期化中...', style: TextStyle(color: Colors.white)),
-        ),
+      return const Center(
+        child: Text('カメラ初期化中...', style: TextStyle(color: Colors.white)),
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Center(child: CameraPreview(_controller!)),
-            // Simple instruction
-            Positioned(
-              top: 20,
-              left: 0,
-              right: 0,
-              child: Center(
+    return SafeArea(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(child: CameraPreview(_controller!)),
+          // Simple instruction
+          Positioned(
+            top: 20,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text(
+                  '解析対象の牌がすべて映るように撮影してください',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ),
+          ),
+          // Live detection tile-count badge + auto/manual shutter toggle
+          // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
+          // real devices, so manual capture must remain available).
+          Positioned(
+            top: 8,
+            right: 12,
+            child: Row(
+              children: [
+                _buildLiveTileCountBadge(),
+                const SizedBox(width: 8),
+                _buildAutoCaptureToggle(),
+              ],
+            ),
+          ),
+          // Capture button
+          Positioned(
+            bottom: 40,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: GestureDetector(
+                onTap: _isCapturing ? null : _capture,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
+                  width: 72,
+                  height: 72,
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(20),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 4),
+                    color: _isCapturing
+                        ? Colors.grey
+                        : Colors.white.withValues(alpha: 0.3),
                   ),
-                  child: const Text(
-                    '解析対象の牌がすべて映るように撮影してください',
-                    style: TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                ),
-              ),
-            ),
-            // Live detection tile-count badge + auto/manual shutter toggle
-            // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
-            // real devices, so manual capture must remain available).
-            Positioned(
-              top: 8,
-              right: 12,
-              child: Row(
-                children: [
-                  _buildLiveTileCountBadge(),
-                  const SizedBox(width: 8),
-                  _buildAutoCaptureToggle(),
-                ],
-              ),
-            ),
-            // Capture button
-            Positioned(
-              bottom: 40,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: GestureDetector(
-                  onTap: _isCapturing ? null : _capture,
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
-                      color: _isCapturing
-                          ? Colors.grey
-                          : Colors.white.withValues(alpha: 0.3),
-                    ),
-                    child: _isCapturing
-                        ? const Padding(
-                            padding: EdgeInsets.all(20),
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 3,
-                            ),
-                          )
-                        : const Icon(
-                            Icons.camera_alt,
+                  child: _isCapturing
+                      ? const Padding(
+                          padding: EdgeInsets.all(20),
+                          child: CircularProgressIndicator(
                             color: Colors.white,
-                            size: 32,
+                            strokeWidth: 3,
                           ),
-                  ),
+                        )
+                      : const Icon(
+                          Icons.camera_alt,
+                          color: Colors.white,
+                          size: 32,
+                        ),
                 ),
               ),
             ),
-            if (_errorMessage != null)
-              Positioned(
-                bottom: 130,
-                left: 20,
-                right: 20,
-                child: Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1280,7 +1164,9 @@ class _ScanScreenState extends State<ScanScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              _autoCaptureEnabled ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+              _autoCaptureEnabled
+                  ? Icons.auto_awesome
+                  : Icons.auto_awesome_outlined,
               color: _autoCaptureEnabled ? Colors.amberAccent : Colors.white54,
               size: 16,
             ),
@@ -1288,249 +1174,13 @@ class _ScanScreenState extends State<ScanScreen> {
             Text(
               _autoCaptureEnabled ? '自動' : '手動',
               style: TextStyle(
-                color: _autoCaptureEnabled ? Colors.amberAccent : Colors.white54,
+                color: _autoCaptureEnabled
+                    ? Colors.amberAccent
+                    : Colors.white54,
                 fontSize: 12,
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  // ════════════════════════════════════════
-  // Phase 2: Align grid on captured image
-  // ════════════════════════════════════════
-
-  Widget _buildAlignPhase() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final viewW = constraints.maxWidth;
-            final viewH = constraints.maxHeight;
-
-            // Fixed grid: centered, 80% of view width
-            final gridTotalW = viewW * 0.85;
-            final slotW = gridTotalW / 14;
-            final slotH = slotW / 0.75;
-            final gridLeft = (viewW - gridTotalW) / 2;
-            final gridTop = (viewH - slotH) / 2;
-            final gridRect = Rect.fromLTWH(
-              gridLeft,
-              gridTop,
-              gridTotalW,
-              slotH,
-            );
-
-            // Box size based on ORIGINAL image aspect (no rotation distortion)
-            final srcW = _capturedImage!.width.toDouble();
-            final srcH = _capturedImage!.height.toDouble();
-            final imgAspect = srcW / srcH;
-            final viewAspect = viewW / viewH;
-
-            late final double baseW, baseH;
-            if (imgAspect > viewAspect) {
-              baseW = viewW;
-              baseH = viewW / imgAspect;
-            } else {
-              baseH = viewH;
-              baseW = viewH * imgAspect;
-            }
-
-            // The image's own box never moves or resizes; all pan/zoom/rotate
-            // from user gestures lives entirely in `_imageTransform`, applied
-            // below via Transform. This keeps a single source of truth for
-            // the display transform instead of separate offset/scale/rotation
-            // variables that have to be kept in sync by hand.
-            final baseLeft = (viewW - baseW) / 2;
-            final baseTop = (viewH - baseH) / 2;
-            final origin = Offset(baseLeft, baseTop);
-
-            return Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned(
-                  left: baseLeft,
-                  top: baseTop,
-                  width: baseW,
-                  height: baseH,
-                  child: Transform(
-                    transform: _imageTransform,
-                    child: Image.memory(
-                      _capturedBytes!,
-                      fit: BoxFit.fill,
-                      gaplessPlayback: true,
-                    ),
-                  ),
-                ),
-
-                // Fixed overlay with grid cutouts
-                ClipRect(
-                  child: CustomPaint(
-                    size: Size(viewW, viewH),
-                    painter: _SlotOverlayPainter(
-                      slotRect: gridRect,
-                      slotCount: 14,
-                    ),
-                  ),
-                ),
-
-                // Gesture: drag/pinch/rotate the IMAGE. Scale and rotation are
-                // cumulative-since-gesture-start values from Flutter's scale
-                // recognizer, so the whole current gesture's transform is
-                // rebuilt fresh each update, pivoting around the point that
-                // was under the fingers when the gesture began — that point
-                // stays under the fingers regardless of the image's current
-                // rotation, which is what a naive per-axis add of offset/
-                // scale/rotation could not guarantee.
-                Positioned.fill(
-                  child: GestureDetector(
-                    onScaleStart: (details) {
-                      _gestureStartTransform = _imageTransform.clone();
-                      _gestureStartFocalPoint =
-                          details.localFocalPoint - origin;
-                      _gestureStartScale = _gestureStartTransform!
-                          .getMaxScaleOnAxis();
-                    },
-                    onScaleUpdate: (details) {
-                      final startFocal = _gestureStartFocalPoint;
-                      final startTransform = _gestureStartTransform;
-                      if (startFocal == null || startTransform == null) return;
-                      setState(() {
-                        _imageTransform = composeGestureTransform(
-                          startTransform: startTransform,
-                          startFocalLocal: startFocal,
-                          startScale: _gestureStartScale,
-                          currentFocalLocal: details.localFocalPoint - origin,
-                          scaleFactorSinceStart: details.scale,
-                          rotationSinceStart: details.rotation,
-                        );
-                      });
-                    },
-                    onScaleEnd: (_) {},
-                  ),
-                ),
-
-                // "和了牌" label
-                Positioned(
-                  left: gridRect.right - slotW / 2 - 20,
-                  top: gridRect.top - 18,
-                  child: const Text(
-                    '和了牌',
-                    style: TextStyle(
-                      color: Colors.greenAccent,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-
-                // Instructions
-                Positioned(
-                  top: 12,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Text(
-                        '画像をドラッグ/ピンチして牌を枠に合わせてください',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 90° rotation button
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: IconButton(
-                    onPressed: () => setState(() {
-                      // Rotate the image 90° about its own center, then keep
-                      // applying whatever pan/zoom/rotation was already
-                      // dialed in on top of that.
-                      final center = Offset(baseW / 2, baseH / 2);
-                      final rotateAboutCenter = Matrix4.identity()
-                        ..translateByDouble(center.dx, center.dy, 0, 1)
-                        ..rotateZ(math.pi / 2)
-                        ..translateByDouble(-center.dx, -center.dy, 0, 1);
-                      _imageTransform = _imageTransform.multiplied(
-                        rotateAboutCenter,
-                      );
-                    }),
-                    icon: const Icon(
-                      Icons.rotate_right,
-                      color: Colors.white70,
-                      size: 28,
-                    ),
-                    tooltip: '90°回転',
-                    style: IconButton.styleFrom(
-                      backgroundColor: Colors.black.withValues(alpha: 0.5),
-                    ),
-                  ),
-                ),
-
-                // Bottom buttons
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    color: Colors.black.withValues(alpha: 0.7),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _backToCamera,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white.withValues(
-                                alpha: 0.15,
-                              ),
-                              foregroundColor: Colors.white,
-                            ),
-                            child: const Text('撮り直す'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          flex: 2,
-                          child: ElevatedButton.icon(
-                            onPressed: () => _classifyFromGrid(
-                              gridRect,
-                              baseLeft,
-                              baseTop,
-                              baseW,
-                              baseH,
-                            ),
-                            icon: const Icon(Icons.search, size: 20),
-                            label: const Text('識別開始'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green.withValues(
-                                alpha: 0.7,
-                              ),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
         ),
       ),
     );
@@ -1552,448 +1202,391 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Widget _buildResultsPhase() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Full photo with detected-tile markers. Sized by the photo's
-              // own aspect ratio (not a fixed screen fraction) so a portrait
-              // capture gets a tall box and a landscape capture a short one
-              // — the scrolling column below absorbs whichever it is.
-              // Tapping a marker opens the full-screen box editor for that
-              // tile (`_openBoxEditor`); pinch-zoom is safe to leave on
-              // here since nothing on this screen does its own dragging
-              // anymore (editing happens in `TileBoxEditorScreen`, a
-              // separate route with no zoom of its own).
-              if (_capturedBytes != null) ...[
-                AspectRatio(
-                  aspectRatio: _capturedImage!.width / _capturedImage!.height,
-                  child: InteractiveViewer(
-                    minScale: 1.0,
-                    maxScale: 4.0,
-                    child: _buildTileMarkerOverlay(),
+    return SafeArea(
+      child: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Full photo with detected-tile markers. Sized by the photo's
+                  // own aspect ratio (not a fixed screen fraction) so a portrait
+                  // capture gets a tall box and a landscape capture a short one
+                  // — the scrolling column below absorbs whichever it is.
+                  // Tapping a marker opens the full-screen box editor for that
+                  // tile (`_openBoxEditor`); pinch-zoom is safe to leave on
+                  // here since nothing on this screen does its own dragging
+                  // anymore (editing happens in `TileBoxEditorScreen`, a
+                  // separate route with no zoom of its own).
+                  if (_capturedBytes != null) ...[
+                    AspectRatio(
+                      aspectRatio:
+                          _capturedImage!.width / _capturedImage!.height,
+                      child: InteractiveViewer(
+                        minScale: 1.0,
+                        maxScale: 4.0,
+                        child: _buildTileMarkerOverlay(),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (_tileQuads.any((q) => q == null))
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _addMissingTileBox,
+                          icon: const Icon(
+                            Icons.add_box_outlined,
+                            size: 18,
+                            color: Colors.greenAccent,
+                          ),
+                          label: const Text(
+                            '枠を追加',
+                            style: TextStyle(color: Colors.greenAccent),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                  ],
+
+                  // Cropped images preview, each paired with its identified
+                  // tile's illustration directly below (or "?" until "識別実行"
+                  // has been run for it). Tapping the crop opens the box editor
+                  // (`_openBoxEditor`); tapping the illustration opens the
+                  // image-based picker (`_onSlotTap`) to correct it manually.
+                  SizedBox(
+                    height: 118,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _visibleSlotCount,
+                      itemBuilder: (_, i) {
+                        final thumb = _croppedImageThumbnails[i];
+                        if (thumb == null) return const SizedBox(width: 40);
+                        final tile = _tiles[i];
+                        final tileAsset = tile == null
+                            ? null
+                            : tileAssetPath(tile);
+                        final winningTileId =
+                            'tile-${i.toString().padLeft(3, '0')}';
+                        final isWinningTile =
+                            _confirmedWinningTileId == winningTileId;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              GestureDetector(
+                                onTap: () => _openBoxEditor(i),
+                                child: Image.memory(
+                                  thumb,
+                                  width: 40,
+                                  height: 56,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              GestureDetector(
+                                onTap: () => _onSlotTap(i),
+                                child: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: _isClassifying[i]
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 1.5,
+                                            color: Colors.white54,
+                                          ),
+                                        )
+                                      : tileAsset != null
+                                      ? Image.asset(
+                                          tileAsset,
+                                          fit: BoxFit.contain,
+                                        )
+                                      : const Text(
+                                          '?',
+                                          style: TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                              // Winning-tile marker: lets the user mark this
+                              // physical tile as the あがり牌 right where its
+                              // identification result already is, instead of a
+                              // separate text-chip list elsewhere on the screen.
+                              if (_operation == HandOperation.score &&
+                                  tile != null) ...[
+                                const SizedBox(height: 2),
+                                GestureDetector(
+                                  onTap: () => setState(() {
+                                    _confirmedWinningTileId = winningTileId;
+                                    _invalidateAnalysis();
+                                  }),
+                                  child: Icon(
+                                    isWinningTile
+                                        ? Icons.radio_button_checked
+                                        : Icons.radio_button_unchecked,
+                                    size: 16,
+                                    color: isWinningTile
+                                        ? Colors.amber
+                                        : Colors.white38,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        );
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                if (_tileQuads.any((q) => q == null))
+
+                  // Training data send/undo button: placed right here, next
+                  // to the thumbnails, because it becomes available
+                  // (`_trainingTilesReady`) at the same point as "識別実行"
+                  // below — right after per-tile identification is
+                  // confirmed/corrected — rather than after the whole
+                  // scoring flow (see FEZ-191).
+                  if (_trainingTilesReady) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _isSendingTraining || _isUndoingTraining
+                            ? null
+                            : _trainingDataSent
+                            ? _undoTrainingData
+                            : _sendTrainingData,
+                        icon: _isSendingTraining || _isUndoingTraining
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Icon(
+                                _trainingDataSent ? Icons.undo : Icons.school,
+                                size: 18,
+                              ),
+                        label: Text(
+                          _isSendingTraining
+                              ? '送信中...'
+                              : _isUndoingTraining
+                              ? '取り消し中...'
+                              : _trainingDataSent
+                              ? '取り消す'
+                              : '学習データとして送信',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _trainingDataSent
+                              ? Colors.grey.withValues(alpha: 0.5)
+                              : Colors.orange.withValues(alpha: 0.5),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+
+                  DropdownButtonFormField<HandOperation>(
+                    initialValue: _operation,
+                    dropdownColor: Colors.grey.shade900,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: '実行する機能',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: HandOperation.values
+                        .map(
+                          (operation) => DropdownMenuItem(
+                            value: operation,
+                            child: Text(_operationLabel(operation)),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (operation) {
+                      if (operation == null) return;
+                      setState(() {
+                        _operation = operation;
+                        _invalidateInterpretation();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Context input
+                  ContextInputPanel(
+                    context_: _context,
+                    onChanged: (c) => setState(() {
+                      _context = c;
+                      _scoreResult = null;
+                      _analysisResult = null;
+                      _isNotWinning = false;
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+
+                  if (_interpretation != null) ...[
+                    _buildInterpretationConfirmation(),
+                    const SizedBox(height: 12),
+                  ],
+
+                  if (_isNotWinning) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        '上がりの形になっていません',
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  if (_scoreResult != null) ...[
+                    ScoreResultPanel(scoreResponse: _scoreResult!),
+                    const SizedBox(height: 8),
+                  ],
+
+                  if (_analysisResult != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _analysisSummary(_analysisResult!),
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // Open the admin web dashboard in the device browser.
                   Align(
-                    alignment: Alignment.centerRight,
+                    alignment: Alignment.centerLeft,
                     child: TextButton.icon(
-                      onPressed: _addMissingTileBox,
+                      onPressed: () => launchUrl(
+                        Uri.parse(AppConfig.apiBaseUrl),
+                        mode: LaunchMode.externalApplication,
+                      ),
                       icon: const Icon(
-                        Icons.add_box_outlined,
+                        Icons.dashboard_outlined,
                         size: 18,
-                        color: Colors.greenAccent,
+                        color: Colors.white70,
                       ),
                       label: const Text(
-                        '枠を追加',
-                        style: TextStyle(color: Colors.greenAccent),
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 4),
-              ],
-
-              // Cropped images preview, each paired with its identified
-              // tile's illustration directly below (or "?" until "識別実行"
-              // has been run for it). Tapping the crop opens the box editor
-              // (`_openBoxEditor`); tapping the illustration opens the
-              // image-based picker (`_onSlotTap`) to correct it manually.
-              SizedBox(
-                height: 118,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _visibleSlotCount,
-                  itemBuilder: (_, i) {
-                    final thumb = _croppedImageThumbnails[i];
-                    if (thumb == null) return const SizedBox(width: 40);
-                    final tile = _tiles[i];
-                    final tileAsset = tile == null ? null : tileAssetPath(tile);
-                    final winningTileId =
-                        'tile-${i.toString().padLeft(3, '0')}';
-                    final isWinningTile =
-                        _confirmedWinningTileId == winningTileId;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          GestureDetector(
-                            onTap: () => _openBoxEditor(i),
-                            child: Image.memory(
-                              thumb,
-                              width: 40,
-                              height: 56,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          GestureDetector(
-                            onTap: () => _onSlotTap(i),
-                            child: Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              alignment: Alignment.center,
-                              child: _isClassifying[i]
-                                  ? const SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 1.5,
-                                        color: Colors.white54,
-                                      ),
-                                    )
-                                  : tileAsset != null
-                                  ? Image.asset(tileAsset, fit: BoxFit.contain)
-                                  : const Text(
-                                      '?',
-                                      style: TextStyle(
-                                        color: Colors.white38,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          // Winning-tile marker: lets the user mark this
-                          // physical tile as the あがり牌 right where its
-                          // identification result already is, instead of a
-                          // separate text-chip list elsewhere on the screen.
-                          if (_operation == HandOperation.score &&
-                              tile != null) ...[
-                            const SizedBox(height: 2),
-                            GestureDetector(
-                              onTap: () => setState(() {
-                                _confirmedWinningTileId = winningTileId;
-                                _invalidateAnalysis();
-                              }),
-                              child: Icon(
-                                isWinningTile
-                                    ? Icons.radio_button_checked
-                                    : Icons.radio_button_unchecked,
-                                size: 16,
-                                color: isWinningTile
-                                    ? Colors.amber
-                                    : Colors.white38,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              // Runs AI classification for every cropped tile at once —
-              // separate from cropping itself so the AI only runs when
-              // explicitly asked for (see `_runClassification`).
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _croppedImages.any((c) => c != null)
-                      ? _runClassification
-                      : null,
-                  icon: const Icon(Icons.auto_awesome, size: 18),
-                  label: const Text('識別実行'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.greenAccent,
-                    side: const BorderSide(color: Colors.greenAccent),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              DropdownButtonFormField<HandOperation>(
-                initialValue: _operation,
-                dropdownColor: Colors.grey.shade900,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: '実行する機能',
-                  labelStyle: TextStyle(color: Colors.white70),
-                  border: OutlineInputBorder(),
-                ),
-                items: HandOperation.values
-                    .map(
-                      (operation) => DropdownMenuItem(
-                        value: operation,
-                        child: Text(_operationLabel(operation)),
-                      ),
-                    )
-                    .toList(growable: false),
-                onChanged: (operation) {
-                  if (operation == null) return;
-                  setState(() {
-                    _operation = operation;
-                    _invalidateInterpretation();
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-
-              // Context input
-              ContextInputPanel(
-                context_: _context,
-                onChanged: (c) => setState(() {
-                  _context = c;
-                  _scoreResult = null;
-                  _analysisResult = null;
-                  _isNotWinning = false;
-                }),
-              ),
-              const SizedBox(height: 12),
-
-              if (_interpretation != null) ...[
-                _buildInterpretationConfirmation(),
-                const SizedBox(height: 12),
-              ],
-
-              // Buttons
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _backToCamera,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: 0.15),
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('撮り直す'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      onPressed:
-                          _allDetectedTilesReady &&
-                              !_isScoring &&
-                              !_isInterpreting
-                          ? (_interpretation == null
-                                ? _runInterpretation
-                                : _confirmAndAnalyze)
-                          : null,
-                      icon: _isScoring || _isInterpreting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.fact_check_outlined, size: 20),
-                      label: Text(
-                        _interpretation == null
-                            ? '画像解釈を確認'
-                            : '${_operationLabel(_operation)}を実行',
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _allDetectedTilesReady
-                            ? Colors.green.withValues(alpha: 0.6)
-                            : Colors.white.withValues(alpha: 0.1),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        'Webダッシュボードを開く',
+                        style: TextStyle(color: Colors.white70),
                       ),
                     ),
                   ),
                 ],
               ),
-
-              if (_errorMessage != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  _errorMessage!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-                ),
-              ],
-
-              if (_isNotWinning) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Text(
-                    '上がりの形になっていません',
-                    style: TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-
-              if (_scoreResult != null) ...[
-                const SizedBox(height: 8),
-                ScoreResultPanel(scoreResponse: _scoreResult!),
-              ],
-
-              if (_analysisResult != null) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _analysisSummary(_analysisResult!),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-
-              // Open the admin web dashboard in the device browser.
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => launchUrl(
-                    Uri.parse(AppConfig.apiBaseUrl),
-                    mode: LaunchMode.externalApplication,
-                  ),
-                  icon: const Icon(
-                    Icons.dashboard_outlined,
-                    size: 18,
-                    color: Colors.white70,
-                  ),
-                  label: const Text(
-                    'Webダッシュボードを開く',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                ),
-              ),
-
-              // Training data send/undo button.
-              if (_trainingTilesReady) ...[
-                const SizedBox(height: 4),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _isSendingTraining || _isUndoingTraining
-                        ? null
-                        : _trainingDataSent
-                        ? _undoTrainingData
-                        : _sendTrainingData,
-                    icon: _isSendingTraining || _isUndoingTraining
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Icon(
-                            _trainingDataSent ? Icons.undo : Icons.school,
-                            size: 18,
-                          ),
-                    label: Text(
-                      _isSendingTraining
-                          ? '送信中...'
-                          : _isUndoingTraining
-                          ? '取り消し中...'
-                          : _trainingDataSent
-                          ? '取り消す'
-                          : '学習データとして送信',
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _trainingDataSent
-                          ? Colors.grey.withValues(alpha: 0.5)
-                          : Colors.orange.withValues(alpha: 0.5),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
-        ),
+
+          // Fixed action bar: always reachable without scrolling, unlike
+          // everything above. Shows just the identify step until every
+          // detected tile has a result, then switches to retake/proceed —
+          // the two actions that matter once identification is done (see
+          // FEZ-191; before that point there's nothing to retake yet).
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            decoration: const BoxDecoration(
+              color: Colors.black,
+              border: Border(top: BorderSide(color: Colors.white12)),
+            ),
+            child: !_allDetectedTilesReady
+                ? SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _croppedImages.any((c) => c != null)
+                          ? _runClassification
+                          : null,
+                      icon: const Icon(Icons.auto_awesome, size: 18),
+                      label: const Text('識別実行'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.greenAccent,
+                        side: const BorderSide(color: Colors.greenAccent),
+                      ),
+                    ),
+                  )
+                : Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _backToCamera,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white.withValues(
+                              alpha: 0.15,
+                            ),
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('撮り直す'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          onPressed: !_isScoring && !_isInterpreting
+                              ? (_interpretation == null
+                                    ? _runInterpretation
+                                    : _confirmAndAnalyze)
+                              : null,
+                          icon: _isScoring || _isInterpreting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.fact_check_outlined, size: 20),
+                          label: Text(
+                            _interpretation == null
+                                ? '画像解釈を確認'
+                                : '${_operationLabel(_operation)}を実行',
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green.withValues(
+                              alpha: 0.6,
+                            ),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ],
       ),
     );
   }
 }
-
-/// Paints semi-transparent overlay with transparent cutouts for tile slots.
-class _SlotOverlayPainter extends CustomPainter {
-  final Rect slotRect;
-  final int slotCount;
-
-  _SlotOverlayPainter({required this.slotRect, required this.slotCount});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
-
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = Colors.black.withValues(alpha: 0.5),
-    );
-
-    final clearPaint = Paint()..blendMode = BlendMode.clear;
-    final slotW = slotRect.width / slotCount;
-    for (int i = 0; i < slotCount; i++) {
-      canvas.drawRect(
-        Rect.fromLTWH(
-          slotRect.left + i * slotW,
-          slotRect.top,
-          slotW,
-          slotRect.height,
-        ),
-        clearPaint,
-      );
-    }
-
-    final borderPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.5)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-    for (int i = 0; i < slotCount; i++) {
-      canvas.drawRect(
-        Rect.fromLTWH(
-          slotRect.left + i * slotW,
-          slotRect.top,
-          slotW,
-          slotRect.height,
-        ),
-        borderPaint,
-      );
-    }
-
-    canvas.drawRect(
-      Rect.fromLTWH(
-        slotRect.left + (slotCount - 1) * slotW,
-        slotRect.top,
-        slotW,
-        slotRect.height,
-      ),
-      Paint()
-        ..color = Colors.greenAccent.withValues(alpha: 0.8)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
-    );
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _SlotOverlayPainter old) =>
-      slotRect != old.slotRect || slotCount != old.slotCount;
-}
-
