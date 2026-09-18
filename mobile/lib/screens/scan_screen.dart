@@ -18,7 +18,6 @@ import '../models/interpretation_request.dart';
 import '../models/interpretation_result.dart';
 import '../models/tile_observation.dart';
 import '../widgets/tile_image_picker.dart';
-import '../widgets/meld_tile_picker.dart';
 import '../widgets/context_input_panel.dart';
 import '../widgets/game_state_panel.dart';
 import '../widgets/score_result_panel.dart';
@@ -26,6 +25,7 @@ import '../widgets/tile_marker_overlay.dart';
 import '../services/training_data_client.dart';
 import '../services/tile_segmenter.dart';
 import '../services/tile_assets.dart';
+import '../services/meld_detector.dart';
 import '../models/tile_quad.dart';
 import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
@@ -110,18 +110,44 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isNotWinning = false;
   InterpretationResult? _interpretation;
   String? _confirmedWinningTileId;
+  // Tracks whether `_confirmedWinningTileId` came from the user dragging the
+  // frame themselves, as opposed to the rightmost-tile default below or the
+  // AI's own suggestion in `_runInterpretation` — only a manual choice may
+  // never be silently overwritten.
+  bool _winningTileManuallySet = false;
   final List<ConfirmedMeld> _confirmedMelds = [];
   HandOperation _operation = HandOperation.score;
   Map<String, dynamic>? _analysisResult;
   final RequestEpoch _requestEpoch = RequestEpoch();
 
+  // Inline meld-selection mode (see `_buildMeldSection`): while active, taps
+  // on the thumbnail row pick meld members instead of their normal
+  // edit/correct behavior.
+  bool _isSelectingMeld = false;
+  final Set<int> _meldSelection = {};
+
   ContextInput _context = ContextInput();
+
+  /// The rightmost identified physical tile's observation id, or null if
+  /// none are identified yet — the results screen's default あがり牌 frame
+  /// position before the AI suggests one or the user drags it themselves.
+  String? get _defaultWinningTileId {
+    for (int index = _maxPhysicalTiles - 1; index >= 0; index--) {
+      if (_tiles[index] != null) {
+        return 'tile-${index.toString().padLeft(3, '0')}';
+      }
+    }
+    return null;
+  }
 
   void _invalidateInterpretation() {
     _invalidateAnalysis();
     _interpretation = null;
-    _confirmedWinningTileId = null;
+    _confirmedWinningTileId = _defaultWinningTileId;
+    _winningTileManuallySet = false;
     _confirmedMelds.clear();
+    _isSelectingMeld = false;
+    _meldSelection.clear();
   }
 
   void _invalidateAnalysis() {
@@ -597,13 +623,15 @@ class _ScanScreenState extends State<ScanScreen> {
         _interpretation = result;
         // Pre-fill the winning-tile marker (the actual selection UI, in
         // the thumbnail row above) from the image's own reading, when it
-        // found one and the user hasn't already picked one themselves —
-        // this replaces a separate, confusing "suggested winning tile"
-        // text block that duplicated this same information without
-        // driving the real control.
+        // found one and the user hasn't already dragged the frame
+        // themselves (whatever it's currently showing before this point is
+        // at most the rightmost-tile default from `_invalidateInterpretation`,
+        // never a manual choice) — this replaces a separate, confusing
+        // "suggested winning tile" text block that duplicated this same
+        // information without driving the real control.
         final suggestedId = result.winningTile.observationId;
         if (_operation == HandOperation.score &&
-            _confirmedWinningTileId == null &&
+            !_winningTileManuallySet &&
             suggestedId != null &&
             result.winningTile.status != FactStatus.unknown) {
           _confirmedWinningTileId = suggestedId;
@@ -900,28 +928,66 @@ class _ScanScreenState extends State<ScanScreen> {
     return result.toString();
   }
 
-  Future<void> _showAddMeldDialog() async {
-    final available = <int>[
-      for (int index = 0; index < _maxPhysicalTiles; index++)
-        if (_tiles[index] != null &&
-            !_confirmedMelds.any(
-              (meld) => meld.observationIds.contains(
-                'tile-${index.toString().padLeft(3, '0')}',
-              ),
-            ))
-          index,
-    ];
-    final meld = await MeldTilePicker.show(
-      context,
-      availableIndices: available,
-      tileCodeOf: (index) => _tiles[index],
-    );
-    if (meld != null && mounted) {
-      setState(() {
-        _confirmedMelds.add(meld);
-        _invalidateAnalysis();
-      });
-    }
+  /// Physical-tile indices eligible to join a new meld: identified, and not
+  /// already claimed by an existing `ConfirmedMeld`.
+  List<int> get _meldEligibleIndices => [
+    for (int index = 0; index < _maxPhysicalTiles; index++)
+      if (_tiles[index] != null &&
+          !_confirmedMelds.any(
+            (meld) => meld.observationIds.contains(
+              'tile-${index.toString().padLeft(3, '0')}',
+            ),
+          ))
+        index,
+  ];
+
+  void _startMeldSelection() {
+    setState(() {
+      _isSelectingMeld = true;
+      _meldSelection.clear();
+    });
+  }
+
+  void _cancelMeldSelection() {
+    setState(() {
+      _isSelectingMeld = false;
+      _meldSelection.clear();
+    });
+  }
+
+  void _toggleMeldSelection(int index) {
+    if (!_meldEligibleIndices.contains(index)) return;
+    setState(() {
+      if (_meldSelection.contains(index)) {
+        _meldSelection.remove(index);
+      } else if (_meldSelection.length < 4) {
+        _meldSelection.add(index);
+      }
+    });
+  }
+
+  List<String> get _meldSelectionTileCodes => _meldSelection
+      .map((index) => _tiles[index])
+      .whereType<String>()
+      .toList(growable: false);
+
+  /// Appends a `ConfirmedMeld` built from the current `_meldSelection` and
+  /// exits selection mode. [type]/[open] are the wire values to record —
+  /// callers must already know these are valid for the current selection
+  /// (pon/chi from `detectMeldType`, or the user's own 暗槓/明槓 choice for a
+  /// 4-tile kan).
+  void _confirmMeldSelection({required String type, required bool open}) {
+    final observationIds = _meldSelection
+        .map((index) => 'tile-${index.toString().padLeft(3, '0')}')
+        .toList(growable: false);
+    setState(() {
+      _confirmedMelds.add(
+        ConfirmedMeld(observationIds: observationIds, type: type, open: open),
+      );
+      _isSelectingMeld = false;
+      _meldSelection.clear();
+      _invalidateAnalysis();
+    });
   }
 
   /// Meld (副露) confirmation/editing — a table fact (which physical tiles
@@ -970,13 +1036,85 @@ class _ScanScreenState extends State<ScanScreen> {
                 }),
               ),
             ),
-          TextButton.icon(
-            onPressed: _showAddMeldDialog,
-            icon: const Icon(Icons.add),
-            label: const Text('鳴き・槓を追加'),
-          ),
+          if (!_isSelectingMeld)
+            TextButton.icon(
+              onPressed: _meldEligibleIndices.isEmpty
+                  ? null
+                  : _startMeldSelection,
+              icon: const Icon(Icons.add),
+              label: const Text('副露を追加'),
+            )
+          else
+            _buildMeldSelectionStatus(),
         ],
       ),
+    );
+  }
+
+  /// The inline status/confirm row shown while `_isSelectingMeld` — replaces
+  /// `MeldTilePicker`'s bottom sheet: the user taps thumbnails in the
+  /// results row directly (see `_toggleMeldSelection`) instead of picking
+  /// from a separate grid, and pon/chi/kan is inferred from what they picked
+  /// (`detectMeldType`) instead of an explicit type dropdown.
+  Widget _buildMeldSelectionStatus() {
+    final codes = _meldSelectionTileCodes;
+    final detection = detectMeldType(codes);
+    final count = _meldSelection.length;
+    final target = count == 4 ? 4 : 3;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'サムネイルをタップして3枚（チー/ポン）または4枚（槓）選択 '
+          '($count/$target)',
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            TextButton(
+              onPressed: _cancelMeldSelection,
+              child: const Text('キャンセル'),
+            ),
+            const SizedBox(width: 8),
+            if (detection == MeldDetection.kan) ...[
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _confirmMeldSelection(
+                    type: 'ankan',
+                    open: false,
+                  ),
+                  child: const Text('暗槓（閉じ）'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () =>
+                      _confirmMeldSelection(type: 'kan', open: true),
+                  child: const Text('明槓（開き）'),
+                ),
+              ),
+            ] else
+              Expanded(
+                child: FilledButton(
+                  onPressed:
+                      detection == MeldDetection.pon ||
+                          detection == MeldDetection.chi
+                      ? () => _confirmMeldSelection(
+                          type: detection == MeldDetection.pon
+                              ? 'pon'
+                              : 'chi',
+                          open: true,
+                        )
+                      : null,
+                  child: const Text('確定'),
+                ),
+              ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -1002,7 +1140,7 @@ class _ScanScreenState extends State<ScanScreen> {
             style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
           ),
           Text(
-            'あがり牌: 上の牌画像下のマークをタップして選択',
+            'あがり牌: 上の牌画像の枠を長押しして別の牌にドラッグすると変更できます',
             style: TextStyle(color: Colors.white70),
           ),
         ],
@@ -1378,7 +1516,14 @@ class _ScanScreenState extends State<ScanScreen> {
                   // tile's illustration directly below (or "?" until "識別実行"
                   // has been run for it). Tapping the crop opens the box editor
                   // (`_openBoxEditor`); tapping the illustration opens the
-                  // image-based picker (`_onSlotTap`) to correct it manually.
+                  // image-based picker (`_onSlotTap`) to correct it manually —
+                  // except while `_isSelectingMeld`, when every tap instead
+                  // toggles that slot's meld membership (`_toggleMeldSelection`).
+                  // The あがり牌 frame is a border overlay on whichever thumbnail
+                  // is currently selected, moved by long-press-then-drag onto
+                  // another thumbnail (`LongPressDraggable`/`DragTarget`) — long
+                  // press specifically so a plain horizontal swipe still reaches
+                  // this `ListView`'s own scroll instead of starting a drag.
                   SizedBox(
                     height: 118,
                     child: ListView.builder(
@@ -1395,79 +1540,156 @@ class _ScanScreenState extends State<ScanScreen> {
                             'tile-${i.toString().padLeft(3, '0')}';
                         final isWinningTile =
                             _confirmedWinningTileId == winningTileId;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              GestureDetector(
-                                onTap: () => _openBoxEditor(i),
-                                child: Image.memory(
-                                  thumb,
-                                  width: 40,
-                                  height: 56,
-                                  fit: BoxFit.cover,
-                                ),
+                        final isMeldSelected = _meldSelection.contains(i);
+                        final isMeldEligible = _meldEligibleIndices.contains(
+                          i,
+                        );
+                        final canBeWinningTile =
+                            _operation == HandOperation.score &&
+                            tile != null &&
+                            !_isSelectingMeld;
+
+                        Widget column = Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            GestureDetector(
+                              onTap: _isSelectingMeld
+                                  ? () => _toggleMeldSelection(i)
+                                  : () => _openBoxEditor(i),
+                              child: Image.memory(
+                                thumb,
+                                width: 40,
+                                height: 56,
+                                fit: BoxFit.cover,
                               ),
-                              const SizedBox(height: 4),
-                              GestureDetector(
-                                onTap: () => _onSlotTap(i),
-                                child: Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: _isClassifying[i]
-                                      ? const SizedBox(
-                                          width: 14,
-                                          height: 14,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 1.5,
-                                            color: Colors.white54,
-                                          ),
-                                        )
-                                      : tileAsset != null
-                                      ? Image.asset(
-                                          tileAsset,
-                                          fit: BoxFit.contain,
-                                        )
-                                      : const Text(
-                                          '?',
-                                          style: TextStyle(
-                                            color: Colors.white38,
-                                            fontSize: 16,
+                            ),
+                            const SizedBox(height: 4),
+                            GestureDetector(
+                              onTap: _isSelectingMeld
+                                  ? () => _toggleMeldSelection(i)
+                                  : () => _onSlotTap(i),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                alignment: Alignment.center,
+                                child: _isClassifying[i]
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 1.5,
+                                          color: Colors.white54,
+                                        ),
+                                      )
+                                    : tileAsset != null
+                                    ? Image.asset(
+                                        tileAsset,
+                                        fit: BoxFit.contain,
+                                      )
+                                    : const Text(
+                                        '?',
+                                        style: TextStyle(
+                                          color: Colors.white38,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ],
+                        );
+
+                        // Meld-selection-mode affordance: a colored border
+                        // on a selected slot, dimmed when the slot can't
+                        // join a meld (unidentified or already claimed).
+                        if (_isSelectingMeld) {
+                          column = Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              border: isMeldSelected
+                                  ? Border.all(
+                                      color: Colors.greenAccent,
+                                      width: 2,
+                                    )
+                                  : null,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Opacity(
+                              opacity: isMeldEligible ? 1.0 : 0.35,
+                              child: column,
+                            ),
+                          );
+                        }
+
+                        // あがり牌 frame: an overlay border around the crop +
+                        // glyph, replacing the old small radio marker below
+                        // them.
+                        final Widget framed = !canBeWinningTile
+                            ? column
+                            : Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  column,
+                                  if (isWinningTile)
+                                    Positioned.fill(
+                                      child: IgnorePointer(
+                                        child: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            border: Border.all(
+                                              color: Colors.amber,
+                                              width: 2,
+                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
                                           ),
                                         ),
-                                ),
-                              ),
-                              // Winning-tile marker: lets the user mark this
-                              // physical tile as the あがり牌 right where its
-                              // identification result already is, instead of a
-                              // separate text-chip list elsewhere on the screen.
-                              if (_operation == HandOperation.score &&
-                                  tile != null) ...[
-                                const SizedBox(height: 2),
-                                GestureDetector(
-                                  onTap: () => setState(() {
-                                    _confirmedWinningTileId = winningTileId;
-                                    _invalidateAnalysis();
-                                  }),
-                                  child: Icon(
-                                    isWinningTile
-                                        ? Icons.radio_button_checked
-                                        : Icons.radio_button_unchecked,
-                                    size: 16,
-                                    color: isWinningTile
-                                        ? Colors.amber
-                                        : Colors.white38,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
+                                      ),
+                                    ),
+                                ],
+                              );
+
+                        final Widget item = Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: framed,
+                        );
+
+                        if (!canBeWinningTile) return item;
+
+                        return DragTarget<int>(
+                          onAcceptWithDetails: (_) => setState(() {
+                            _confirmedWinningTileId = winningTileId;
+                            _winningTileManuallySet = true;
+                            _invalidateAnalysis();
+                          }),
+                          builder: (context, candidateData, rejectedData) {
+                            final target = candidateData.isNotEmpty
+                                ? DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Colors.amber.withValues(
+                                        alpha: 0.15,
+                                      ),
+                                    ),
+                                    child: item,
+                                  )
+                                : item;
+                            return isWinningTile
+                                ? LongPressDraggable<int>(
+                                    data: i,
+                                    feedback: Opacity(
+                                      opacity: 0.7,
+                                      child: item,
+                                    ),
+                                    childWhenDragging: Opacity(
+                                      opacity: 0.3,
+                                      child: item,
+                                    ),
+                                    child: target,
+                                  )
+                                : target;
+                          },
                         );
                       },
                     ),
