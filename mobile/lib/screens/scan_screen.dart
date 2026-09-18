@@ -20,6 +20,7 @@ import '../models/tile_observation.dart';
 import '../widgets/tile_image_picker.dart';
 import '../widgets/meld_tile_picker.dart';
 import '../widgets/context_input_panel.dart';
+import '../widgets/game_state_panel.dart';
 import '../widgets/score_result_panel.dart';
 import '../widgets/tile_marker_overlay.dart';
 import '../services/training_data_client.dart';
@@ -1493,6 +1494,23 @@ class _ScanScreenState extends State<ScanScreen> {
                   ],
                   const SizedBox(height: 12),
 
+                  // Round/hand facts (winds, dora indicators, honba,
+                  // kyotaku) — only relevant to score calculation, unlike
+                  // the win-time conditions in the "詳細条件" sheet, which
+                  // apply here too but not to tenpai/discard-analysis mode.
+                  if (_operation == HandOperation.score) ...[
+                    GameStatePanel(
+                      context_: _context,
+                      onChanged: (c) => setState(() {
+                        _context = c;
+                        _scoreResult = null;
+                        _analysisResult = null;
+                        _isNotWinning = false;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
                   if (_interpretation != null) ...[
                     _buildInterpretationConfirmation(),
                     const SizedBox(height: 12),
@@ -1617,8 +1635,15 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
                 const SizedBox(width: 8),
                 IconButton(
-                  onPressed: _showContextDetailsSheet,
-                  icon: const Icon(Icons.tune, color: Colors.white70),
+                  // Riichi/ippatsu/haitei etc. only affect score
+                  // calculation, so there's nothing useful to set here in
+                  // tenpai/discard-analysis mode.
+                  onPressed: _operation == HandOperation.score
+                      ? _showContextDetailsSheet
+                      : null,
+                  icon: const Icon(Icons.tune),
+                  color: Colors.white70,
+                  disabledColor: Colors.white24,
                   tooltip: '詳細条件',
                   style: IconButton.styleFrom(
                     backgroundColor: Colors.white.withValues(alpha: 0.1),
