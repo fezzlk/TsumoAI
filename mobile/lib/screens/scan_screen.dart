@@ -924,35 +924,34 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  Widget _buildInterpretationConfirmation() {
-    final interpretation = _interpretation;
-    if (interpretation == null) return const SizedBox.shrink();
+  /// Meld (副露) confirmation/editing — a table fact (which physical tiles
+  /// are melds), independent of whether image interpretation has run, so
+  /// unlike `_buildInterpretationConfirmation` this isn't gated on
+  /// `_interpretation != null`. Previously lived inside that gated panel,
+  /// which meant there was no way to mark melds until after pressing 実行
+  /// once — confusing, since nothing about marking a meld actually needs
+  /// the AI's interpretation result.
+  Widget _buildMeldSection() {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.amber.withValues(alpha: 0.12),
-        border: Border.all(color: Colors.amber),
+        color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            '画像解釈の確認',
-            style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
+            '副露（鳴き・槓）',
+            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold),
           ),
-          if (_operation == HandOperation.score &&
-              _confirmedWinningTileId == null) ...[
-            const Text(
-              'あがり牌: 上の牌画像下のマークをタップして選択',
-              style: TextStyle(color: Colors.white70),
-            ),
-            const SizedBox(height: 8),
-          ],
-          if (interpretation.melds.isNotEmpty)
-            Text(
-              '画像からの鳴き検出: ${interpretation.melds.map((meld) => '${_meldTypeLabel(meld.type)}(${_factStatusLabel(meld.status)})').join('、')}',
-              style: const TextStyle(color: Colors.white70),
+          if (_interpretation?.melds.isNotEmpty ?? false)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '画像からの鳴き検出: ${_interpretation!.melds.map((meld) => '${_meldTypeLabel(meld.type)}(${_factStatusLabel(meld.status)})').join('、')}',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
             ),
           for (int index = 0; index < _confirmedMelds.length; index++)
             ListTile(
@@ -975,6 +974,36 @@ class _ScanScreenState extends State<ScanScreen> {
             onPressed: _showAddMeldDialog,
             icon: const Icon(Icons.add),
             label: const Text('鳴き・槓を追加'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInterpretationConfirmation() {
+    final interpretation = _interpretation;
+    if (interpretation == null) return const SizedBox.shrink();
+    if (!(_operation == HandOperation.score &&
+        _confirmedWinningTileId == null)) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.12),
+        border: Border.all(color: Colors.amber),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '画像解釈の確認',
+            style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
+          ),
+          Text(
+            'あがり牌: 上の牌画像下のマークをタップして選択',
+            style: TextStyle(color: Colors.white70),
           ),
         ],
       ),
@@ -1492,6 +1521,15 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 12),
+
+                  // Melds are a table fact (which physical tiles are 副露),
+                  // not something that requires running image
+                  // interpretation first — always visible, unlike
+                  // interpretation.melds's ← AI-detected reading, which is
+                  // still tucked inside this same section but only shown
+                  // once interpretation exists.
+                  _buildMeldSection(),
                   const SizedBox(height: 12),
 
                   // Round/hand facts (winds, dora indicators, honba,
