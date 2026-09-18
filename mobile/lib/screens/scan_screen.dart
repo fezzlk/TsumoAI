@@ -522,7 +522,9 @@ class _ScanScreenState extends State<ScanScreen> {
   /// a trapezoid, not just a rotated rectangle). Does NOT reclassify —
   /// only the results screen's "識別実行" button runs the AI, so editing a
   /// box clears that tile's previous result rather than guessing again
-  /// immediately.
+  /// immediately. On delete, clears the slot entirely via `_clearTileSlot`
+  /// (see FEZ-193 — previously the only way to undo a wrongly-added box
+  /// was to retake the whole photo).
   Future<void> _openBoxEditor(int index, {TileQuad? initialDecodedQuad}) async {
     final srcImage = _capturedImage;
     final imageBytes = _capturedBytes;
@@ -531,7 +533,7 @@ class _ScanScreenState extends State<ScanScreen> {
     final quad = _tileQuads[index] ?? initialDecodedQuad;
     if (quad == null) return;
 
-    final newQuad = await Navigator.of(context).push<TileQuad>(
+    final result = await Navigator.of(context).push<TileBoxEditorResult>(
       MaterialPageRoute(
         builder: (_) => TileBoxEditorScreen(
           rawImageBytes: imageBytes,
@@ -541,8 +543,14 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       ),
     );
-    if (newQuad == null || !mounted) return;
+    if (result == null || !mounted) return;
 
+    if (result is TileBoxEditorDeleted) {
+      setState(() => _clearTileSlot(index));
+      return;
+    }
+
+    final newQuad = (result as TileBoxEditorConfirmed).quad;
     final cropped = _cropQuad(srcImage, newQuad);
 
     setState(() {
@@ -556,6 +564,20 @@ class _ScanScreenState extends State<ScanScreen> {
       _candidates[index] = [];
       _invalidateInterpretation();
     });
+  }
+
+  /// Resets tile slot [index] back to empty (no quad, crop, or
+  /// classification) — the per-tile counterpart to `_backToCamera`'s full
+  /// reset. Must be called inside `setState`.
+  void _clearTileSlot(int index) {
+    _tileQuads[index] = null;
+    _croppedImages[index] = null;
+    _croppedImageThumbnails[index] = null;
+    _tiles[index] = null;
+    _predictedTiles[index] = null;
+    _candidates[index] = [];
+    _isClassifying[index] = false;
+    _invalidateInterpretation();
   }
 
   /// Opens the editor for the next empty physical-tile slot, seeded with a
