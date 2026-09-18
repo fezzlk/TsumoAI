@@ -740,6 +740,52 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  /// Opens the game-context settings (場風/自風/リーチ/ドラ表示牌 etc., via
+  /// `ContextInputPanel`) as a bottom sheet instead of always inline in the
+  /// scroll — most hands don't need to touch these every time. Wrapped in
+  /// `StatefulBuilder` so the sheet's own content redraws immediately after
+  /// each edit; `ContextInputPanel` only re-renders when given a new
+  /// `context_`, and a plain `setState` here rebuilds `ScanScreen`, not this
+  /// separately-routed sheet.
+  void _showContextDetailsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 12,
+                right: 12,
+                top: 12,
+                bottom: 12 + MediaQuery.of(sheetContext).viewInsets.bottom,
+              ),
+              child: SingleChildScrollView(
+                child: ContextInputPanel(
+                  context_: _context,
+                  onChanged: (c) {
+                    setState(() {
+                      _context = c;
+                      _scoreResult = null;
+                      _analysisResult = null;
+                      _isNotWinning = false;
+                    });
+                    setSheetState(() {});
+                  },
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _backToCamera() {
     setState(() {
       _phase = _ScanPhase.camera;
@@ -1447,45 +1493,6 @@ class _ScanScreenState extends State<ScanScreen> {
                   ],
                   const SizedBox(height: 12),
 
-                  DropdownButtonFormField<HandOperation>(
-                    initialValue: _operation,
-                    dropdownColor: Colors.grey.shade900,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: '実行する機能',
-                      labelStyle: TextStyle(color: Colors.white70),
-                      border: OutlineInputBorder(),
-                    ),
-                    items: HandOperation.values
-                        .map(
-                          (operation) => DropdownMenuItem(
-                            value: operation,
-                            child: Text(_operationLabel(operation)),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (operation) {
-                      if (operation == null) return;
-                      setState(() {
-                        _operation = operation;
-                        _invalidateInterpretation();
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Context input
-                  ContextInputPanel(
-                    context_: _context,
-                    onChanged: (c) => setState(() {
-                      _context = c;
-                      _scoreResult = null;
-                      _analysisResult = null;
-                      _isNotWinning = false;
-                    }),
-                  ),
-                  const SizedBox(height: 12),
-
                   if (_interpretation != null) ...[
                     _buildInterpretationConfirmation(),
                     const SizedBox(height: 12),
@@ -1558,64 +1565,110 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
 
           // Fixed action bar: always reachable without scrolling, unlike
-          // everything above. Shows just the identify step until every
-          // detected tile has a result, then the proceed step — retake
-          // lives in its own bar above the photo instead (see FEZ-191
-          // follow-up: a "撮り直す" here was only ever reachable once
-          // identification finished, too late to catch an obviously bad
-          // photo, and duplicated in intent with a since-removed AppBar
-          // back button).
+          // everything above. Left to right: function (HandOperation)
+          // dropdown, a button opening the game-context settings sheet
+          // (`_showContextDetailsSheet`), then the main action — "識別実行"
+          // until every detected tile has a result, then a plain "実行"
+          // (see FEZ-191 follow-up: "画像解釈を確認" vs "○○を実行" split
+          // was confusing; it's the same two-step _runInterpretation ->
+          // _confirmAndAnalyze flow underneath, just always labeled the
+          // same). Retake lives in its own bar above the photo instead — a
+          // "撮り直す" here was only ever reachable once identification
+          // finished, too late to catch an obviously bad photo, and
+          // duplicated in intent with a since-removed AppBar back button.
           Container(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             decoration: const BoxDecoration(
               color: Colors.black,
               border: Border(top: BorderSide(color: Colors.white12)),
             ),
-            child: !_allDetectedTilesReady
-                ? SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _croppedImages.any((c) => c != null)
-                          ? _runClassification
-                          : null,
-                      icon: const Icon(Icons.auto_awesome, size: 18),
-                      label: const Text('識別実行'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.greenAccent,
-                        side: const BorderSide(color: Colors.greenAccent),
-                      ),
-                    ),
-                  )
-                : SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: !_isScoring && !_isInterpreting
-                          ? (_interpretation == null
-                                ? _runInterpretation
-                                : _confirmAndAnalyze)
-                          : null,
-                      icon: _isScoring || _isInterpreting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.fact_check_outlined, size: 20),
-                      label: Text(
-                        _interpretation == null
-                            ? '画像解釈を確認'
-                            : '${_operationLabel(_operation)}を実行',
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.withValues(alpha: 0.6),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
+            child: Row(
+              children: [
+                Container(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<HandOperation>(
+                      value: _operation,
+                      isDense: true,
+                      dropdownColor: Colors.grey.shade900,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      items: HandOperation.values
+                          .map(
+                            (operation) => DropdownMenuItem(
+                              value: operation,
+                              child: Text(_operationLabel(operation)),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (operation) {
+                        if (operation == null) return;
+                        setState(() {
+                          _operation = operation;
+                          _invalidateInterpretation();
+                        });
+                      },
                     ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _showContextDetailsSheet,
+                  icon: const Icon(Icons.tune, color: Colors.white70),
+                  tooltip: '詳細条件',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: !_allDetectedTilesReady
+                      ? OutlinedButton.icon(
+                          onPressed: _croppedImages.any((c) => c != null)
+                              ? _runClassification
+                              : null,
+                          icon: const Icon(Icons.auto_awesome, size: 18),
+                          label: const Text('識別実行'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.greenAccent,
+                            side: const BorderSide(color: Colors.greenAccent),
+                          ),
+                        )
+                      : ElevatedButton.icon(
+                          onPressed: !_isScoring && !_isInterpreting
+                              ? (_interpretation == null
+                                    ? _runInterpretation
+                                    : _confirmAndAnalyze)
+                              : null,
+                          icon: _isScoring || _isInterpreting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.play_arrow, size: 20),
+                          label: const Text('実行'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green.withValues(
+                              alpha: 0.6,
+                            ),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
