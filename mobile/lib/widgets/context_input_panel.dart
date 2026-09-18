@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/score_request.dart';
-import 'tile_glyph.dart';
-import 'tile_image_picker.dart';
 
-/// Compact panel for game context input.
-/// Basic options always visible; advanced options in expandable section.
+/// Win-time scoring conditions — ツモ/ロン, リーチ・一発, and the rare
+/// situational flags (海底・河底・嶺上・槍槓・地和・天和). Facts about the
+/// current round that aren't tied to winning (場風・自風・ドラ表示牌・本場・
+/// 供託) live in `GameStatePanel` on the main results screen instead.
 class ContextInputPanel extends StatefulWidget {
   final ContextInput context_;
   final ValueChanged<ContextInput> onChanged;
@@ -36,23 +36,11 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Row 1: Winds + Win type
+          // Row 1: Win type + Riichi + Ippatsu
           Row(
             children: [
-              _windSelector('場風', _ctx.roundWind, (v) =>
-                  _update(_ctx.copyWith(roundWind: v))),
-              const SizedBox(width: 8),
-              _windSelector('自風', _ctx.seatWind, (v) =>
-                  _update(_ctx.copyWith(seatWind: v, isDealer: v == 'E'))),
-              const SizedBox(width: 12),
               _winTypeToggle(),
-            ],
-          ),
-          const SizedBox(height: 6),
-
-          // Row 2: Riichi + Ippatsu
-          Row(
-            children: [
+              const SizedBox(width: 12),
               _riichiSelector(),
               if (_ctx.riichi || _ctx.doubleRiichi) ...[
                 const SizedBox(width: 8),
@@ -79,13 +67,13 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
             ],
           ),
 
-          // Expanded: advanced options
+          // Expanded: rare situational flags
           if (_expanded) ...[
             const SizedBox(height: 6),
             const Divider(color: Colors.white12, height: 1),
             const SizedBox(height: 6),
 
-            // Row 3: Haitei, Houtei, Rinshan, Chankan
+            // Row 2: Haitei, Houtei, Rinshan, Chankan, Chiihou, Tenhou
             Wrap(
               spacing: 6, runSpacing: 4,
               children: [
@@ -97,82 +85,21 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
                 _chip('天和', _ctx.tenhou, (v) => _update(_ctx.copyWith(tenhou: v))),
               ],
             ),
-            const SizedBox(height: 8),
-
-            // ドラ表示牌 (always relevant) / 裏ドラ表示牌 (only meaningful
-            // under riichi, so only shown then). Aka-dora is NOT entered
-            // here — it's counted automatically from the actual recognized
-            // hand tiles (see scan_screen.dart's `_confirmAndAnalyze`),
-            // since the app already knows which tiles are red fives.
-            _doraIndicatorRow(
-              'ドラ表示牌',
-              _ctx.doraIndicators,
-              (list) => _update(_ctx.copyWith(doraIndicators: list)),
-            ),
-            if (_ctx.riichi || _ctx.doubleRiichi) ...[
-              const SizedBox(height: 6),
-              _doraIndicatorRow(
-                '裏ドラ表示牌',
-                _ctx.uraDoraIndicators,
-                (list) => _update(_ctx.copyWith(uraDoraIndicators: list)),
-              ),
-            ],
-            const SizedBox(height: 8),
-
-            // Row 4: Honba, Kyotaku
-            Row(
-              children: [
-                _numberInput('本場', _ctx.honba, (v) => _update(_ctx.copyWith(honba: v))),
-                const SizedBox(width: 12),
-                _numberInput('供託', _ctx.kyotaku, (v) => _update(_ctx.copyWith(kyotaku: v))),
-              ],
-            ),
           ],
         ],
       ),
     );
   }
 
-  Widget _windSelector(String label, String value, ValueChanged<String> onChanged) {
-    const winds = ['E', 'S', 'W', 'N'];
-    const windLabels = {'E': '東', 'S': '南', 'W': '西', 'N': '北'};
+  Widget _winTypeToggle() {
+    final isTsumo = _ctx.winType == 'tsumo';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+        _chipButton('ツモ', isTsumo, () => _update(_ctx.copyWith(winType: 'tsumo'))),
         const SizedBox(width: 4),
-        Container(
-          height: 30,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: value, isDense: true,
-              dropdownColor: Colors.grey[850],
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              items: winds.map((w) => DropdownMenuItem(value: w, child: Text(windLabels[w]!))).toList(),
-              onChanged: (v) { if (v != null) onChanged(v); },
-            ),
-          ),
-        ),
+        _chipButton('ロン', !isTsumo, () => _update(_ctx.copyWith(winType: 'ron'))),
       ],
-    );
-  }
-
-  Widget _winTypeToggle() {
-    final isTsumo = _ctx.winType == 'tsumo';
-    return Expanded(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          _chipButton('ツモ', isTsumo, () => _update(_ctx.copyWith(winType: 'tsumo'))),
-          const SizedBox(width: 4),
-          _chipButton('ロン', !isTsumo, () => _update(_ctx.copyWith(winType: 'ron'))),
-        ],
-      ),
     );
   }
 
@@ -234,119 +161,6 @@ class _ContextInputPanelState extends State<ContextInputPanel> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _doraIndicatorRow(
-    String label,
-    List<String> indicators,
-    ValueChanged<List<String>> onChanged,
-  ) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              for (int i = 0; i < indicators.length; i++)
-                GestureDetector(
-                  onTap: () {
-                    final next = [...indicators]..removeAt(i);
-                    onChanged(next);
-                  },
-                  child: Container(
-                    width: 26,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.white24),
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: Padding(
-                            padding: const EdgeInsets.all(2),
-                            child: TileGlyph(
-                              tileCode: indicators[i],
-                              fallbackTextStyle: const TextStyle(color: Colors.white, fontSize: 10),
-                            ),
-                          ),
-                        ),
-                        const Positioned(
-                          right: 0,
-                          top: 0,
-                          child: Icon(Icons.close, size: 10, color: Colors.redAccent),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              GestureDetector(
-                onTap: () async {
-                  final tile = await TileImagePicker.show(context);
-                  if (tile != null) onChanged([...indicators, tile]);
-                },
-                child: Container(
-                  width: 26,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.white24, style: BorderStyle.solid),
-                  ),
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.add, size: 16, color: Colors.white54),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _numberInput(String label, int value, ValueChanged<int> onChanged) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
-        const SizedBox(width: 4),
-        GestureDetector(
-          onTap: () { if (value > 0) onChanged(value - 1); },
-          child: Container(
-            width: 24, height: 24,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            alignment: Alignment.center,
-            child: const Text('-', style: TextStyle(color: Colors.white54, fontSize: 14)),
-          ),
-        ),
-        Container(
-          width: 28, height: 24,
-          alignment: Alignment.center,
-          child: Text('$value', style: const TextStyle(color: Colors.white, fontSize: 13)),
-        ),
-        GestureDetector(
-          onTap: () => onChanged(value + 1),
-          child: Container(
-            width: 24, height: 24,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            alignment: Alignment.center,
-            child: const Text('+', style: TextStyle(color: Colors.white54, fontSize: 14)),
-          ),
-        ),
-      ],
     );
   }
 }
