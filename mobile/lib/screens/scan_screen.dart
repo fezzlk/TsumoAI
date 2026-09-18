@@ -1003,11 +1003,11 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text('牌をスキャン'),
-        backgroundColor: Colors.black87,
-        foregroundColor: Colors.white,
-      ),
+      // No AppBar: its only job would have been a back button, which
+      // duplicated "撮り直す" (retake stays within this screen, keeping the
+      // camera controller alive; a real back button would instead pop the
+      // whole screen back to Home). Resolved by dropping the AppBar rather
+      // than keeping both — see FEZ-191 follow-up.
       body: switch (_phase) {
         _ScanPhase.camera => _buildCameraPhase(),
         _ScanPhase.detecting => _buildDetectingPhase(),
@@ -1233,6 +1233,32 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Retake, above the photo as its own bar (not overlaid on
+                  // it) so it can't be mis-tapped during the photo's own
+                  // pinch-zoom/pan gestures, and not pinned to the bottom
+                  // bar either — it scrolls away with the rest of the
+                  // content like any other one-off decision made right
+                  // after reviewing the capture (see FEZ-191 follow-up: it
+                  // used to live in the bottom action bar, which hid it
+                  // entirely until every tile was identified — too late to
+                  // catch an obviously bad photo).
+                  Container(
+                    color: Colors.black87,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _backToCamera,
+                        icon: const Icon(Icons.replay, size: 18, color: Colors.white70),
+                        label: const Text(
+                          '撮り直す',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+
                   // Full photo with detected-tile markers. Sized by the photo's
                   // own aspect ratio (not a fixed screen fraction) so a portrait
                   // capture gets a tall box and a landscape capture a short one
@@ -1533,9 +1559,12 @@ class _ScanScreenState extends State<ScanScreen> {
 
           // Fixed action bar: always reachable without scrolling, unlike
           // everything above. Shows just the identify step until every
-          // detected tile has a result, then switches to retake/proceed —
-          // the two actions that matter once identification is done (see
-          // FEZ-191; before that point there's nothing to retake yet).
+          // detected tile has a result, then the proceed step — retake
+          // lives in its own bar above the photo instead (see FEZ-191
+          // follow-up: a "撮り直す" here was only ever reachable once
+          // identification finished, too late to catch an obviously bad
+          // photo, and duplicated in intent with a since-removed AppBar
+          // back button).
           Container(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             decoration: const BoxDecoration(
@@ -1557,54 +1586,35 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     ),
                   )
-                : Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: _backToCamera,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white.withValues(
-                              alpha: 0.15,
-                            ),
-                            foregroundColor: Colors.white,
-                          ),
-                          child: const Text('撮り直す'),
-                        ),
+                : SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: !_isScoring && !_isInterpreting
+                          ? (_interpretation == null
+                                ? _runInterpretation
+                                : _confirmAndAnalyze)
+                          : null,
+                      icon: _isScoring || _isInterpreting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.fact_check_outlined, size: 20),
+                      label: Text(
+                        _interpretation == null
+                            ? '画像解釈を確認'
+                            : '${_operationLabel(_operation)}を実行',
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: ElevatedButton.icon(
-                          onPressed: !_isScoring && !_isInterpreting
-                              ? (_interpretation == null
-                                    ? _runInterpretation
-                                    : _confirmAndAnalyze)
-                              : null,
-                          icon: _isScoring || _isInterpreting
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.fact_check_outlined, size: 20),
-                          label: Text(
-                            _interpretation == null
-                                ? '画像解釈を確認'
-                                : '${_operationLabel(_operation)}を実行',
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green.withValues(
-                              alpha: 0.6,
-                            ),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.withValues(alpha: 0.6),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                    ],
+                    ),
                   ),
           ),
         ],
