@@ -57,24 +57,30 @@ class GameStatePanel extends StatelessWidget {
                 context_.kyotaku,
                 (v) => onChanged(context_.copyWith(kyotaku: v)),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _indicatorRow(
+                  context,
+                  'ドラ表示牌',
+                  context_.doraIndicators,
+                  (list) => onChanged(context_.copyWith(doraIndicators: list)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Always visible (not just when riichi is set) — 裏ドラ表示牌
+              // is a table fact from the photo like ドラ表示牌 itself, so it
+              // sits in the same row rather than appearing/disappearing
+              // based on a different field.
+              Expanded(
+                child: _indicatorRow(
+                  context,
+                  '裏ドラ表示牌',
+                  context_.uraDoraIndicators,
+                  (list) => onChanged(context_.copyWith(uraDoraIndicators: list)),
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 8),
-          _indicatorRow(
-            context,
-            'ドラ表示牌',
-            context_.doraIndicators,
-            (list) => onChanged(context_.copyWith(doraIndicators: list)),
-          ),
-          if (context_.riichi || context_.doubleRiichi) ...[
-            const SizedBox(height: 6),
-            _indicatorRow(
-              context,
-              '裏ドラ表示牌',
-              context_.uraDoraIndicators,
-              (list) => onChanged(context_.copyWith(uraDoraIndicators: list)),
-            ),
-          ],
         ],
       ),
     );
