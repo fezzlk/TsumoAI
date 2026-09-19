@@ -149,6 +149,41 @@ void main() {
     expect(boxes.length, nTiles);
   });
 
+  test('segmentTiles honors each selected count from 13 through 17', () {
+    const width = 550;
+    const tileW = 500, tileH = 340, gap = 16;
+    const pitch = tileH + gap;
+
+    for (final nTiles in [13, 14, 15, 16, 17]) {
+      final height = 20 + nTiles * pitch + 40;
+      final canvas = _darkBackground(width, height);
+      for (int i = 0; i < nTiles; i++) {
+        _fillTile(canvas, 25, 20 + i * pitch, tileW, tileH);
+      }
+
+      final boxes = segmentTiles(canvas, expectedTileCount: nTiles);
+
+      expect(
+        boxes.length,
+        nTiles,
+        reason: 'the selected $nTiles-tile prior must stay exact',
+      );
+    }
+  });
+
+  test('segmentTiles rejects unsupported selected counts', () {
+    final canvas = _darkBackground(100, 100);
+
+    expect(
+      () => segmentTiles(canvas, expectedTileCount: 12),
+      throwsArgumentError,
+    );
+    expect(
+      () => segmentTiles(canvas, expectedTileCount: 18),
+      throwsArgumentError,
+    );
+  });
+
   test('segmentTiles drops an unrelated blob past fourteen', () {
     // A stray white blob disconnected from the tile run (e.g. a spare tile
     // left in frame) must not inflate the count past the known 13/14 hand
@@ -330,7 +365,7 @@ void main() {
       final image = _loadCaseImage(name);
       if (image == null) continue; // eval fixture not present in this environment
       final rgb = image.numChannels == 3 ? image : image.convert(numChannels: 3);
-      final boxes = segmentTiles(rgb);
+      final boxes = segmentTiles(rgb, expectedTileCount: 14);
       expect(boxes.length, 14, reason: '$name should detect exactly 14 tiles');
     }
   });

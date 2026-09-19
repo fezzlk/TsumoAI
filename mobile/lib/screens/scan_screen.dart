@@ -45,6 +45,7 @@ enum _ScanPhase { camera, detecting, results }
 
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
+  static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17];
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
   final ApiClient _api = ApiClient();
@@ -98,6 +99,7 @@ class _ScanScreenState extends State<ScanScreen> {
   Timer? _analysisTimer;
   TileDetectorResult? _liveDetectorResult;
   int _stableDetectionStreak = 0;
+  int _expectedTileCount = TileDetector.targetTileCount;
   static const int _requiredStableFrames = 2;
   static const Duration _analysisInterval = Duration(seconds: 1);
 
@@ -310,7 +312,7 @@ class _ScanScreenState extends State<ScanScreen> {
       final result = await TileDetector.detect(frame);
       if (!mounted || _phase != _ScanPhase.camera) return;
 
-      final isFullDetection = result.tileCount == TileDetector.targetTileCount;
+      final isFullDetection = result.tileCount == _expectedTileCount;
       setState(() {
         _liveDetectorResult = result;
         _stableDetectionStreak = isFullDetection
@@ -392,13 +394,16 @@ class _ScanScreenState extends State<ScanScreen> {
       });
 
       // Always proceed straight to the results phase with whatever
-      // detection found (13/14 clean, or short/over-counted) — the results
+      // detection found — the results
       // screen's "枠を追加" button and per-tile box editor already cover
       // fixing up any missing/wrong boxes, so a partial/imperfect detection
       // no longer needs to fall back to the separate manual grid-alignment
-      // phase (that fallback used to trigger on any non-13/14 count, which
+      // phase (that fallback used to trigger on a count outside 13/14, which
       // was hitting often enough to be disruptive on its own).
-      final detected = await compute(segmentTilesWithHintsFromBytes, bytes);
+      final detected = await compute(
+        segmentTilesWithHintsForExpectedCount,
+        (bytes: bytes, expectedTileCount: _expectedTileCount),
+      );
       if (!mounted) return;
       await _classifyBoxesAndFinish(
         detected.boxes,
@@ -950,7 +955,9 @@ class _ScanScreenState extends State<ScanScreen> {
     for (int index = 0; index < _maxPhysicalTiles; index++) {
       if (_tileQuads[index] != null || _tiles[index] != null) last = index;
     }
-    return math.max(14, last + 1).clamp(14, _maxPhysicalTiles);
+    return math
+        .max(_expectedTileCount, last + 1)
+        .clamp(_expectedTileCount, _maxPhysicalTiles);
   }
 
   String _operationLabel(HandOperation operation) => switch (operation) {
@@ -1531,6 +1538,12 @@ class _ScanScreenState extends State<ScanScreen> {
               ),
             ),
           ),
+          Positioned(
+            top: 68,
+            left: 0,
+            right: 0,
+            child: Center(child: _buildExpectedTileCountSelector()),
+          ),
           // Live detection tile-count badge + auto/manual shutter toggle
           // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
           // real devices, so manual capture must remain available).
@@ -1587,7 +1600,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildLiveTileCountBadge() {
     final count = _liveDetectorResult?.tileCount ?? 0;
-    final isReady = count == TileDetector.targetTileCount;
+    final isReady = count == _expectedTileCount;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1605,12 +1618,50 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const SizedBox(width: 6),
           Text(
-            '$count / ${TileDetector.targetTileCount} 牌',
+            '$count / $_expectedTileCount 牌',
             style: TextStyle(
               color: Colors.white,
               fontSize: 13,
               fontWeight: isReady ? FontWeight.bold : FontWeight.normal,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExpectedTileCountSelector() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '牌数',
+            style: TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(width: 8),
+          SegmentedButton<int>(
+            segments: [
+              for (final count in _selectableTileCounts)
+                ButtonSegment<int>(value: count, label: Text('$count')),
+            ],
+            selected: {_expectedTileCount},
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onSelectionChanged: (selection) {
+              setState(() {
+                _expectedTileCount = selection.single;
+                _stableDetectionStreak = 0;
+              });
+            },
           ),
         ],
       ),
