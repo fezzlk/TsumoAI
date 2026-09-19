@@ -22,6 +22,7 @@ import '../widgets/tile_glyph.dart';
 import '../widgets/context_input_panel.dart';
 import '../widgets/game_state_panel.dart';
 import '../widgets/score_result_panel.dart';
+import '../widgets/analysis_result_panel.dart';
 import '../widgets/tile_marker_overlay.dart';
 import '../services/training_data_client.dart';
 import '../services/tile_segmenter.dart';
@@ -958,34 +959,6 @@ class _ScanScreenState extends State<ScanScreen> {
     HandOperation.discardAnalysis => '打牌分析',
   };
 
-  String _analysisSummary(Map<String, dynamic> result) {
-    final shanten = result['shanten'];
-    final improving = result['improving_tiles'];
-    if (improving is List) {
-      final tiles = improving
-          .whereType<Map>()
-          .map((item) => '${item['tile']}(${item['remaining']})')
-          .join('、');
-      return 'シャンテン数: $shanten\n有効牌・待ち: ${tiles.isEmpty ? 'なし' : tiles}';
-    }
-    final discards = result['discards'];
-    if (discards is List) {
-      final lines = discards.whereType<Map>().take(8).map((item) {
-        final options = item['improving_tiles'];
-        final count = options is List
-            ? options.fold<int>(
-                0,
-                (sum, option) =>
-                    sum + ((option as Map)['remaining'] as num).toInt(),
-              )
-            : 0;
-        return '${item['discard']}: ${item['shanten']}シャンテン / 有効牌$count枚';
-      });
-      return ['シャンテン数: $shanten', ...lines].join('\n');
-    }
-    return result.toString();
-  }
-
   /// Physical-tile indices eligible to join a new meld: identified, and not
   /// already claimed by an existing `ConfirmedMeld`.
   List<int> get _meldEligibleIndices => [
@@ -1351,15 +1324,12 @@ class _ScanScreenState extends State<ScanScreen> {
                 if (_scoreResult != null)
                   ScoreResultPanel(scoreResponse: _scoreResult!),
                 if (_analysisResult != null)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(8),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.65,
                     ),
-                    child: Text(
-                      _analysisSummary(_analysisResult!),
-                      style: const TextStyle(color: Colors.white),
+                    child: SingleChildScrollView(
+                      child: AnalysisResultPanel(result: _analysisResult!),
                     ),
                   ),
               ],
@@ -2062,17 +2032,14 @@ class _ScanScreenState extends State<ScanScreen> {
                     const SizedBox(height: 12),
                   ],
 
-                  // Round/hand facts (winds, dora indicators, honba,
-                  // kyotaku) — only relevant to score calculation, unlike
-                  // the win-time conditions in the "詳細条件" sheet, which
-                  // apply here too but not to tenpai/discard-analysis mode.
-                  if (_operation == HandOperation.score) ...[
-                    GameStatePanel(
-                      context_: _context,
-                      onChanged: (c) => setState(() => _updateContext(c)),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
+                  // Round/hand facts stay visible for every operation. The
+                  // analysis API already receives this context and uses it
+                  // for wait-score predictions.
+                  GameStatePanel(
+                    context_: _context,
+                    onChanged: (c) => setState(() => _updateContext(c)),
+                  ),
+                  const SizedBox(height: 12),
 
                   if (_interpretation != null) ...[
                     _buildInterpretationConfirmation(),
