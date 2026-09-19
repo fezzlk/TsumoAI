@@ -19,8 +19,26 @@ Future<void> main() async {
   // happens to be in.
   await SystemChrome.setPreferredOrientations(
       [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await AuthService.initialize();
+
+  // These used to run unguarded: an exception here (network hiccup, stale
+  // Keychain state after a reinstall, etc.) meant runApp() was never
+  // reached and the app showed nothing at all — indistinguishable from a
+  // crash right at launch (FEZ-197). Neither failure should be fatal: the
+  // scan flow itself doesn't need Firebase/auth, only the training-data
+  // upload path does, and that path already has its own error handling.
+  String? startupError;
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  } catch (e) {
+    debugPrint('main: Firebase.initializeApp failed: $e');
+    startupError = 'Firebase初期化に失敗しました: $e';
+  }
+  try {
+    await AuthService.initialize();
+  } catch (e) {
+    debugPrint('main: AuthService.initialize failed: $e');
+    startupError ??= 'ログイン機能の初期化に失敗しました: $e';
+  }
 
   try {
     cameras = await availableCameras();
@@ -28,11 +46,12 @@ Future<void> main() async {
     cameras = [];
   }
 
-  runApp(const TsumoAIApp());
+  runApp(TsumoAIApp(startupError: startupError));
 }
 
 class TsumoAIApp extends StatelessWidget {
-  const TsumoAIApp({super.key});
+  final String? startupError;
+  const TsumoAIApp({super.key, this.startupError});
 
   @override
   Widget build(BuildContext context) {
@@ -46,14 +65,15 @@ class TsumoAIApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: HomeScreen(cameras: cameras),
+      home: HomeScreen(cameras: cameras, startupError: startupError),
     );
   }
 }
 
 class HomeScreen extends StatelessWidget {
   final List<CameraDescription> cameras;
-  const HomeScreen({super.key, required this.cameras});
+  final String? startupError;
+  const HomeScreen({super.key, required this.cameras, this.startupError});
 
   @override
   Widget build(BuildContext context) {
@@ -65,6 +85,23 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text('TsumoAI', style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+              if (startupError != null) ...[
+                const SizedBox(height: 16),
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.redAccent),
+                  ),
+                  child: Text(
+                    startupError!,
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
               const SizedBox(height: 40),
               _menuButton(context, Icons.camera_alt, '牌スキャン（14枚）', () {
                 Navigator.push(context, MaterialPageRoute(builder: (_) => ScanScreen(cameras: cameras)));
