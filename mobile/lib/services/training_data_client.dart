@@ -36,6 +36,10 @@ class TrainingDataClient {
     required img.Image tileImage,
     required String tileCode,
     String? predictedTileCode,
+    double? predictedConfidence,
+    String? recognitionModelVersion,
+    String? recognitionModelSource,
+    String? preprocessingVersion,
     String source = 'user',
   }) async {
     final token = await AuthService.idToken(interactive: true);
@@ -45,6 +49,10 @@ class TrainingDataClient {
       'image': MultipartFile.fromBytes(jpegBytes, filename: 'tile.jpg'),
       'tile_code': tileCode,
       'predicted_tile_code': ?predictedTileCode,
+      'predicted_confidence': ?predictedConfidence,
+      'recognition_model_version': ?recognitionModelVersion,
+      'recognition_model_source': ?recognitionModelSource,
+      'preprocessing_version': ?preprocessingVersion,
       'source': source,
     });
 
@@ -72,6 +80,10 @@ class TrainingDataClient {
     required List<img.Image> images,
     required List<String> tileCodes,
     required List<String> predictedTileCodes,
+    List<double?> predictedConfidences = const [],
+    String? recognitionModelVersion,
+    String? recognitionModelSource,
+    String? preprocessingVersion,
     String source = 'user',
   }) async {
     final count = images.length < tileCodes.length
@@ -86,6 +98,12 @@ class TrainingDataClient {
             predictedTileCode: i < predictedTileCodes.length
                 ? predictedTileCodes[i]
                 : null,
+            predictedConfidence: i < predictedConfidences.length
+                ? predictedConfidences[i]
+                : null,
+            recognitionModelVersion: recognitionModelVersion,
+            recognitionModelSource: recognitionModelSource,
+            preprocessingVersion: preprocessingVersion,
             source: source,
           );
           return (id: response['id'] as String, error: null as Object?);

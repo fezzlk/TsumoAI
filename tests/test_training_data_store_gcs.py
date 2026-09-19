@@ -79,7 +79,15 @@ def test_bucket_raises_when_not_configured():
 
 
 def test_upload_writes_image_meta_and_index(store):
-    result = store.upload(b"fake-jpeg-bytes", tile_code="1m", predicted_tile_code="2m")
+    result = store.upload(
+        b"fake-jpeg-bytes",
+        tile_code="1m",
+        predicted_tile_code="2m",
+        predicted_confidence=0.73,
+        recognition_model_version="20260916161322",
+        recognition_model_source="downloaded",
+        preprocessing_version="mobile-tile-preprocess-v1",
+    )
 
     assert result["id"]
     assert result["image_path"] in store._gcs.objects
@@ -88,6 +96,10 @@ def test_upload_writes_image_meta_and_index(store):
     assert meta["tile_code"] == "1m"
     assert meta["predicted_tile_code"] == "2m"
     assert meta["was_corrected"] is True
+    assert meta["predicted_confidence"] == 0.73
+    assert meta["recognition_model_version"] == "20260916161322"
+    assert meta["recognition_model_source"] == "downloaded"
+    assert meta["preprocessing_version"] == "mobile-tile-preprocess-v1"
 
     index = json.loads(store._gcs.objects["training-data/index.json"].decode("utf-8"))
     assert len(index) == 1

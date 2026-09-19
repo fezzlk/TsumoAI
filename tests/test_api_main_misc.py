@@ -376,18 +376,47 @@ def test_upload_training_data_validates_predicted_tile_code(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: {"uid": "user-1"}
     captured = {}
 
-    def fake_upload(image_bytes, tile_code, source, predicted_tile_code=None):
+    def fake_upload(image_bytes, tile_code, source, **metadata):
+        predicted_tile_code = metadata.get("predicted_tile_code")
         captured["predicted"] = predicted_tile_code
+        captured["metadata"] = metadata
         return {"id": "abc", "image_path": "x"}
 
     monkeypatch.setattr(main_module.training_data_store, "upload", fake_upload)
     response = client.post(
         "/api/v1/training-data/upload",
         files={"image": ("hand.jpg", b"x", "image/jpeg")},
-        data={"tile_code": "1m", "predicted_tile_code": "2m"},
+        data={
+            "tile_code": "1m",
+            "predicted_tile_code": "2m",
+            "predicted_confidence": "0.73",
+            "recognition_model_version": "20260916161322",
+            "recognition_model_source": "downloaded",
+            "preprocessing_version": "mobile-tile-preprocess-v1",
+        },
     )
     assert response.status_code == 200
     assert captured["predicted"] == "2m"
+    assert captured["metadata"]["predicted_confidence"] == 0.73
+    assert captured["metadata"]["recognition_model_version"] == "20260916161322"
+    assert captured["metadata"]["recognition_model_source"] == "downloaded"
+    assert captured["metadata"]["preprocessing_version"] == "mobile-tile-preprocess-v1"
+
+
+def test_upload_training_data_rejects_invalid_recognition_metadata():
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "user-1"}
+    files = {"image": ("hand.jpg", b"x", "image/jpeg")}
+
+    assert client.post(
+        "/api/v1/training-data/upload",
+        files=files,
+        data={"tile_code": "1m", "predicted_confidence": "1.1"},
+    ).status_code == 422
+    assert client.post(
+        "/api/v1/training-data/upload",
+        files=files,
+        data={"tile_code": "1m", "recognition_model_source": "other"},
+    ).status_code == 422
 
 
 def test_upload_training_data_rejects_invalid_predicted_tile_code():

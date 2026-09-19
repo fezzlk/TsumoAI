@@ -23,10 +23,12 @@ Usage:
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
 import shutil
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -60,6 +62,11 @@ TILE_CODE_TO_LABEL = {
     "1s": "bamboo-1", "2s": "bamboo-2", "3s": "bamboo-3",
     "4s": "bamboo-4", "5s": "bamboo-5", "6s": "bamboo-6",
     "7s": "bamboo-7", "8s": "bamboo-8", "9s": "bamboo-9",
+    # The current classifier predicts the 34 base tile identities. Keep red
+    # fives in that training set as their base five instead of silently
+    # dropping valuable real-camera examples. Red-vs-normal is a separate
+    # visual attribute and must be evaluated before adding output classes.
+    "5mr": "characters-5", "5pr": "dots-5", "5sr": "bamboo-5",
     "E": "honors-east", "S": "honors-south", "W": "honors-west", "N": "honors-north",
     "C": "honors-red", "F": "honors-green", "P": "honors-white",
 }
@@ -112,17 +119,17 @@ def load_gcs_dataset(bucket_name: str, label_to_idx: dict[str, int]) -> tuple[li
     print(f"  GCS: {len(entries)} entries in index")
 
     images, labels = [], []
-    skipped = 0
+    skipped: Counter[str] = Counter()
     for entry in entries:
         tile_code = entry.get("tile_code", "")
         label_name = TILE_CODE_TO_LABEL.get(tile_code)
         if label_name is None or label_name not in label_to_idx:
-            skipped += 1
+            skipped["unsupported_label"] += 1
             continue
 
         image_path = entry.get("image_path", "")
         if not image_path:
-            skipped += 1
+            skipped["missing_image_path"] += 1
             continue
 
         try:
@@ -131,11 +138,14 @@ def load_gcs_dataset(bucket_name: str, label_to_idx: dict[str, int]) -> tuple[li
             img = tf.keras.utils.load_img(io.BytesIO(data), target_size=(IMG_SIZE, IMG_SIZE))
             images.append(tf.keras.utils.img_to_array(img))
             labels.append(label_to_idx[label_name])
-        except Exception as e:
-            skipped += 1
+        except Exception:
+            skipped["image_download_or_decode"] += 1
             continue
 
-    print(f"  GCS: loaded {len(images)} images, skipped {skipped}")
+    skipped_total = sum(skipped.values())
+    print(f"  GCS: loaded {len(images)} images, skipped {skipped_total}")
+    for reason, count in sorted(skipped.items()):
+        print(f"    skipped.{reason}: {count}")
     return images, labels
 
 
@@ -244,6 +254,10 @@ def train(epochs: int, gcs_bucket: str | None = None, upload: bool = False):
 
     # Print per-class counts
     unique, counts = np.unique(labels, return_counts=True)
+    label_counts = {
+        label_names[int(idx)]: int(count)
+        for idx, count in zip(unique, counts)
+    }
     for idx, count in zip(unique, counts):
         print(f"  {label_names[idx]}: {count}")
 
@@ -345,10 +359,27 @@ def train(epochs: int, gcs_bucket: str | None = None, upload: bool = False):
 
     # Upload to GCS for dynamic model loading
     if upload and gcs_bucket:
-        _upload_model_to_gcs(gcs_bucket, tflite_model, labels_path.read_text(), val_acc)
+        _upload_model_to_gcs(
+            gcs_bucket,
+            tflite_model,
+            labels_path.read_text(),
+            val_acc,
+            dataset_size=len(images),
+            output_label_count=num_classes,
+            label_counts=label_counts,
+        )
 
 
-def _upload_model_to_gcs(bucket_name: str, tflite_bytes: bytes, labels_txt: str, val_acc: float):
+def _upload_model_to_gcs(
+    bucket_name: str,
+    tflite_bytes: bytes,
+    labels_txt: str,
+    val_acc: float,
+    *,
+    dataset_size: int,
+    output_label_count: int,
+    label_counts: dict[str, int],
+):
     from google.cloud import storage
     client = storage.Client()
     bucket = client.bucket(bucket_name)
@@ -365,8 +396,16 @@ def _upload_model_to_gcs(bucket_name: str, tflite_bytes: bytes, labels_txt: str,
 
     # Upload model metadata
     meta = {
+        "schema_version": 2,
         "version": version,
         "val_accuracy": val_acc,
+        "evaluation_scope": "random_image_split",
+        "dataset_size": dataset_size,
+        "output_label_count": output_label_count,
+        "observed_label_count": len(label_counts),
+        "label_counts": label_counts,
+        "model_sha256": hashlib.sha256(tflite_bytes).hexdigest(),
+        "labels_sha256": hashlib.sha256(labels_txt.encode("utf-8")).hexdigest(),
         "created_at": now.isoformat(),
     }
     blob = bucket.blob(f"models/{version}/meta.json")
