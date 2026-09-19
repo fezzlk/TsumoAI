@@ -2,7 +2,7 @@
 // pixel-space bounding box of each individual tile.
 //
 // This mirrors `app/tile_recognizer_local.py`'s `_segment_tiles` (server
-// side, Python) 1:1, including the joint 13/14-tile hand-size constraint
+// side, Python) 1:1, including the joint tile-count constraint
 // used to resolve ambiguity no single blob's own periodicity signal can
 // resolve alone (harmonic-locked autocorrelation, or a blob with no
 // periodicity of its own such as an unrelated object in frame). See that
@@ -20,16 +20,30 @@ typedef _Comp = ({int x, int y, int w, int h, int area});
 /// Detect individual tile bounding boxes in [image]. Returns boxes in
 /// [image]'s own pixel coordinate space (not downscaled). Empty if no
 /// plausible tile run is found.
-List<Rect> segmentTiles(img.Image image) => _segmentCore(image).boxes;
+List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
+    _segmentCore(image, expectedTileCount: expectedTileCount).boxes;
 
 /// Same as [segmentTiles], but also returns each box's local straightening
 /// angle hint (degrees) — see [_segmentCore] for how it's derived. For
 /// [refineTileCropWithRect] callers that want a per-tile rotation estimate
 /// more robust than a single tile's own (shadow-degraded) mask.
-({List<Rect> boxes, List<double> angleHints}) segmentTilesWithHints(img.Image image) =>
-    _segmentCore(image);
+({List<Rect> boxes, List<double> angleHints}) segmentTilesWithHints(
+  img.Image image, {
+  int? expectedTileCount,
+}) => _segmentCore(image, expectedTileCount: expectedTileCount);
 
-({List<Rect> boxes, List<double> angleHints}) _segmentCore(img.Image image) {
+({List<Rect> boxes, List<double> angleHints}) _segmentCore(
+  img.Image image, {
+  int? expectedTileCount,
+}) {
+  if (expectedTileCount != null &&
+      (expectedTileCount < 13 || expectedTileCount > 17)) {
+    throw ArgumentError.value(
+      expectedTileCount,
+      'expectedTileCount',
+      'must be between 13 and 17',
+    );
+  }
   const scale = 4;
   final w = image.width;
   final h = image.height;
@@ -147,12 +161,17 @@ List<Rect> segmentTiles(img.Image image) => _segmentCore(image).boxes;
   kept.sort((a, b) => a.y != b.y ? a.y.compareTo(b.y) : a.x.compareTo(b.x));
 
   // Estimate each blob's own pitch, then resolve tile counts jointly using
-  // the 13/14-tile hand-size constraint.
+  // the caller-selected tile-count constraint. Callers that omit it retain
+  // the legacy 13/14 behavior used by server-parity tests and tools.
   final blobPitches = <(int?, double, int)>[
     for (final c in kept) _blobPitch(maskRaw, mW, c.x, c.y, c.w, c.h, vertical),
   ];
   final dims = [for (final bp in blobPitches) bp.$3.toDouble()];
-  final tileCounts = _resolveTileCounts(dims, blobPitches);
+  final tileCounts = _resolveTileCounts(
+    dims,
+    blobPitches,
+    expectedTileCount: expectedTileCount,
+  );
 
   // Subdivide each kept component into individual tiles, scaling back up
   // to the original image's pixel coordinate space. Each slot's cross-axis
@@ -263,6 +282,28 @@ List<Rect> segmentTilesFromBytes(Uint8List bytes) {
   final oriented = img.bakeOrientation(decoded);
   final rgb = oriented.numChannels == 3 ? oriented : oriented.convert(numChannels: 3);
   return segmentTilesWithHints(rgb);
+}
+
+typedef TileSegmentationRequest = ({
+  Uint8List bytes,
+  int expectedTileCount,
+});
+
+/// Decode a captured image and segment it using the exact tile count selected
+/// on the camera screen. Suitable as a top-level `compute()` isolate entry
+/// point because the record contains only sendable values.
+({List<Rect> boxes, List<double> angleHints})
+segmentTilesWithHintsForExpectedCount(TileSegmentationRequest request) {
+  final decoded = img.decodeImage(request.bytes);
+  if (decoded == null) return (boxes: <Rect>[], angleHints: <double>[]);
+  final oriented = img.bakeOrientation(decoded);
+  final rgb = oriented.numChannels == 3
+      ? oriented
+      : oriented.convert(numChannels: 3);
+  return segmentTilesWithHints(
+    rgb,
+    expectedTileCount: request.expectedTileCount,
+  );
 }
 
 /// Given a rough (axis-aligned) detected bounding box for one tile, produce
@@ -928,7 +969,7 @@ List<double> _runProfile(Uint8List maskRaw, int maskW, int x, int y, int w, int 
   return (pitch, confidence, dim);
 }
 
-// ───────── Joint 13/14-tile-count resolution ─────────
+// ───────── Joint tile-count resolution ─────────
 
 const List<int> _handSizes = [13, 14];
 const double _dropMinCost = 0.3;
@@ -960,9 +1001,14 @@ double _median(List<double> values) {
 }
 
 /// Resolve each kept blob's tile count using the fact that a mahjong hand
-/// has exactly 13 or 14 tiles. See `_resolve_tile_counts` in
+/// has a known total tile count. Without an explicit count this retains the
+/// original 13/14 behavior. See `_resolve_tile_counts` in
 /// `app/tile_recognizer_local.py` for the full rationale.
-List<int> _resolveTileCounts(List<double> dims, List<(int?, double, int)> blobPitches) {
+List<int> _resolveTileCounts(
+  List<double> dims,
+  List<(int?, double, int)> blobPitches, {
+  int? expectedTileCount,
+}) {
   const referenceConfidence = 0.50;
   const minConfidence = 0.30;
 
@@ -994,12 +1040,15 @@ List<int> _resolveTileCounts(List<double> dims, List<(int?, double, int)> blobPi
 
   List<int>? bestCombo;
   double bestCost = double.infinity;
-  final maxHand = _handSizes.reduce(math.max);
+  final allowedHandSizes = expectedTileCount == null
+      ? _handSizes
+      : <int>[expectedTileCount];
+  final maxHand = allowedHandSizes.reduce(math.max);
 
   void search(int i, List<int> chosen, int sum, double costSoFar) {
     if (costSoFar >= bestCost) return;
     if (i == perBlobCosts.length) {
-      if (_handSizes.contains(sum)) {
+      if (allowedHandSizes.contains(sum)) {
         bestCombo = List<int>.from(chosen);
         bestCost = costSoFar;
       }
@@ -1015,7 +1064,11 @@ List<int> _resolveTileCounts(List<double> dims, List<(int?, double, int)> blobPi
 
   search(0, <int>[], 0, 0.0);
 
-  if (bestCombo != null && bestCost <= _maxTotalCost) {
+  // An explicit camera-screen choice is a strong prior: never broaden it to
+  // another hand size. The legacy no-argument path keeps the existing cost
+  // guard and fallback behavior unchanged.
+  if (bestCombo != null &&
+      (expectedTileCount != null || bestCost <= _maxTotalCost)) {
     return bestCombo!;
   }
 
