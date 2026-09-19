@@ -74,11 +74,22 @@ class TileClassifier {
   }
 
   /// Classify a cropped tile image with preprocessing pipeline.
-  List<TileClassification> classify(img.Image tileImage, {int topK = 3}) {
+  ///
+  /// The pure-Dart pixel-by-pixel preprocessing (`_preprocessTileForClassification`)
+  /// runs via `compute()` in a worker isolate — it used to run inline here on
+  /// the UI isolate and, at full crop resolution, was slow enough (several
+  /// full-resolution passes in pure Dart) to visibly freeze button taps
+  /// during "識別実行" across up to 18 tiles. The actual TFLite inference
+  /// below stays on the main isolate: it's fast (input is already resized to
+  /// 224x224) and `Interpreter` isn't safely shareable across isolates.
+  Future<List<TileClassification>> classify(
+    img.Image tileImage, {
+    int topK = 3,
+  }) async {
     if (!_isReady || _interpreter == null) return [];
 
     // Preprocessing pipeline
-    var processed = _preprocessTile(tileImage);
+    var processed = await compute(_preprocessTileForClassification, tileImage);
 
     // Resize to model input
     final resized = img.copyResize(processed, width: _inputSize, height: _inputSize);
@@ -124,108 +135,6 @@ class TileClassifier {
     return results.take(topK).toList();
   }
 
-  /// Preprocess a camera crop to look more like training data.
-  ///
-  /// 1. Edge detection (Sobel) to find tile face boundaries
-  /// 2. Crop to the detected tile face
-  /// 3. Replace green background with white
-  /// 4. Normalize contrast
-  img.Image _preprocessTile(img.Image src) {
-    final w = src.width;
-    final h = src.height;
-    if (w < 10 || h < 10) return src;
-
-    // Step 1: Edge detection to find tile face boundaries
-    final gray = img.grayscale(img.Image.from(src));
-    final edges = img.sobel(gray);
-
-    // Step 2: Horizontal projection (find top/bottom of tile face)
-    // Sum edge intensity per row
-    final hProj = List.filled(h, 0);
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        hProj[y] += edges.getPixel(x, y).r.toInt();
-      }
-    }
-    // Vertical projection (find left/right of tile face)
-    final vProj = List.filled(w, 0);
-    for (int x = 0; x < w; x++) {
-      for (int y = 0; y < h; y++) {
-        vProj[x] += edges.getPixel(x, y).r.toInt();
-      }
-    }
-
-    // Find bounds using edge concentration
-    int hPeak = 0, vPeak = 0;
-    for (final v in hProj) { if (v > hPeak) hPeak = v; }
-    for (final v in vProj) { if (v > vPeak) vPeak = v; }
-
-    final hThreshold = hPeak * 0.25;
-    final vThreshold = vPeak * 0.25;
-
-    int top = 0, bottom = h - 1, left = 0, right = w - 1;
-
-    // Find top edge (first row with significant edges)
-    for (int y = 0; y < h; y++) {
-      if (hProj[y] > hThreshold) { top = y; break; }
-    }
-    // Find bottom edge (last row with significant edges)
-    for (int y = h - 1; y >= 0; y--) {
-      if (hProj[y] > hThreshold) { bottom = y; break; }
-    }
-    // Find left edge
-    for (int x = 0; x < w; x++) {
-      if (vProj[x] > vThreshold) { left = x; break; }
-    }
-    // Find right edge
-    for (int x = w - 1; x >= 0; x--) {
-      if (vProj[x] > vThreshold) { right = x; break; }
-    }
-
-    // Validate bounds
-    if (right <= left + 5 || bottom <= top + 5) {
-      // Edge detection failed, use center crop
-      final margin = (w * 0.1).round();
-      left = margin;
-      right = w - margin;
-      top = (h * 0.05).round();
-      bottom = h - (h * 0.05).round();
-    }
-
-    // Add small padding inside
-    final padX = ((right - left) * 0.03).round();
-    final padY = ((bottom - top) * 0.03).round();
-    left = math.max(0, left + padX);
-    right = math.min(w - 1, right - padX);
-    top = math.max(0, top + padY);
-    bottom = math.min(h - 1, bottom - padY);
-
-    // Step 3: Crop to tile face
-    final cw = right - left;
-    final ch = bottom - top;
-    if (cw < 5 || ch < 5) return src;
-
-    var cropped = img.copyCrop(src, x: left, y: top, width: cw, height: ch);
-
-    // Step 4: Replace green pixels with white
-    for (int y = 0; y < cropped.height; y++) {
-      for (int x = 0; x < cropped.width; x++) {
-        final p = cropped.getPixel(x, y);
-        final r = p.r.toInt();
-        final g = p.g.toInt();
-        final b = p.b.toInt();
-        if (g > r + 15 && g > b + 15 && g > 50) {
-          cropped.setPixelRgb(x, y, 245, 245, 245);
-        }
-      }
-    }
-
-    // Step 5: Auto-contrast
-    cropped = img.normalize(cropped, min: 0, max: 255);
-
-    return cropped;
-  }
-
   static String _labelToTileCode(String label) {
     if (label.startsWith('dots-')) return '${label.substring(5)}p';
     if (label.startsWith('bamboo-')) return '${label.substring(7)}s';
@@ -256,4 +165,121 @@ class TileClassification {
 
   @override
   String toString() => '$tileCode (${(confidence * 100).toStringAsFixed(1)}%)';
+}
+
+/// Preprocess a camera crop to look more like training data — top-level (not
+/// a method) so it can run via `compute()` in a worker isolate; see
+/// `TileClassifier.classify`'s doc comment for why.
+///
+/// 1. Downscale (the boundary/color passes below only need to find rough
+///    edges and normalize color, not full capture resolution — and the
+///    eventual model input is 224x224 anyway)
+/// 2. Edge detection (Sobel) to find tile face boundaries
+/// 3. Crop to the detected tile face
+/// 4. Replace green background with white
+/// 5. Normalize contrast
+img.Image _preprocessTileForClassification(img.Image src) {
+  if (src.width < 10 || src.height < 10) return src;
+
+  const workingMaxDimension = 320;
+  final longSide = math.max(src.width, src.height);
+  final working = longSide > workingMaxDimension
+      ? img.copyResize(
+          src,
+          width: src.width >= src.height ? workingMaxDimension : null,
+          height: src.height > src.width ? workingMaxDimension : null,
+        )
+      : src;
+  final w = working.width;
+  final h = working.height;
+
+  // Step 2: Edge detection to find tile face boundaries
+  final gray = img.grayscale(img.Image.from(working));
+  final edges = img.sobel(gray);
+
+  // Step 3: Horizontal projection (find top/bottom of tile face)
+  // Sum edge intensity per row
+  final hProj = List.filled(h, 0);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      hProj[y] += edges.getPixel(x, y).r.toInt();
+    }
+  }
+  // Vertical projection (find left/right of tile face)
+  final vProj = List.filled(w, 0);
+  for (int x = 0; x < w; x++) {
+    for (int y = 0; y < h; y++) {
+      vProj[x] += edges.getPixel(x, y).r.toInt();
+    }
+  }
+
+  // Find bounds using edge concentration
+  int hPeak = 0, vPeak = 0;
+  for (final v in hProj) { if (v > hPeak) hPeak = v; }
+  for (final v in vProj) { if (v > vPeak) vPeak = v; }
+
+  final hThreshold = hPeak * 0.25;
+  final vThreshold = vPeak * 0.25;
+
+  int top = 0, bottom = h - 1, left = 0, right = w - 1;
+
+  // Find top edge (first row with significant edges)
+  for (int y = 0; y < h; y++) {
+    if (hProj[y] > hThreshold) { top = y; break; }
+  }
+  // Find bottom edge (last row with significant edges)
+  for (int y = h - 1; y >= 0; y--) {
+    if (hProj[y] > hThreshold) { bottom = y; break; }
+  }
+  // Find left edge
+  for (int x = 0; x < w; x++) {
+    if (vProj[x] > vThreshold) { left = x; break; }
+  }
+  // Find right edge
+  for (int x = w - 1; x >= 0; x--) {
+    if (vProj[x] > vThreshold) { right = x; break; }
+  }
+
+  // Validate bounds
+  if (right <= left + 5 || bottom <= top + 5) {
+    // Edge detection failed, use center crop
+    final margin = (w * 0.1).round();
+    left = margin;
+    right = w - margin;
+    top = (h * 0.05).round();
+    bottom = h - (h * 0.05).round();
+  }
+
+  // Add small padding inside
+  final padX = ((right - left) * 0.03).round();
+  final padY = ((bottom - top) * 0.03).round();
+  left = math.max(0, left + padX);
+  right = math.min(w - 1, right - padX);
+  top = math.max(0, top + padY);
+  bottom = math.min(h - 1, bottom - padY);
+
+  // Step 4: Crop to tile face
+  final cw = right - left;
+  final ch = bottom - top;
+  if (cw < 5 || ch < 5) return working;
+
+  var cropped = img.copyCrop(working, x: left, y: top, width: cw, height: ch);
+
+  // Step 5: Replace green pixels with white
+  for (int y = 0; y < cropped.height; y++) {
+    for (int x = 0; x < cropped.width; x++) {
+      final p = cropped.getPixel(x, y);
+      final r = p.r.toInt();
+      final g = p.g.toInt();
+      final b = p.b.toInt();
+      if (g > r + 15 && g > b + 15 && g > 50) {
+        cropped.setPixelRgb(x, y, 245, 245, 245);
+      }
+    }
+  }
+
+  // Step 6: Auto-contrast
+  cropped = img.normalize(cropped, min: 0, max: 255);
+
+  return cropped;
 }

@@ -28,7 +28,7 @@ class TileImagePicker extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.95),
       builder: (_) => TileImagePicker(
         currentTile: currentTile,
         onTileSelected: (tile) => Navigator.pop(context, tile),
@@ -39,35 +39,29 @@ class TileImagePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Cell size is derived from the AVAILABLE HEIGHT, not the row's
-          // width — sized to fit exactly 4 suit rows in whatever vertical
-          // space the sheet has (a short landscape screen included), rather
-          // than growing with a wide sheet's width and overflowing. Cells
-          // are then a fixed size and the row just uses however much width
-          // that needs, instead of stretching to fill it.
-          const headerHeight = 4.0 + 12 + 18 + 12; // handle + spacing + label + spacing
-          const rowSpacing = 6.0;
+          // Cell size is capped by BOTH the available height (fit exactly 4
+          // suit rows without scrolling — there's no fixed footer here,
+          // unlike `MeldTilePicker`, but a picker whose choices scroll out
+          // of view is worse) and the available width (a narrow portrait
+          // screen must not let the row overflow sideways). Whichever is
+          // smaller wins. On this app's short landscape screens the height
+          // cap is normally the binding one, so the header above the grid
+          // and the sheet's own height budget (`show`, above) are kept as
+          // small as they reasonably can be to leave the grid more room.
+          const headerHeight = 4.0 + 8 + 16 + 8; // handle + spacing + label + spacing
+          const rowSpacing = 4.0;
           final gridHeight = constraints.maxHeight - headerHeight - rowSpacing * 3;
-          final maxHeightPerCell = (gridHeight / 4 - 6);
-          // A cell size derived from height alone assumed the resulting row
-          // (label + 10 columns, each with horizontal margin) would always
-          // fit the available width — true in this app's original
-          // landscape-only screens, but not once a screen (single-tile
-          // training-data capture) started allowing portrait too: on a
-          // narrow portrait width, that row overflowed sideways with no
-          // scroll, making the last few tiles of each suit (e.g. 8m/9m)
-          // unreachable. Cap by width too, and take whichever is smaller so
-          // the grid never exceeds the actual available space either way.
+          final maxHeightPerCell = (gridHeight / 4 - 4);
           const labelColumnWidth = 20.0;
           const perCellHorizontalMargin = 2.0; // 1px each side, from _buildRow
           final maxWidthPerCell =
               (constraints.maxWidth - labelColumnWidth - _columns * perCellHorizontalMargin) /
                   _columns /
                   0.75; // convert a width budget to the equivalent height at aspect 0.75
-          final cellHeight = math.min(maxHeightPerCell, maxWidthPerCell).clamp(28.0, 64.0);
+          final cellHeight = math.min(maxHeightPerCell, maxWidthPerCell).clamp(28.0, 76.0);
           final cellWidth = cellHeight * 0.75;
 
           return Column(
@@ -80,9 +74,9 @@ class TileImagePicker extends StatelessWidget {
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               const Text('牌を選択', style: TextStyle(color: Colors.white70, fontSize: 14)),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               _buildRow('萬', _manRow, cellWidth, cellHeight),
               const SizedBox(height: rowSpacing),
               _buildRow('筒', _pinRow, cellWidth, cellHeight),

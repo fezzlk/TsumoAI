@@ -55,7 +55,7 @@ class OnDeviceRecognizer {
     final confidences = <double>[];
 
     for (final tileImage in result) {
-      final classifications = _classifier.classify(tileImage, topK: 1);
+      final classifications = await _classifier.classify(tileImage, topK: 1);
       if (classifications.isEmpty) continue;
       tileCodes.add(classifications.first.tileCode);
       confidences.add(classifications.first.confidence);
