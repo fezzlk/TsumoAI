@@ -49,9 +49,17 @@ Future<void> main() async {
   runApp(TsumoAIApp(startupError: startupError));
 }
 
-class TsumoAIApp extends StatelessWidget {
+class TsumoAIApp extends StatefulWidget {
   final String? startupError;
   const TsumoAIApp({super.key, this.startupError});
+
+  @override
+  State<TsumoAIApp> createState() => _TsumoAIAppState();
+}
+
+class _TsumoAIAppState extends State<TsumoAIApp> {
+  bool _autoClassify = false;
+  String _roundWind = 'E';
 
   @override
   Widget build(BuildContext context) {
@@ -65,7 +73,14 @@ class TsumoAIApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: HomeScreen(cameras: cameras, startupError: startupError),
+      home: HomeScreen(
+        cameras: cameras,
+        startupError: widget.startupError,
+        autoClassify: _autoClassify,
+        roundWind: _roundWind,
+        onAutoClassifyChanged: (value) => setState(() => _autoClassify = value),
+        onRoundWindChanged: (value) => setState(() => _roundWind = value),
+      ),
     );
   }
 }
@@ -73,7 +88,20 @@ class TsumoAIApp extends StatelessWidget {
 class HomeScreen extends StatelessWidget {
   final List<CameraDescription> cameras;
   final String? startupError;
-  const HomeScreen({super.key, required this.cameras, this.startupError});
+  final bool autoClassify;
+  final String roundWind;
+  final ValueChanged<bool> onAutoClassifyChanged;
+  final ValueChanged<String> onRoundWindChanged;
+
+  const HomeScreen({
+    super.key,
+    required this.cameras,
+    this.startupError,
+    required this.autoClassify,
+    required this.roundWind,
+    required this.onAutoClassifyChanged,
+    required this.onRoundWindChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -102,9 +130,21 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
               ],
-              const SizedBox(height: 40),
-              _menuButton(context, Icons.camera_alt, '牌スキャン（14枚）', () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => ScanScreen(cameras: cameras)));
+              const SizedBox(height: 24),
+              _buildScanSettings(),
+              const SizedBox(height: 24),
+              _menuButton(context, Icons.camera_alt, '牌スキャン', () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ScanScreen(
+                      cameras: cameras,
+                      autoClassify: autoClassify,
+                      initialRoundWind: roundWind,
+                      onRoundWindChanged: onRoundWindChanged,
+                    ),
+                  ),
+                );
               }),
               const SizedBox(height: 16),
               _menuButton(context, Icons.school, '学習データ作成（1枚）', () {
@@ -142,6 +182,57 @@ class HomeScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildScanSettings() {
+    const windLabels = {'E': '東', 'S': '南', 'W': '西', 'N': '北'};
+    return Container(
+      width: 520,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Text(
+            '場風',
+            style: TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+          const SizedBox(width: 8),
+          SegmentedButton<String>(
+            segments: [
+              for (final entry in windLabels.entries)
+                ButtonSegment<String>(
+                  value: entry.key,
+                  label: Text(entry.value),
+                ),
+            ],
+            selected: {roundWind},
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onSelectionChanged: (selection) {
+              onRoundWindChanged(selection.single);
+            },
+          ),
+          const SizedBox(width: 20),
+          const Expanded(
+            child: Text(
+              '撮影後に自動識別',
+              textAlign: TextAlign.right,
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+          Switch(
+            value: autoClassify,
+            onChanged: onAutoClassifyChanged,
+          ),
+        ],
       ),
     );
   }

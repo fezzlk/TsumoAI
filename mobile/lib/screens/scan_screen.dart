@@ -35,7 +35,17 @@ import 'tile_box_editor_screen.dart';
 
 class ScanScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
-  const ScanScreen({super.key, required this.cameras});
+  final bool autoClassify;
+  final String initialRoundWind;
+  final ValueChanged<String>? onRoundWindChanged;
+
+  const ScanScreen({
+    super.key,
+    required this.cameras,
+    this.autoClassify = false,
+    this.initialRoundWind = 'E',
+    this.onRoundWindChanged,
+  });
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -48,6 +58,7 @@ class _ScanScreenState extends State<ScanScreen> {
   static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17];
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
+  late final Future<void> _classifierInitialization;
   final ApiClient _api = ApiClient();
   final TrainingDataClient _trainingClient = TrainingDataClient();
 
@@ -104,6 +115,7 @@ class _ScanScreenState extends State<ScanScreen> {
   static const Duration _analysisInterval = Duration(seconds: 1);
 
   bool _isCapturing = false;
+  bool _isRunningFullClassification = false;
   bool _isScoring = false;
   bool _isInterpreting = false;
   bool _isSendingTraining = false;
@@ -135,7 +147,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // immediately on long-press itself.
   int? _deleteAffordanceIndex;
 
-  ContextInput _context = ContextInput();
+  late ContextInput _context;
 
   /// The rightmost identified physical tile's observation id, or null if
   /// none are identified yet — the results screen's default あがり牌 frame
@@ -224,8 +236,9 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void initState() {
     super.initState();
+    _context = ContextInput(roundWind: widget.initialRoundWind);
     _initCamera();
-    _initClassifier();
+    _classifierInitialization = _initClassifier();
   }
 
   Future<void> _initClassifier() async {
@@ -466,34 +479,49 @@ class _ScanScreenState extends State<ScanScreen> {
     }
 
     setState(() => _phase = _ScanPhase.results);
+    if (widget.autoClassify && boxes.isNotEmpty) {
+      await _runClassification();
+    }
   }
 
-  /// Classifies every cropped tile (`_croppedImages`) at once. Separate
-  /// from cropping itself (both the auto-detect path above and
-  /// `_openBoxEditor` only crop) so the AI doesn't run on every box edit —
-  /// only when the user explicitly asks for it via the results screen's
-  /// "識別実行" button.
+  /// Classifies every cropped tile (`_croppedImages`) at once. Called either
+  /// automatically after detection when the home-screen option is enabled,
+  /// or explicitly from the results screen's "識別実行" button.
   Future<void> _runClassification() async {
-    if (!_classifier.isReady) {
-      _showError('牌識別モデルが読み込まれていません');
-      return;
-    }
-
-    setState(() {
-      for (int i = 0; i < _maxPhysicalTiles; i++) {
-        if (_croppedImages[i] != null) _isClassifying[i] = true;
+    if (_isRunningFullClassification) return;
+    setState(() => _isRunningFullClassification = true);
+    try {
+      await _classifierInitialization;
+      if (!mounted) return;
+      if (!_classifier.isReady) {
+        _showError('牌識別モデルが読み込まれていません');
+        return;
       }
-    });
 
-    for (int i = 0; i < _maxPhysicalTiles; i++) {
-      final cropped = _croppedImages[i];
-      if (cropped == null) continue;
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
+        if (_croppedImages[i] != null) await _classifyTile(i);
+      }
+    } finally {
+      if (mounted) setState(() => _isRunningFullClassification = false);
+    }
+  }
+
+  /// Classify one crop and update only that slot. This is shared by the full
+  /// identification action and FEZ-200's automatic re-identification after a
+  /// single box edit, so adjusting one box never reruns the other tiles.
+  Future<void> _classifyTile(int index) async {
+    final cropped = _croppedImages[index];
+    if (cropped == null) return;
+
+    setState(() => _isClassifying[index] = true);
+    try {
       final results = await _classifier.classify(cropped, topK: 3);
+      if (!mounted) return;
       setState(() {
         final prediction = results.isNotEmpty ? results.first.tileCode : null;
-        _tiles[i] = prediction;
-        _predictedTiles[i] = prediction;
-        _candidates[i] = results
+        _tiles[index] = prediction;
+        _predictedTiles[index] = prediction;
+        _candidates[index] = results
             .map(
               (result) => TileCandidate(
                 tile: result.tileCode,
@@ -501,13 +529,13 @@ class _ScanScreenState extends State<ScanScreen> {
               ),
             )
             .toList(growable: false);
-        _isClassifying[i] = false;
+        _invalidateInterpretation();
       });
+    } catch (error) {
+      _showError('牌識別エラー: $error');
+    } finally {
+      if (mounted) setState(() => _isClassifying[index] = false);
     }
-
-    setState(() {
-      _invalidateInterpretation();
-    });
   }
 
   // ── Results phase: manual box correction ──
@@ -518,10 +546,11 @@ class _ScanScreenState extends State<ScanScreen> {
   /// has no quad yet (the "枠を追加" path); otherwise the existing
   /// `_tileQuads[index]` is used. On confirm, re-crops via `_cropQuad`
   /// (perspective-rectifies the quad — handles a tile that photographed as
-  /// a trapezoid, not just a rotated rectangle). Does NOT reclassify —
-  /// only the results screen's "識別実行" button runs the AI, so editing a
-  /// box clears that tile's previous result rather than guessing again
-  /// immediately. On delete, clears the slot entirely via `_clearTileSlot`
+  /// a trapezoid, not just a rotated rectangle). Editing clears that tile's
+  /// previous result. With automatic identification enabled, only that slot
+  /// is then identified again; otherwise the user can run the normal full
+  /// identification action. On delete, clears the slot entirely via
+  /// `_clearTileSlot`
   /// (see FEZ-193 — previously the only way to undo a wrongly-added box
   /// was to retake the whole photo).
   Future<void> _openBoxEditor(int index, {TileQuad? initialDecodedQuad}) async {
@@ -563,6 +592,15 @@ class _ScanScreenState extends State<ScanScreen> {
       _candidates[index] = [];
       _invalidateInterpretation();
     });
+    if (widget.autoClassify) {
+      await _classifierInitialization;
+      if (!mounted) return;
+      if (!_classifier.isReady) {
+        _showError('牌識別モデルが読み込まれていません');
+      } else {
+        await _classifyTile(index);
+      }
+    }
   }
 
   /// Resets tile slot [index] back to empty (no quad, crop, or
@@ -863,7 +901,9 @@ class _ScanScreenState extends State<ScanScreen> {
   /// quick ツモ/ロン・リーチ controls in the bottom bar, and
   /// `GameStatePanel`). Callers still wrap this in their own `setState`.
   void _updateContext(ContextInput c) {
+    final roundWindChanged = _context.roundWind != c.roundWind;
     _context = c;
+    if (roundWindChanged) widget.onRoundWindChanged?.call(c.roundWind);
     _scoreResult = null;
     _analysisResult = null;
     _isNotWinning = false;
@@ -2195,10 +2235,22 @@ class _ScanScreenState extends State<ScanScreen> {
                   child: !_allDetectedTilesReady
                       ? OutlinedButton.icon(
                           onPressed: _croppedImages.any((c) => c != null)
+                                  && !_isRunningFullClassification
+                                  && !_isClassifying.any((value) => value)
                               ? _runClassification
                               : null,
-                          icon: const Icon(Icons.auto_awesome, size: 18),
-                          label: const Text('識別実行'),
+                          icon: _isRunningFullClassification
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.auto_awesome, size: 18),
+                          label: Text(
+                            _isRunningFullClassification ? '識別中...' : '識別実行',
+                          ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.greenAccent,
                             side: const BorderSide(color: Colors.greenAccent),
