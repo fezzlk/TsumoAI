@@ -475,12 +475,26 @@ async def upload_training_data(
     image: UploadFile = File(...),
     tile_code: str = Form(...),
     predicted_tile_code: str | None = Form(None),
+    predicted_confidence: float | None = Form(None),
+    recognition_model_version: str | None = Form(None),
+    recognition_model_source: str | None = Form(None),
+    preprocessing_version: str | None = Form(None),
     source: str = Form("user"),
     _user: dict = Depends(get_current_user),
 ) -> TrainingDataUploadResponse:
     validate_tile(tile_code)
     if predicted_tile_code is not None:
         validate_tile(predicted_tile_code)
+    if predicted_confidence is not None and not 0 <= predicted_confidence <= 1:
+        raise HTTPException(status_code=422, detail="predicted_confidence must be between 0 and 1")
+    for field_name, value in {
+        "recognition_model_version": recognition_model_version,
+        "preprocessing_version": preprocessing_version,
+    }.items():
+        if value is not None and (not value.strip() or len(value) > 128):
+            raise HTTPException(status_code=422, detail=f"invalid {field_name}")
+    if recognition_model_source not in {None, "bundled", "downloaded"}:
+        raise HTTPException(status_code=422, detail="invalid recognition_model_source")
     image_bytes = await _read_limited_image(image)
     try:
         result = training_data_store.upload(
@@ -488,6 +502,14 @@ async def upload_training_data(
             tile_code,
             source,
             predicted_tile_code=predicted_tile_code,
+            predicted_confidence=predicted_confidence,
+            recognition_model_version=recognition_model_version.strip()
+            if recognition_model_version is not None
+            else None,
+            recognition_model_source=recognition_model_source,
+            preprocessing_version=preprocessing_version.strip()
+            if preprocessing_version is not None
+            else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

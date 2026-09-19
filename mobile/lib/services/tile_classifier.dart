@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
@@ -16,16 +17,21 @@ import 'model_updater.dart';
 class TileClassifier {
   static const String _bundledModelPath = 'assets/ml/tile_classifier.tflite';
   static const String _bundledLabelsPath = 'assets/ml/labels.txt';
+  static const String _bundledModelVersion = 'bundled-ed2678e9c4f0';
+  static const String _preprocessingVersion = 'mobile-tile-preprocess-v1';
   static const int _inputSize = 224;
 
   Interpreter? _interpreter;
   List<String> _labels = [];
   bool _isReady = false;
   String _modelSource = 'bundled';
+  String _modelVersion = _bundledModelVersion;
 
   bool get isReady => _isReady;
   List<String> get labels => _labels;
   String get modelSource => _modelSource;
+  String get modelVersion => _modelVersion;
+  String get preprocessingVersion => _preprocessingVersion;
 
   Future<void> init() async {
     // Try to use a downloaded (newer) model first
@@ -41,6 +47,7 @@ class TileClassifier {
               .split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
           _isReady = true;
           _modelSource = 'downloaded';
+          _modelVersion = _readDownloadedModelVersion(updatedDir);
           debugPrint('TileClassifier: using downloaded model from $updatedDir');
           return;
         } catch (e) {
@@ -71,6 +78,24 @@ class TileClassifier {
 
     _isReady = true;
     _modelSource = 'bundled';
+    _modelVersion = _bundledModelVersion;
+  }
+
+  static String _readDownloadedModelVersion(String modelDir) {
+    try {
+      final decoded = jsonDecode(
+        File('$modelDir/model_meta.json').readAsStringSync(),
+      );
+      if (decoded is Map<String, dynamic>) {
+        final version = decoded['version'];
+        if (version is String && version.trim().isNotEmpty) {
+          return version.trim();
+        }
+      }
+    } catch (e) {
+      debugPrint('TileClassifier: model version metadata unavailable: $e');
+    }
+    return 'downloaded-unknown';
   }
 
   /// Classify a cropped tile image with preprocessing pipeline.

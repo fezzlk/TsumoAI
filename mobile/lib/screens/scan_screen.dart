@@ -1411,6 +1411,10 @@ class _ScanScreenState extends State<ScanScreen> {
     final predictedTiles = [
       for (final index in createdIndices) _predictedTiles[index]!,
     ];
+    final predictedConfidences = [
+      for (final index in createdIndices)
+        _candidates[index].isEmpty ? null : _candidates[index].first.confidence,
+    ];
     if (images.isEmpty ||
         !createdIndices.every(
           (index) => _tiles[index] != null && _predictedTiles[index] != null,
@@ -1425,6 +1429,10 @@ class _ScanScreenState extends State<ScanScreen> {
         images: images,
         tileCodes: tiles,
         predictedTileCodes: predictedTiles,
+        predictedConfidences: predictedConfidences,
+        recognitionModelVersion: _classifier.modelVersion,
+        recognitionModelSource: _classifier.modelSource,
+        preprocessingVersion: _classifier.preprocessingVersion,
       );
       if (mounted) {
         setState(() {

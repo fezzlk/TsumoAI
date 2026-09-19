@@ -55,6 +55,10 @@ class TrainingDataStore:
         tile_code: str,
         source: str = "user",
         predicted_tile_code: str | None = None,
+        predicted_confidence: float | None = None,
+        recognition_model_version: str | None = None,
+        recognition_model_source: str | None = None,
+        preprocessing_version: str | None = None,
     ) -> dict:
         now = datetime.now(timezone.utc)
         entry_id = uuid4().hex[:12]
@@ -85,6 +89,14 @@ class TrainingDataStore:
         if predicted_tile_code is not None:
             meta["predicted_tile_code"] = predicted_tile_code
             meta["was_corrected"] = predicted_tile_code != tile_code
+        if predicted_confidence is not None:
+            meta["predicted_confidence"] = predicted_confidence
+        if recognition_model_version is not None:
+            meta["recognition_model_version"] = recognition_model_version
+        if recognition_model_source is not None:
+            meta["recognition_model_source"] = recognition_model_source
+        if preprocessing_version is not None:
+            meta["preprocessing_version"] = preprocessing_version
         meta_name = f"{self.prefix}/meta/{date_path}/{entry_id}.json"
         meta_blob = bucket.blob(meta_name)
         meta_blob.upload_from_string(
