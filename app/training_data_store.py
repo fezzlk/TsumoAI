@@ -54,6 +54,7 @@ class TrainingDataStore:
         image_bytes: bytes,
         tile_code: str,
         source: str = "user",
+        uid: str | None = None,
         predicted_tile_code: str | None = None,
         predicted_confidence: float | None = None,
         recognition_model_version: str | None = None,
@@ -85,6 +86,7 @@ class TrainingDataStore:
             "source": source,
             "image_path": image_name,
             "created_at": now.isoformat(),
+            "uid": uid,
         }
         if predicted_tile_code is not None:
             meta["predicted_tile_code"] = predicted_tile_code
@@ -299,6 +301,32 @@ class TrainingDataStore:
             return deleted
         except Exception:
             return False
+
+    def delete_by_uid(self, uid: str) -> int:
+        """Delete every entry uploaded by this uid, or raise on GCS failure."""
+        index = self._load_index(force=True)
+        matching = [entry for entry in index if entry.get("uid") == uid]
+        bucket = self._bucket()
+        for entry in matching:
+            image_path = str(entry.get("image_path", ""))
+            if image_path:
+                image_blob = bucket.blob(image_path)
+                if image_blob.exists():
+                    image_blob.delete()
+                if image_path.startswith(f"{self.prefix}/images/"):
+                    meta_path = image_path.replace(
+                        f"{self.prefix}/images/", f"{self.prefix}/meta/", 1
+                    )
+                    meta_path = str(Path(meta_path).with_suffix(".json"))
+                    meta_blob = bucket.blob(meta_path)
+                    if meta_blob.exists():
+                        meta_blob.delete()
+        if matching:
+            matching_ids = {entry.get("id") for entry in matching}
+            self._save_index(
+                [entry for entry in index if entry.get("id") not in matching_ids]
+            )
+        return len(matching)
 
     # ── Stats ──
 
