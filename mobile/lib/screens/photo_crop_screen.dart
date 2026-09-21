@@ -47,43 +47,45 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
   // limit — the detector itself handles the real fitting.
   static const double _minSize = 40;
 
-  // Exactly one drag — on any single handle OR the body — may be active
-  // across the WHOLE screen at a time, not just within whichever single
-  // widget a pointer happens to land on. A per-widget-only guard still let
-  // two simultaneous touches double a corner's movement: e.g. one thumb
-  // holding a corner handle while the other thumb rests anywhere inside
-  // the body region (very easy with a natural two-handed grip) — the body
-  // drag shifts every corner, including the one already being handle-
-  // dragged, so that corner moved by its own handle's delta AND the body's
-  // delta on top of it. Tracking one pointer/target pair here, shared by
-  // every handle and the body, and ignoring any other pointer entirely
-  // until it lifts, removes that regardless of which combination of
-  // targets the extra finger lands on.
-  int? _activePointer;
-  _CropHandle? _activeHandle;
-  Offset? _lastPointerPosition;
+  // Each of the 4 corner handles and the body tracks its OWN single
+  // pointer — two DIFFERENT corners being dragged by two different fingers
+  // at once is legitimate (each moves independently and the results just
+  // compose, like resizing with a pinch), so that stays allowed. What
+  // isn't coherent is a corner resize and a whole-box move happening at
+  // once: the body drag shifts every corner, including one already being
+  // handle-dragged, so that corner ends up moving by its own handle's
+  // delta AND the body's delta on top of it — this is what actually
+  // produced the "moves twice as far" report, not multi-touch in general.
+  // `_bodyActive`/`_anyHandleActive` below block exactly that combination,
+  // in either direction, while still letting a single handle (or the body)
+  // reject only a SECOND pointer landing on that same one target.
+  final Map<_CropHandle, int> _activePointers = {};
+  final Map<_CropHandle, Offset> _lastPointerPositions = {};
+
+  bool get _bodyActive => _activePointers.containsKey(_CropHandle.body);
+  bool get _anyHandleActive =>
+      _activePointers.keys.any((h) => h != _CropHandle.body);
 
   void _onPointerDown(_CropHandle handle, PointerDownEvent event) {
-    if (_activePointer != null) return;
-    _activePointer = event.pointer;
-    _activeHandle = handle;
-    _lastPointerPosition = event.position;
+    if (_activePointers.containsKey(handle)) return;
+    if (handle == _CropHandle.body ? _anyHandleActive : _bodyActive) return;
+    _activePointers[handle] = event.pointer;
+    _lastPointerPositions[handle] = event.position;
   }
 
-  void _onPointerMove(PointerMoveEvent event, double scale) {
-    if (event.pointer != _activePointer || _lastPointerPosition == null) {
-      return;
-    }
-    final delta = (event.position - _lastPointerPosition!) / scale;
-    _lastPointerPosition = event.position;
-    _moveHandle(_activeHandle!, delta);
+  void _onPointerMove(_CropHandle handle, PointerMoveEvent event, double scale) {
+    if (_activePointers[handle] != event.pointer) return;
+    final last = _lastPointerPositions[handle];
+    if (last == null) return;
+    final delta = (event.position - last) / scale;
+    _lastPointerPositions[handle] = event.position;
+    _moveHandle(handle, delta);
   }
 
-  void _onPointerEnd(PointerEvent event) {
-    if (event.pointer != _activePointer) return;
-    _activePointer = null;
-    _activeHandle = null;
-    _lastPointerPosition = null;
+  void _onPointerEnd(_CropHandle handle, PointerEvent event) {
+    if (_activePointers[handle] != event.pointer) return;
+    _activePointers.remove(handle);
+    _lastPointerPositions.remove(handle);
   }
 
   void _moveHandle(_CropHandle handle, Offset imageDelta) {
@@ -202,9 +204,9 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: (event) => _onPointerDown(h, event),
-                    onPointerMove: (event) => _onPointerMove(event, scale),
-                    onPointerUp: _onPointerEnd,
-                    onPointerCancel: _onPointerEnd,
+                    onPointerMove: (event) => _onPointerMove(h, event, scale),
+                    onPointerUp: (event) => _onPointerEnd(h, event),
+                    onPointerCancel: (event) => _onPointerEnd(h, event),
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.greenAccent.withValues(alpha: 0.9),
@@ -262,9 +264,11 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                         onPointerDown: (event) =>
                             _onPointerDown(_CropHandle.body, event),
                         onPointerMove: (event) =>
-                            _onPointerMove(event, scale),
-                        onPointerUp: _onPointerEnd,
-                        onPointerCancel: _onPointerEnd,
+                            _onPointerMove(_CropHandle.body, event, scale),
+                        onPointerUp: (event) =>
+                            _onPointerEnd(_CropHandle.body, event),
+                        onPointerCancel: (event) =>
+                            _onPointerEnd(_CropHandle.body, event),
                         child: Container(
                           decoration: BoxDecoration(
                             border: Border.all(
