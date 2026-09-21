@@ -91,4 +91,53 @@ void main() {
       );
     },
   );
+
+  // Regression test for the follow-up jitter report: two real fingers
+  // moving the same shared edge are never in perfect lock-step, so the
+  // shared edge must land on the AVERAGE of both handles' own positions —
+  // not flip between the two raw values depending on which handle's touch
+  // event happened to arrive last.
+  testWidgets(
+    'PhotoCropScreen: dragging two handles that share an edge by slightly different amounts averages that edge, not last-writer-wins',
+    (tester) async {
+      final getResult = await openCropScreen(tester);
+
+      final bottomLeftCenter = tester.getCenter(
+        find.byKey(const ValueKey('crop-handle-bottomLeft')),
+      );
+      final bottomRightCenter = tester.getCenter(
+        find.byKey(const ValueKey('crop-handle-bottomRight')),
+      );
+
+      final gestureBottomLeft = await tester.startGesture(bottomLeftCenter);
+      final gestureBottomRight = await tester.startGesture(bottomRightCenter);
+      await tester.pump();
+
+      // Same direction (both up), slightly different magnitudes — as two
+      // independent fingers always are in practice, even when the user
+      // intends one single synchronized motion.
+      await gestureBottomLeft.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gestureBottomRight.moveBy(const Offset(0, -24));
+      await tester.pump();
+
+      await gestureBottomLeft.up();
+      await gestureBottomRight.up();
+      await tester.pump();
+
+      await tester.tap(find.text('確定'));
+      await tester.pumpAndSettle();
+
+      final region = getResult();
+      expect(region, isNotNull);
+      // Average of -20 and -24 is -22 — not -20 (bottomLeft's own value,
+      // what last-writer-wins would give if bottomLeft's event happened to
+      // be the most recent) and not -24 (bottomRight's).
+      expect(
+        region!.bottom,
+        closeTo(_initialRegion.bottom - 22, 2),
+        reason: 'bottom should average both fingers\' positions',
+      );
+    },
+  );
 }
