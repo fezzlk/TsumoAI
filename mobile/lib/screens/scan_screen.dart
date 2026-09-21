@@ -32,6 +32,7 @@ import '../models/tile_quad.dart';
 import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
 import 'tile_box_editor_screen.dart';
+import 'photo_crop_screen.dart';
 
 class ScanScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -94,6 +95,22 @@ class _ScanScreenState extends State<ScanScreen> {
   // angle projects as a general quadrilateral, not just a rotated
   // rectangle. In `_capturedImage`'s (corrected) pixel space.
   final List<TileQuad?> _tileQuads = List.filled(_maxPhysicalTiles, null);
+
+  // FEZ-93 recovery flow: the sub-region of `_capturedImage` that detection
+  // was last restricted to (via `PhotoCropScreen`), or null when the whole
+  // photo was used. `_capturedImage`/`_capturedBytes` themselves are never
+  // mutated by cropping — this is purely a record of what to re-open the
+  // crop editor with, and what "元の範囲に戻す" resets away. Always the
+  // exact (integer, clamped) rect actually cropped to — not the raw
+  // `PhotoCropScreen` selection — so it lines up pixel-for-pixel with
+  // `_cropDisplayBytes` and the offset applied to detected boxes.
+  Rect? _cropRegion;
+  // The re-encoded JPEG for just `_cropRegion` (already produced once, to
+  // feed detection — see `_redetectInRegion`), reused as the results
+  // screen's preview image instead of the uncropped `_capturedBytes` so the
+  // photo shown matches what detection actually saw. Null when `_cropRegion`
+  // is null (the full original photo is shown, uncompressed a second time).
+  Uint8List? _cropDisplayBytes;
 
   // Live auto-shutter detection (FEZ-96): runs TileDetector against the
   // camera preview stream and captures automatically once a full 14-tile
@@ -482,6 +499,89 @@ class _ScanScreenState extends State<ScanScreen> {
     if (widget.autoClassify && boxes.isNotEmpty) {
       await _runClassification();
     }
+  }
+
+  /// Opens `PhotoCropScreen` seeded with the current crop region (or the
+  /// whole photo, the first time), then re-detects within whatever the user
+  /// confirms. FEZ-93's recovery flow for a stray reflection or unrelated
+  /// object getting detected as a tile — see `_redetectInRegion`.
+  Future<void> _cropAndRedetect() async {
+    final srcImage = _capturedImage;
+    final imageBytes = _capturedBytes;
+    if (srcImage == null || imageBytes == null) return;
+
+    final initialRegion = _cropRegion ??
+        Rect.fromLTWH(0, 0, srcImage.width.toDouble(), srcImage.height.toDouble());
+
+    final region = await Navigator.of(context).push<Rect>(
+      MaterialPageRoute(
+        builder: (_) => PhotoCropScreen(
+          rawImageBytes: imageBytes,
+          rawWidth: srcImage.width,
+          rawHeight: srcImage.height,
+          initialRegion: initialRegion,
+        ),
+      ),
+    );
+    if (region == null || !mounted) return;
+    await _redetectInRegion(region);
+  }
+
+  /// Re-runs on-device tile detection restricted to [region] (in
+  /// `_capturedImage`'s pixel space), or the whole photo when null (the
+  /// "元の範囲に戻す" path). Adopted policy for FEZ-93: manually excluding
+  /// the offending area and re-detecting on-device is cheaper and more
+  /// predictable than a generative-AI preprocessing step, and needs no
+  /// server/external API call. Reuses `_classifyBoxesAndFinish`, so a
+  /// re-detect clears every previous box/crop/classification exactly like
+  /// the initial capture does, and keeps using `_expectedTileCount`
+  /// (the count chosen before capture is never reset by re-detection).
+  Future<void> _redetectInRegion(Rect? region) async {
+    final srcImage = _capturedImage;
+    if (srcImage == null) return;
+
+    final x = (region?.left ?? 0).round().clamp(0, srcImage.width - 1);
+    final y = (region?.top ?? 0).round().clamp(0, srcImage.height - 1);
+    final w = (region?.width ?? srcImage.width.toDouble())
+        .round()
+        .clamp(1, srcImage.width - x);
+    final h = (region?.height ?? srcImage.height.toDouble())
+        .round()
+        .clamp(1, srcImage.height - y);
+    // The exact rect actually cropped to, in `_capturedImage`'s pixel space
+    // — built from the clamped ints above, not the raw `region` argument,
+    // so it's pixel-exact with what `copyCrop` below and the box-offset
+    // further down both use. Null (not this) when resetting to the full
+    // photo, even though x/y/w/h above still describe that full extent.
+    final clampedRegion = region == null
+        ? null
+        : Rect.fromLTWH(x.toDouble(), y.toDouble(), w.toDouble(), h.toDouble());
+
+    setState(() {
+      _phase = _ScanPhase.detecting;
+      _cropRegion = clampedRegion;
+    });
+
+    final regionImage = img.copyCrop(srcImage, x: x, y: y, width: w, height: h);
+    final regionBytes = await compute(img.encodeJpg, regionImage);
+    if (!mounted) return;
+    // Reuse the same encode for the results-screen preview when actually
+    // cropped; when resetting to the full photo, prefer the original
+    // `_capturedBytes` over this redundant re-encode (no generation loss).
+    setState(() => _cropDisplayBytes = clampedRegion != null ? regionBytes : null);
+    final detected = await compute(
+      segmentTilesWithHintsForExpectedCount,
+      (bytes: regionBytes, expectedTileCount: _expectedTileCount),
+    );
+    if (!mounted) return;
+
+    // Detection ran on the cropped sub-image, so its boxes are relative to
+    // the crop's own top-left — shift them back into `_capturedImage`'s
+    // pixel space, the coordinate system every other box/quad on this
+    // screen (and `_classifyBoxesAndFinish`) already assumes.
+    final offset = Offset(x.toDouble(), y.toDouble());
+    final offsetBoxes = [for (final box in detected.boxes) box.shift(offset)];
+    await _classifyBoxesAndFinish(offsetBoxes, angleHints: detected.angleHints);
   }
 
   /// Classifies every cropped tile (`_croppedImages`) at once. Called either
@@ -948,6 +1048,8 @@ class _ScanScreenState extends State<ScanScreen> {
       _phase = _ScanPhase.camera;
       _capturedBytes = null;
       _capturedImage = null;
+      _cropRegion = null;
+      _cropDisplayBytes = null;
       for (int i = 0; i < _maxPhysicalTiles; i++) {
         _tiles[i] = null;
         _predictedTiles[i] = null;
@@ -1747,15 +1849,47 @@ class _ScanScreenState extends State<ScanScreen> {
   // Phase 3: Results
   // ════════════════════════════════════════
 
+  /// The results screen's photo preview shows whatever detection actually
+  /// ran on — the full photo normally, or just `_cropRegion` after the
+  /// FEZ-93 recovery flow — rather than always the uncropped original, so
+  /// the displayed framing matches what the boxes below were found in.
+  /// Box editing (`_openBoxEditor`, via `onTap`) still always operates in
+  /// `_capturedImage`'s own full pixel space regardless of this preview, so
+  /// boxes here are shifted by the crop's own top-left to match.
   Widget _buildTileMarkerOverlay() {
+    final region = _cropRegion;
+    final displayBytes = region != null ? _cropDisplayBytes : null;
+    if (region == null || displayBytes == null) {
+      return TileMarkerOverlay(
+        imageBytes: _capturedBytes!,
+        imageWidth: _capturedImage!.width,
+        imageHeight: _capturedImage!.height,
+        boxes: _tileQuads.map((q) => q?.boundingRect).toList(),
+        tiles: _tiles,
+        onTap: _openBoxEditor,
+      );
+    }
     return TileMarkerOverlay(
-      imageBytes: _capturedBytes!,
-      imageWidth: _capturedImage!.width,
-      imageHeight: _capturedImage!.height,
-      boxes: _tileQuads.map((q) => q?.boundingRect).toList(),
+      imageBytes: displayBytes,
+      imageWidth: region.width.round(),
+      imageHeight: region.height.round(),
+      boxes: _tileQuads
+          .map((q) => q?.boundingRect.shift(-region.topLeft))
+          .toList(),
       tiles: _tiles,
       onTap: _openBoxEditor,
     );
+  }
+
+  /// Aspect ratio of whatever `_buildTileMarkerOverlay` is currently
+  /// showing — must track it exactly, or the preview would be stretched to
+  /// the wrong shape.
+  double get _displayAspectRatio {
+    final region = _cropRegion;
+    if (region != null && _cropDisplayBytes != null) {
+      return region.width / region.height;
+    }
+    return _capturedImage!.width / _capturedImage!.height;
   }
 
   Widget _buildResultsPhase() {
@@ -1874,25 +2008,63 @@ class _ScanScreenState extends State<ScanScreen> {
                     // ground: bigger than the pillarboxed version, but
                     // still leaves the controls below reachable without
                     // this photo alone eating most of the screen.
-                    Center(
-                      child: RepaintBoundary(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.55,
-                            maxHeight:
-                                MediaQuery.of(context).size.height * 0.55,
-                          ),
-                          child: AspectRatio(
-                            aspectRatio:
-                                _capturedImage!.width / _capturedImage!.height,
-                            child: InteractiveViewer(
-                              minScale: 1.0,
-                              maxScale: 4.0,
-                              child: _buildTileMarkerOverlay(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: RepaintBoundary(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.of(context).size.width * 0.55,
+                                maxHeight:
+                                    MediaQuery.of(context).size.height * 0.55,
+                              ),
+                              child: AspectRatio(
+                                aspectRatio: _displayAspectRatio,
+                                child: InteractiveViewer(
+                                  minScale: 1.0,
+                                  maxScale: 4.0,
+                                  child: _buildTileMarkerOverlay(),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        // FEZ-93 recovery flow: for when a reflection or
+                        // other non-tile object gets picked up by
+                        // detection, manually exclude it by re-detecting
+                        // within just the region that actually contains the
+                        // tiles. Entirely on-device. Placed beside the
+                        // photo (this app's landscape screens have spare
+                        // width there) rather than below it, so it doesn't
+                        // push the thumbnail row further down the scroll.
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            TextButton.icon(
+                              onPressed: _cropAndRedetect,
+                              icon: const Icon(Icons.crop, size: 16, color: Colors.white70),
+                              label: const Text(
+                                '範囲を切り抜いて\n再検出',
+                                style: TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ),
+                            if (_cropRegion != null)
+                              TextButton.icon(
+                                onPressed: () => _redetectInRegion(null),
+                                icon: const Icon(Icons.undo, size: 16, color: Colors.white70),
+                                label: const Text(
+                                  '元の範囲に\n戻す',
+                                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                   ],
@@ -2288,3 +2460,4 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 }
+
