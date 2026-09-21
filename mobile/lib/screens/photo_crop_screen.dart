@@ -52,15 +52,28 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
   // at once is legitimate (each moves independently and the results just
   // compose, like resizing with a pinch), so that stays allowed. What
   // isn't coherent is a corner resize and a whole-box move happening at
-  // once: the body drag shifts every corner, including one already being
-  // handle-dragged, so that corner ends up moving by its own handle's
-  // delta AND the body's delta on top of it — this is what actually
-  // produced the "moves twice as far" report, not multi-touch in general.
-  // `_bodyActive`/`_anyHandleActive` below block exactly that combination,
-  // in either direction, while still letting a single handle (or the body)
-  // reject only a SECOND pointer landing on that same one target.
+  // once, so `_bodyActive`/`_anyHandleActive` below block that combination
+  // in either direction.
+  //
+  // Every active handle recomputes the edge(s) it owns from `_dragBaseline`
+  // — the region snapshot from the moment the current (possibly multi-
+  // touch) gesture started — plus that handle's OWN total on-screen
+  // displacement since ITS OWN pointer went down, rather than adding this
+  // event's incremental delta onto whatever `_region` happens to be right
+  // now. That distinction matters once two handles share an edge: topLeft
+  // and bottomLeft both own `left`. Incremental deltas applied to the live
+  // `_region` compound — swipe both fingers left by the same amount and
+  // the first handle's move already shifted `left`, so the second handle's
+  // "move left by the same amount again" lands on top of that, doubling
+  // the edge's total movement for one matching pair of finger swipes.
+  // Recomputing `left` fresh from the fixed baseline each event makes
+  // every handle's contribution depend only on its own displacement, never
+  // on another handle's already-applied one — so two fingers moving the
+  // same edge by the same amount converge on that one amount instead of
+  // adding.
+  Rect? _dragBaseline;
   final Map<_CropHandle, int> _activePointers = {};
-  final Map<_CropHandle, Offset> _lastPointerPositions = {};
+  final Map<_CropHandle, Offset> _pointerDownPositions = {};
 
   bool get _bodyActive => _activePointers.containsKey(_CropHandle.body);
   bool get _anyHandleActive =>
@@ -69,83 +82,79 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
   void _onPointerDown(_CropHandle handle, PointerDownEvent event) {
     if (_activePointers.containsKey(handle)) return;
     if (handle == _CropHandle.body ? _anyHandleActive : _bodyActive) return;
+    _dragBaseline ??= _region;
     _activePointers[handle] = event.pointer;
-    _lastPointerPositions[handle] = event.position;
+    _pointerDownPositions[handle] = event.position;
   }
 
   void _onPointerMove(_CropHandle handle, PointerMoveEvent event, double scale) {
     if (_activePointers[handle] != event.pointer) return;
-    final last = _lastPointerPositions[handle];
-    if (last == null) return;
-    final delta = (event.position - last) / scale;
-    _lastPointerPositions[handle] = event.position;
-    _moveHandle(handle, delta);
+    final downPosition = _pointerDownPositions[handle];
+    final baseline = _dragBaseline;
+    if (downPosition == null || baseline == null) return;
+    final totalDelta = (event.position - downPosition) / scale;
+    setState(() => _region = _applyHandle(handle, baseline, totalDelta));
   }
 
   void _onPointerEnd(_CropHandle handle, PointerEvent event) {
     if (_activePointers[handle] != event.pointer) return;
     _activePointers.remove(handle);
-    _lastPointerPositions.remove(handle);
+    _pointerDownPositions.remove(handle);
+    if (_activePointers.isEmpty) _dragBaseline = null;
   }
 
-  void _moveHandle(_CropHandle handle, Offset imageDelta) {
+  /// The region after applying [handle]'s total on-screen displacement
+  /// ([totalDelta], image-space, measured from that handle's own pointer-
+  /// down) to [baseline]. Only the 1–2 edges [handle] owns are touched —
+  /// the rest come from the CURRENT `_region`, so another simultaneously-
+  /// active handle's own contribution (applied by its own earlier call to
+  /// this same method, this same frame or an earlier one) is preserved
+  /// rather than reset back to the baseline's values for those edges.
+  Rect _applyHandle(_CropHandle handle, Rect baseline, Offset totalDelta) {
     final maxW = widget.rawWidth.toDouble();
     final maxH = widget.rawHeight.toDouble();
 
-    setState(() {
-      if (handle == _CropHandle.body) {
-        // Preserve size exactly while clamping position — matches
-        // `TileBoxEditorScreen`'s `panRegion`, so a drag that hits the
-        // photo's edge stops there instead of shrinking the selection.
-        final shifted = _region.shift(imageDelta);
-        final left = shifted.width >= maxW
-            ? (maxW - shifted.width) / 2
-            : shifted.left.clamp(0.0, maxW - shifted.width);
-        final top = shifted.height >= maxH
-            ? (maxH - shifted.height) / 2
-            : shifted.top.clamp(0.0, maxH - shifted.height);
-        _region = Rect.fromLTWH(left, top, shifted.width, shifted.height);
-        return;
-      }
+    if (handle == _CropHandle.body) {
+      // Preserve size exactly while clamping position — matches
+      // `TileBoxEditorScreen`'s `panRegion`, so a drag that hits the
+      // photo's edge stops there instead of shrinking the selection.
+      final shifted = baseline.shift(totalDelta);
+      final left = shifted.width >= maxW
+          ? (maxW - shifted.width) / 2
+          : shifted.left.clamp(0.0, maxW - shifted.width);
+      final top = shifted.height >= maxH
+          ? (maxH - shifted.height) / 2
+          : shifted.top.clamp(0.0, maxH - shifted.height);
+      return Rect.fromLTWH(left, top, shifted.width, shifted.height);
+    }
 
-      final dragged = switch (handle) {
-        _CropHandle.topLeft => Rect.fromLTRB(
-            _region.left + imageDelta.dx,
-            _region.top + imageDelta.dy,
-            _region.right,
-            _region.bottom,
-          ),
-        _CropHandle.topRight => Rect.fromLTRB(
-            _region.left,
-            _region.top + imageDelta.dy,
-            _region.right + imageDelta.dx,
-            _region.bottom,
-          ),
-        _CropHandle.bottomLeft => Rect.fromLTRB(
-            _region.left + imageDelta.dx,
-            _region.top,
-            _region.right,
-            _region.bottom + imageDelta.dy,
-          ),
-        _CropHandle.bottomRight => Rect.fromLTRB(
-            _region.left,
-            _region.top,
-            _region.right + imageDelta.dx,
-            _region.bottom + imageDelta.dy,
-          ),
-        _CropHandle.body => _region,
-      };
+    final current = _region;
+    final rawLeft =
+        handle == _CropHandle.topLeft || handle == _CropHandle.bottomLeft
+        ? baseline.left + totalDelta.dx
+        : current.left;
+    final rawTop =
+        handle == _CropHandle.topLeft || handle == _CropHandle.topRight
+        ? baseline.top + totalDelta.dy
+        : current.top;
+    final rawRight =
+        handle == _CropHandle.topRight || handle == _CropHandle.bottomRight
+        ? baseline.right + totalDelta.dx
+        : current.right;
+    final rawBottom =
+        handle == _CropHandle.bottomLeft || handle == _CropHandle.bottomRight
+        ? baseline.bottom + totalDelta.dy
+        : current.bottom;
 
-      // Each dragged edge is clamped against the OPPOSITE edge's own
-      // (unchanged-this-drag) position, not the other edge's own clamped
-      // result — so a corner can never cross past its opposite corner,
-      // and the opposite corner never gets dragged along as a side effect.
-      final left = dragged.left.clamp(0.0, dragged.right - _minSize);
-      final top = dragged.top.clamp(0.0, dragged.bottom - _minSize);
-      final right = dragged.right.clamp(dragged.left + _minSize, maxW);
-      final bottom = dragged.bottom.clamp(dragged.top + _minSize, maxH);
-      _region = Rect.fromLTRB(left, top, right, bottom);
-    });
+    // Each edge is clamped against the OPPOSITE edge's own (this-handle-
+    // unowned) position, not the other edge's own clamped result — so a
+    // corner can never cross past its opposite corner, and the opposite
+    // corner never gets dragged along as a side effect.
+    final left = rawLeft.clamp(0.0, rawRight - _minSize);
+    final top = rawTop.clamp(0.0, rawBottom - _minSize);
+    final right = rawRight.clamp(rawLeft + _minSize, maxW);
+    final bottom = rawBottom.clamp(rawTop + _minSize, maxH);
+    return Rect.fromLTRB(left, top, right, bottom);
   }
 
   @override
@@ -197,6 +206,7 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
               Widget handle(_CropHandle h, Offset point) {
                 final sp = toScreen(point);
                 return Positioned(
+                  key: ValueKey('crop-handle-${h.name}'),
                   left: sp.dx - _handleSize / 2,
                   top: sp.dy - _handleSize / 2,
                   width: _handleSize,
@@ -255,6 +265,7 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                       ),
                     ),
                     Positioned(
+                      key: const ValueKey('crop-handle-body'),
                       left: regionScreenRect.left,
                       top: regionScreenRect.top,
                       width: regionScreenRect.width,
