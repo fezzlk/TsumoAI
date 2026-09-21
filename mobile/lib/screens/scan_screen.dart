@@ -100,8 +100,17 @@ class _ScanScreenState extends State<ScanScreen> {
   // was last restricted to (via `PhotoCropScreen`), or null when the whole
   // photo was used. `_capturedImage`/`_capturedBytes` themselves are never
   // mutated by cropping — this is purely a record of what to re-open the
-  // crop editor with, and what "元の範囲に戻す" resets away.
+  // crop editor with, and what "元の範囲に戻す" resets away. Always the
+  // exact (integer, clamped) rect actually cropped to — not the raw
+  // `PhotoCropScreen` selection — so it lines up pixel-for-pixel with
+  // `_cropDisplayBytes` and the offset applied to detected boxes.
   Rect? _cropRegion;
+  // The re-encoded JPEG for just `_cropRegion` (already produced once, to
+  // feed detection — see `_redetectInRegion`), reused as the results
+  // screen's preview image instead of the uncropped `_capturedBytes` so the
+  // photo shown matches what detection actually saw. Null when `_cropRegion`
+  // is null (the full original photo is shown, uncompressed a second time).
+  Uint8List? _cropDisplayBytes;
 
   // Live auto-shutter detection (FEZ-96): runs TileDetector against the
   // camera preview stream and captures automatically once a full 14-tile
@@ -539,14 +548,27 @@ class _ScanScreenState extends State<ScanScreen> {
     final h = (region?.height ?? srcImage.height.toDouble())
         .round()
         .clamp(1, srcImage.height - y);
+    // The exact rect actually cropped to, in `_capturedImage`'s pixel space
+    // — built from the clamped ints above, not the raw `region` argument,
+    // so it's pixel-exact with what `copyCrop` below and the box-offset
+    // further down both use. Null (not this) when resetting to the full
+    // photo, even though x/y/w/h above still describe that full extent.
+    final clampedRegion = region == null
+        ? null
+        : Rect.fromLTWH(x.toDouble(), y.toDouble(), w.toDouble(), h.toDouble());
 
     setState(() {
       _phase = _ScanPhase.detecting;
-      _cropRegion = region;
+      _cropRegion = clampedRegion;
     });
 
     final regionImage = img.copyCrop(srcImage, x: x, y: y, width: w, height: h);
     final regionBytes = await compute(img.encodeJpg, regionImage);
+    if (!mounted) return;
+    // Reuse the same encode for the results-screen preview when actually
+    // cropped; when resetting to the full photo, prefer the original
+    // `_capturedBytes` over this redundant re-encode (no generation loss).
+    setState(() => _cropDisplayBytes = clampedRegion != null ? regionBytes : null);
     final detected = await compute(
       segmentTilesWithHintsForExpectedCount,
       (bytes: regionBytes, expectedTileCount: _expectedTileCount),
@@ -1027,6 +1049,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _capturedBytes = null;
       _capturedImage = null;
       _cropRegion = null;
+      _cropDisplayBytes = null;
       for (int i = 0; i < _maxPhysicalTiles; i++) {
         _tiles[i] = null;
         _predictedTiles[i] = null;
@@ -1826,15 +1849,47 @@ class _ScanScreenState extends State<ScanScreen> {
   // Phase 3: Results
   // ════════════════════════════════════════
 
+  /// The results screen's photo preview shows whatever detection actually
+  /// ran on — the full photo normally, or just `_cropRegion` after the
+  /// FEZ-93 recovery flow — rather than always the uncropped original, so
+  /// the displayed framing matches what the boxes below were found in.
+  /// Box editing (`_openBoxEditor`, via `onTap`) still always operates in
+  /// `_capturedImage`'s own full pixel space regardless of this preview, so
+  /// boxes here are shifted by the crop's own top-left to match.
   Widget _buildTileMarkerOverlay() {
+    final region = _cropRegion;
+    final displayBytes = region != null ? _cropDisplayBytes : null;
+    if (region == null || displayBytes == null) {
+      return TileMarkerOverlay(
+        imageBytes: _capturedBytes!,
+        imageWidth: _capturedImage!.width,
+        imageHeight: _capturedImage!.height,
+        boxes: _tileQuads.map((q) => q?.boundingRect).toList(),
+        tiles: _tiles,
+        onTap: _openBoxEditor,
+      );
+    }
     return TileMarkerOverlay(
-      imageBytes: _capturedBytes!,
-      imageWidth: _capturedImage!.width,
-      imageHeight: _capturedImage!.height,
-      boxes: _tileQuads.map((q) => q?.boundingRect).toList(),
+      imageBytes: displayBytes,
+      imageWidth: region.width.round(),
+      imageHeight: region.height.round(),
+      boxes: _tileQuads
+          .map((q) => q?.boundingRect.shift(-region.topLeft))
+          .toList(),
       tiles: _tiles,
       onTap: _openBoxEditor,
     );
+  }
+
+  /// Aspect ratio of whatever `_buildTileMarkerOverlay` is currently
+  /// showing — must track it exactly, or the preview would be stretched to
+  /// the wrong shape.
+  double get _displayAspectRatio {
+    final region = _cropRegion;
+    if (region != null && _cropDisplayBytes != null) {
+      return region.width / region.height;
+    }
+    return _capturedImage!.width / _capturedImage!.height;
   }
 
   Widget _buildResultsPhase() {
@@ -1953,53 +2008,65 @@ class _ScanScreenState extends State<ScanScreen> {
                     // ground: bigger than the pillarboxed version, but
                     // still leaves the controls below reachable without
                     // this photo alone eating most of the screen.
-                    Center(
-                      child: RepaintBoundary(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.55,
-                            maxHeight:
-                                MediaQuery.of(context).size.height * 0.55,
-                          ),
-                          child: AspectRatio(
-                            aspectRatio:
-                                _capturedImage!.width / _capturedImage!.height,
-                            child: InteractiveViewer(
-                              minScale: 1.0,
-                              maxScale: 4.0,
-                              child: _buildTileMarkerOverlay(),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    // FEZ-93 recovery flow: for when a reflection or other
-                    // non-tile object gets picked up by detection, manually
-                    // exclude it by re-detecting within just the region
-                    // that actually contains the tiles. Entirely on-device.
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        TextButton.icon(
-                          onPressed: _cropAndRedetect,
-                          icon: const Icon(Icons.crop, size: 16, color: Colors.white70),
-                          label: const Text(
-                            '範囲を切り抜いて再検出',
-                            style: TextStyle(color: Colors.white70, fontSize: 12),
-                          ),
-                        ),
-                        if (_cropRegion != null)
-                          TextButton.icon(
-                            onPressed: () => _redetectInRegion(null),
-                            icon: const Icon(Icons.undo, size: 16, color: Colors.white70),
-                            label: const Text(
-                              '元の範囲に戻す',
-                              style: TextStyle(color: Colors.white70, fontSize: 12),
+                        Flexible(
+                          child: RepaintBoundary(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.of(context).size.width * 0.55,
+                                maxHeight:
+                                    MediaQuery.of(context).size.height * 0.55,
+                              ),
+                              child: AspectRatio(
+                                aspectRatio: _displayAspectRatio,
+                                child: InteractiveViewer(
+                                  minScale: 1.0,
+                                  maxScale: 4.0,
+                                  child: _buildTileMarkerOverlay(),
+                                ),
+                              ),
                             ),
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        // FEZ-93 recovery flow: for when a reflection or
+                        // other non-tile object gets picked up by
+                        // detection, manually exclude it by re-detecting
+                        // within just the region that actually contains the
+                        // tiles. Entirely on-device. Placed beside the
+                        // photo (this app's landscape screens have spare
+                        // width there) rather than below it, so it doesn't
+                        // push the thumbnail row further down the scroll.
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            TextButton.icon(
+                              onPressed: _cropAndRedetect,
+                              icon: const Icon(Icons.crop, size: 16, color: Colors.white70),
+                              label: const Text(
+                                '範囲を切り抜いて\n再検出',
+                                style: TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ),
+                            if (_cropRegion != null)
+                              TextButton.icon(
+                                onPressed: () => _redetectInRegion(null),
+                                icon: const Icon(Icons.undo, size: 16, color: Colors.white70),
+                                label: const Text(
+                                  '元の範囲に\n戻す',
+                                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                                ),
+                              ),
+                          ],
+                        ),
                       ],
                     ),
+                    const SizedBox(height: 4),
                   ],
 
                   // Cropped images preview, each paired with its identified

@@ -38,6 +38,61 @@ class PhotoCropScreen extends StatefulWidget {
 
 enum _CropHandle { topLeft, topRight, bottomLeft, bottomRight, body }
 
+/// Wraps [child] in a drag area that reports deltas via [onDragDelta],
+/// tracking exactly one pointer at a time. Plain `GestureDetector.onPanUpdate`
+/// fires once per *moving* pointer inside its area — so two fingers landing
+/// on the same handle/body region (an easy accident with a natural two-
+/// handed hold-and-drag) each report their own delta for the same frame,
+/// and a handler that applies every delta it receives ends up moving twice
+/// as far as either finger actually moved. Tracking only the first pointer
+/// until it lifts, and ignoring any other pointer in the meantime, avoids
+/// that while leaving ordinary single-finger dragging unchanged.
+class _SinglePointerDragArea extends StatefulWidget {
+  final Widget child;
+  final ValueChanged<Offset> onDragDelta;
+  const _SinglePointerDragArea({
+    required this.child,
+    required this.onDragDelta,
+  });
+
+  @override
+  State<_SinglePointerDragArea> createState() =>
+      _SinglePointerDragAreaState();
+}
+
+class _SinglePointerDragAreaState extends State<_SinglePointerDragArea> {
+  int? _activePointer;
+  Offset? _lastPosition;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (event) {
+        if (_activePointer != null) return;
+        _activePointer = event.pointer;
+        _lastPosition = event.position;
+      },
+      onPointerMove: (event) {
+        if (event.pointer != _activePointer || _lastPosition == null) return;
+        widget.onDragDelta(event.position - _lastPosition!);
+        _lastPosition = event.position;
+      },
+      onPointerUp: (event) {
+        if (event.pointer != _activePointer) return;
+        _activePointer = null;
+        _lastPosition = null;
+      },
+      onPointerCancel: (event) {
+        if (event.pointer != _activePointer) return;
+        _activePointer = null;
+        _lastPosition = null;
+      },
+      child: widget.child,
+    );
+  }
+}
+
 class _PhotoCropScreenState extends State<PhotoCropScreen> {
   late Rect _region = widget.initialRegion;
 
@@ -161,10 +216,9 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                   top: sp.dy - _handleSize / 2,
                   width: _handleSize,
                   height: _handleSize,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onPanUpdate: (details) =>
-                        _moveHandle(h, toImageDelta(details.delta)),
+                  child: _SinglePointerDragArea(
+                    onDragDelta: (delta) =>
+                        _moveHandle(h, toImageDelta(delta)),
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.greenAccent.withValues(alpha: 0.9),
@@ -217,11 +271,10 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                       top: regionScreenRect.top,
                       width: regionScreenRect.width,
                       height: regionScreenRect.height,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onPanUpdate: (details) => _moveHandle(
+                      child: _SinglePointerDragArea(
+                        onDragDelta: (delta) => _moveHandle(
                           _CropHandle.body,
-                          toImageDelta(details.delta),
+                          toImageDelta(delta),
                         ),
                         child: Container(
                           decoration: BoxDecoration(
