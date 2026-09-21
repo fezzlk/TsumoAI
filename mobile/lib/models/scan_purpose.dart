@@ -18,10 +18,8 @@ enum ScanPurpose {
   HandOperation get operation => switch (this) {
     ScanPurpose.score => HandOperation.score,
     ScanPurpose.wait => HandOperation.tenpai,
-    // FEZ-215 will give call advice its own deterministic operation. Until
-    // then it reuses the existing analysis capture/confirmation path.
-    ScanPurpose.discard ||
-    ScanPurpose.callAdvice => HandOperation.discardAnalysis,
+    ScanPurpose.discard => HandOperation.discardAnalysis,
+    ScanPurpose.callAdvice => HandOperation.callAnalysis,
   };
 
   String get label => switch (this) {

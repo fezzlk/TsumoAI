@@ -21,7 +21,7 @@ from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimat
 from app.recognition_feedback_store import RecognitionFeedbackStore
 from app.recognition_job_manager import RecognitionJobManager
 from app.hand_scoring import score_hand_shape
-from app.hand_analysis import analyze_discard_options, analyze_tenpai
+from app.hand_analysis import analyze_call_options, analyze_discard_options, analyze_tenpai
 from app.interpretation import interpret_observations, request_from_hand_estimate
 from app.interpretation.confirmation import assemble_confirmed_hand_state
 from app.interpretation.models import (
@@ -35,6 +35,8 @@ from app.interpretation.models import (
 from app.repository import InMemoryRepository
 from app.schemas import (
     ContextInput,
+    CallAnalysisRequest,
+    CallAnalysisResponse,
     DatasetUploadRequest,
     DatasetUploadResponse,
     DiscardAnalysisRequest,
@@ -306,6 +308,14 @@ def analyze_tenpai_endpoint(req: TenpaiAnalysisRequest) -> TenpaiAnalysisRespons
 def analyze_discards_endpoint(req: DiscardAnalysisRequest) -> DiscardAnalysisResponse:
     try:
         return analyze_discard_options(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/calls/analyze", response_model=CallAnalysisResponse)
+def analyze_calls_endpoint(req: CallAnalysisRequest) -> CallAnalysisResponse:
+    try:
+        return analyze_call_options(req)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

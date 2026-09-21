@@ -85,3 +85,32 @@ def test_operations_do_not_switch_implicitly_by_tile_count():
     thirteen_tiles = fourteen_tiles[:-1]
     assert client.post("/api/v1/tenpai/analyze", json={"closed_tiles": fourteen_tiles}).status_code == 422
     assert client.post("/api/v1/discards/analyze", json={"closed_tiles": thirteen_tiles}).status_code == 422
+
+
+def test_call_analysis_lists_possible_calls_without_an_opponent_selection():
+    response = client.post(
+        "/api/v1/calls/analyze",
+        json={
+            "closed_tiles": ["1m", "2m", "4m", "5m", "5m", "7p", "8p", "9p", "2s", "3s", "4s", "E", "E"],
+            "include_score_predictions": False,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert any(item["call_type"] == "pon" and item["call_tile"] == "5m" for item in body["calls"])
+    assert any(
+        item["call_type"] == "chi"
+        and item["call_tile"] == "3m"
+        and item["consumed_tiles"] == ["1m", "2m"]
+        for item in body["calls"]
+    )
+    assert all(item["recommendation"] in {"improves", "keeps", "worsens"} for item in body["calls"])
+
+
+def test_call_analysis_requires_thirteen_tile_shape():
+    response = client.post(
+        "/api/v1/calls/analyze",
+        json={"closed_tiles": ["1m", "2m", "3m"]},
+    )
+    assert response.status_code == 422

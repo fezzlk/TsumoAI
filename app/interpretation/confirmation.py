@@ -83,7 +83,11 @@ def assemble_confirmed_hand_state(
         raise ValueError(f"normalized tile appears more than four times: {duplicates}")
 
     kans = sum(1 for meld in melds if meld.type.value in {"kan", "ankan", "kakan"})
-    expected = 13 + kans if confirmation.operation == Operation.tenpai else 14 + kans
+    expected = (
+        13 + kans
+        if confirmation.operation in {Operation.tenpai, Operation.call_analysis}
+        else 14 + kans
+    )
     if len(all_tiles) != expected:
         raise ValueError(
             f"{confirmation.operation.value} requires {expected} physical tiles with {kans} kan(s), "

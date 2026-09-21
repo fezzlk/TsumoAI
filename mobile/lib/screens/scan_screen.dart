@@ -1005,6 +1005,17 @@ class _ScanScreenState extends State<ScanScreen> {
             _showResultDialog();
           }
           break;
+        case HandOperation.callAnalysis:
+          final result = await _api.analyzeCalls(
+            state: state,
+            context: _context,
+            rules: rules,
+          );
+          if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+            setState(() => _analysisResult = result);
+            _showResultDialog();
+          }
+          break;
       }
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {

@@ -18,6 +18,7 @@ class Operation(str, Enum):
     score = "score"
     tenpai = "tenpai"
     discard_analysis = "discard_analysis"
+    call_analysis = "call_analysis"
 
 
 class CoordinateSpace(str, Enum):

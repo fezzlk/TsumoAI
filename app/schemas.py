@@ -246,6 +246,25 @@ class DiscardAnalysisResponse(BaseModel):
     discards: list[DiscardAnalysisResult] = Field(default_factory=list)
 
 
+class CallAnalysisRequest(AnalysisRequestBase):
+    pass
+
+
+class CallAnalysisResult(BaseModel):
+    call_tile: TileCode
+    call_type: Literal["chi", "pon", "kan"]
+    consumed_tiles: list[TileCode]
+    shanten_after_call: int
+    recommendation: Literal["improves", "keeps", "worsens"]
+    discards: list[DiscardAnalysisResult] = Field(default_factory=list)
+    replacement_tiles: list[WaitAnalysis] = Field(default_factory=list)
+
+
+class CallAnalysisResponse(BaseModel):
+    current_shanten: int
+    calls: list[CallAnalysisResult] = Field(default_factory=list)
+
+
 class RecognizeAndScorePayload(BaseModel):
     context: ContextInput
     rules: RuleSet

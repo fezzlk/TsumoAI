@@ -3,7 +3,8 @@ import 'tile_observation.dart';
 enum HandOperation {
   score('score'),
   tenpai('tenpai'),
-  discardAnalysis('discard_analysis');
+  discardAnalysis('discard_analysis'),
+  callAnalysis('call_analysis');
 
   const HandOperation(this.wireValue);
   final String wireValue;
