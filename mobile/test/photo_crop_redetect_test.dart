@@ -59,9 +59,11 @@ Future<({List<Rect> boxes, List<double> angleHints})> _detect(
   int expectedTileCount,
 ) async {
   final bytes = img.encodeJpg(image);
-  return segmentTilesWithHintsForExpectedCount(
-    (bytes: bytes, expectedTileCount: expectedTileCount),
-  );
+  return segmentTilesWithHintsForExpectedCount((
+    bytes: bytes,
+    expectedTileCount: expectedTileCount,
+    allowExtendedAuto: false,
+  ));
 }
 
 void main() {

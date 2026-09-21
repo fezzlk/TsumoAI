@@ -15,6 +15,7 @@ import '../services/tile_detector.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
 import '../models/interpretation_request.dart';
+import '../models/scan_purpose.dart';
 import '../models/interpretation_result.dart';
 import '../models/tile_observation.dart';
 import '../widgets/tile_image_picker.dart';
@@ -39,6 +40,8 @@ class ScanScreen extends StatefulWidget {
   final bool autoClassify;
   final String initialRoundWind;
   final ValueChanged<String>? onRoundWindChanged;
+  final ScanPurpose purpose;
+  final bool showTrainingDataActions;
 
   const ScanScreen({
     super.key,
@@ -46,6 +49,8 @@ class ScanScreen extends StatefulWidget {
     this.autoClassify = false,
     this.initialRoundWind = 'E',
     this.onRoundWindChanged,
+    this.purpose = ScanPurpose.score,
+    this.showTrainingDataActions = false,
   });
 
   @override
@@ -56,7 +61,7 @@ enum _ScanPhase { camera, detecting, results }
 
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
-  static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17];
+  static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
@@ -127,7 +132,9 @@ class _ScanScreenState extends State<ScanScreen> {
   Timer? _analysisTimer;
   TileDetectorResult? _liveDetectorResult;
   int _stableDetectionStreak = 0;
-  int _expectedTileCount = TileDetector.targetTileCount;
+  int? _expectedTileCount;
+  int? _autoDetectedTileCount;
+  int? _stableCandidateCount;
   static const int _requiredStableFrames = 2;
   static const Duration _analysisInterval = Duration(seconds: 1);
 
@@ -149,7 +156,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // manual choice may never be silently overwritten.
   bool _winningTileManuallySet = false;
   final List<ConfirmedMeld> _confirmedMelds = [];
-  HandOperation _operation = HandOperation.score;
+  late HandOperation _operation;
   Map<String, dynamic>? _analysisResult;
   final RequestEpoch _requestEpoch = RequestEpoch();
 
@@ -253,6 +260,8 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void initState() {
     super.initState();
+    _operation = widget.purpose.operation;
+    _expectedTileCount = widget.purpose.defaultTileCount;
     _context = ContextInput(roundWind: widget.initialRoundWind);
     _initCamera();
     _classifierInitialization = _initClassifier();
@@ -289,9 +298,7 @@ class _ScanScreenState extends State<ScanScreen> {
       // actually determines CameraPreview's aspect ratio (it checks
       // `lockedCaptureOrientation` before the ambient sensor) and the
       // orientation `takePicture()` bakes into the photo.
-      await _controller!.lockCaptureOrientation(
-        DeviceOrientation.landscapeLeft,
-      );
+      await _controller!.lockCaptureOrientation(DeviceOrientation.portraitUp);
       if (mounted) setState(() {});
       await _startLiveDetection();
     } catch (e) {
@@ -342,12 +349,22 @@ class _ScanScreenState extends State<ScanScreen> {
       final result = await TileDetector.detect(frame);
       if (!mounted || _phase != _ScanPhase.camera) return;
 
-      final isFullDetection = result.tileCount == _expectedTileCount;
+      final candidateCount = result.tileCount;
+      final isSupportedCount = candidateCount >= 13 && candidateCount <= 18;
+      final isFullDetection = _expectedTileCount == null
+          ? isSupportedCount
+          : candidateCount == _expectedTileCount;
       setState(() {
         _liveDetectorResult = result;
-        _stableDetectionStreak = isFullDetection
-            ? _stableDetectionStreak + 1
-            : 0;
+        if (_expectedTileCount == null && isSupportedCount) {
+          _autoDetectedTileCount = candidateCount;
+        }
+        if (isFullDetection && _stableCandidateCount == candidateCount) {
+          _stableDetectionStreak += 1;
+        } else {
+          _stableCandidateCount = isFullDetection ? candidateCount : null;
+          _stableDetectionStreak = isFullDetection ? 1 : 0;
+        }
       });
 
       if (_autoCaptureEnabled &&
@@ -430,10 +447,11 @@ class _ScanScreenState extends State<ScanScreen> {
       // no longer needs to fall back to the separate manual grid-alignment
       // phase (that fallback used to trigger on a count outside 13/14, which
       // was hitting often enough to be disruptive on its own).
-      final detected = await compute(
-        segmentTilesWithHintsForExpectedCount,
-        (bytes: bytes, expectedTileCount: _expectedTileCount),
-      );
+      final detected = await compute(segmentTilesWithHintsForExpectedCount, (
+        bytes: bytes,
+        expectedTileCount: _expectedTileCount,
+        allowExtendedAuto: _expectedTileCount == null,
+      ));
       if (!mounted) return;
       await _classifyBoxesAndFinish(
         detected.boxes,
@@ -467,6 +485,11 @@ class _ScanScreenState extends State<ScanScreen> {
     if (srcImage == null) return;
 
     setState(() {
+      if (_expectedTileCount == null &&
+          boxes.length >= 13 &&
+          boxes.length <= 18) {
+        _autoDetectedTileCount = boxes.length;
+      }
       for (int i = 0; i < _maxPhysicalTiles; i++) {
         _tiles[i] = null;
         _predictedTiles[i] = null;
@@ -510,8 +533,14 @@ class _ScanScreenState extends State<ScanScreen> {
     final imageBytes = _capturedBytes;
     if (srcImage == null || imageBytes == null) return;
 
-    final initialRegion = _cropRegion ??
-        Rect.fromLTWH(0, 0, srcImage.width.toDouble(), srcImage.height.toDouble());
+    final initialRegion =
+        _cropRegion ??
+        Rect.fromLTWH(
+          0,
+          0,
+          srcImage.width.toDouble(),
+          srcImage.height.toDouble(),
+        );
 
     final region = await Navigator.of(context).push<Rect>(
       MaterialPageRoute(
@@ -542,12 +571,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final x = (region?.left ?? 0).round().clamp(0, srcImage.width - 1);
     final y = (region?.top ?? 0).round().clamp(0, srcImage.height - 1);
-    final w = (region?.width ?? srcImage.width.toDouble())
-        .round()
-        .clamp(1, srcImage.width - x);
-    final h = (region?.height ?? srcImage.height.toDouble())
-        .round()
-        .clamp(1, srcImage.height - y);
+    final w = (region?.width ?? srcImage.width.toDouble()).round().clamp(
+      1,
+      srcImage.width - x,
+    );
+    final h = (region?.height ?? srcImage.height.toDouble()).round().clamp(
+      1,
+      srcImage.height - y,
+    );
     // The exact rect actually cropped to, in `_capturedImage`'s pixel space
     // — built from the clamped ints above, not the raw `region` argument,
     // so it's pixel-exact with what `copyCrop` below and the box-offset
@@ -568,11 +599,14 @@ class _ScanScreenState extends State<ScanScreen> {
     // Reuse the same encode for the results-screen preview when actually
     // cropped; when resetting to the full photo, prefer the original
     // `_capturedBytes` over this redundant re-encode (no generation loss).
-    setState(() => _cropDisplayBytes = clampedRegion != null ? regionBytes : null);
-    final detected = await compute(
-      segmentTilesWithHintsForExpectedCount,
-      (bytes: regionBytes, expectedTileCount: _expectedTileCount),
+    setState(
+      () => _cropDisplayBytes = clampedRegion != null ? regionBytes : null,
     );
+    final detected = await compute(segmentTilesWithHintsForExpectedCount, (
+      bytes: regionBytes,
+      expectedTileCount: _expectedTileCount,
+      allowExtendedAuto: _expectedTileCount == null,
+    ));
     if (!mounted) return;
 
     // Detection ran on the cropped sub-image, so its boxes are relative to
@@ -1097,16 +1131,12 @@ class _ScanScreenState extends State<ScanScreen> {
     for (int index = 0; index < _maxPhysicalTiles; index++) {
       if (_tileQuads[index] != null || _tiles[index] != null) last = index;
     }
-    return math
-        .max(_expectedTileCount, last + 1)
-        .clamp(_expectedTileCount, _maxPhysicalTiles);
+    final expected =
+        _expectedTileCount ??
+        _autoDetectedTileCount ??
+        widget.purpose.defaultTileCount;
+    return math.max(expected, last + 1).clamp(expected, _maxPhysicalTiles);
   }
-
-  String _operationLabel(HandOperation operation) => switch (operation) {
-    HandOperation.score => '点数計算',
-    HandOperation.tenpai => 'テンパイ・待ち',
-    HandOperation.discardAnalysis => '打牌分析',
-  };
 
   /// Physical-tile indices eligible to join a new meld: identified, and not
   /// already claimed by an existing `ConfirmedMeld`.
@@ -1209,9 +1239,8 @@ class _ScanScreenState extends State<ScanScreen> {
         _quickChip(
           'ロン',
           !isTsumo,
-          () => setState(
-            () => _updateContext(_context.copyWith(winType: 'ron')),
-          ),
+          () =>
+              setState(() => _updateContext(_context.copyWith(winType: 'ron'))),
         ),
         const SizedBox(width: 8),
         _quickChip(
@@ -1253,9 +1282,8 @@ class _ScanScreenState extends State<ScanScreen> {
             '一発',
             _context.ippatsu,
             () => setState(
-              () => _updateContext(
-                _context.copyWith(ippatsu: !_context.ippatsu),
-              ),
+              () =>
+                  _updateContext(_context.copyWith(ippatsu: !_context.ippatsu)),
             ),
           ),
         ],
@@ -1384,10 +1412,8 @@ class _ScanScreenState extends State<ScanScreen> {
             if (detection == MeldDetection.kan) ...[
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () => _confirmMeldSelection(
-                    type: 'ankan',
-                    open: false,
-                  ),
+                  onPressed: () =>
+                      _confirmMeldSelection(type: 'ankan', open: false),
                   child: const Text('暗槓（閉じ）'),
                 ),
               ),
@@ -1406,9 +1432,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       detection == MeldDetection.pon ||
                           detection == MeldDetection.chi
                       ? () => _confirmMeldSelection(
-                          type: detection == MeldDetection.pon
-                              ? 'pon'
-                              : 'chi',
+                          type: detection == MeldDetection.pon ? 'pon' : 'chi',
                           open: true,
                         )
                       : null,
@@ -1684,13 +1708,17 @@ class _ScanScreenState extends State<ScanScreen> {
             top: 68,
             left: 0,
             right: 0,
-            child: Center(child: _buildExpectedTileCountSelector()),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _buildExpectedTileCountSelector(),
+            ),
           ),
           // Live detection tile-count badge + auto/manual shutter toggle
           // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
           // real devices, so manual capture must remain available).
           Positioned(
-            top: 8,
+            top: 122,
             right: 12,
             child: Row(
               children: [
@@ -1742,7 +1770,10 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildLiveTileCountBadge() {
     final count = _liveDetectorResult?.tileCount ?? 0;
-    final isReady = count == _expectedTileCount;
+    final isReady = _expectedTileCount == null
+        ? count >= 13 && count <= 18
+        : count == _expectedTileCount;
+    final expectedLabel = _expectedTileCount?.toString() ?? '自動';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1760,7 +1791,7 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const SizedBox(width: 6),
           Text(
-            '$count / $_expectedTileCount 牌',
+            '$count / $expectedLabel 牌',
             style: TextStyle(
               color: Colors.white,
               fontSize: 13,
@@ -1772,7 +1803,7 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _buildExpectedTileCountSelector() {
+  Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
       decoration: BoxDecoration(
@@ -1789,20 +1820,26 @@ class _ScanScreenState extends State<ScanScreen> {
           const SizedBox(width: 8),
           SegmentedButton<int>(
             segments: [
+              const ButtonSegment<int>(value: 0, label: Text('自動')),
               for (final count in _selectableTileCounts)
                 ButtonSegment<int>(value: count, label: Text('$count')),
             ],
-            selected: {_expectedTileCount},
+            selected: {_expectedTileCount ?? 0},
             showSelectedIcon: false,
             style: const ButtonStyle(
               visualDensity: VisualDensity.compact,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            onSelectionChanged: (selection) {
+            onSelectionChanged: (selection) async {
+              final selected = selection.single == 0 ? null : selection.single;
               setState(() {
-                _expectedTileCount = selection.single;
+                _expectedTileCount = selected;
                 _stableDetectionStreak = 0;
+                _stableCandidateCount = null;
               });
+              if (redetectOnChange && _capturedImage != null) {
+                await _redetectInRegion(_cropRegion);
+              }
             },
           ),
         ],
@@ -1902,6 +1939,13 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: _buildExpectedTileCountSelector(
+                      redetectOnChange: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   // Retake, above the photo as its own bar (not overlaid on
                   // it) so it can't be mis-tapped during the photo's own
                   // pinch-zoom/pan gestures, and not pinned to the bottom
@@ -1918,12 +1962,17 @@ class _ScanScreenState extends State<ScanScreen> {
                   Container(
                     color: Colors.black87,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    child: Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         TextButton.icon(
                           onPressed: _backToCamera,
-                          icon: const Icon(Icons.replay, size: 18, color: Colors.white70),
+                          icon: const Icon(
+                            Icons.replay,
+                            size: 18,
+                            color: Colors.white70,
+                          ),
                           label: const Text(
                             '撮り直す',
                             style: TextStyle(color: Colors.white70),
@@ -1944,7 +1993,8 @@ class _ScanScreenState extends State<ScanScreen> {
                             style: TextStyle(color: Colors.white70),
                           ),
                         ),
-                        if (_trainingTilesReady)
+                        if (widget.showTrainingDataActions &&
+                            _trainingTilesReady)
                           TextButton.icon(
                             onPressed: _isSendingTraining || _isUndoingTraining
                                 ? null
@@ -1975,7 +2025,9 @@ class _ScanScreenState extends State<ScanScreen> {
                                   : _trainingDataSent
                                   ? '取り消す'
                                   : '学習データ送信',
-                              style: const TextStyle(color: Colors.orangeAccent),
+                              style: const TextStyle(
+                                color: Colors.orangeAccent,
+                              ),
                             ),
                           ),
                       ],
@@ -2008,31 +2060,28 @@ class _ScanScreenState extends State<ScanScreen> {
                     // ground: bigger than the pillarboxed version, but
                     // still leaves the controls below reachable without
                     // this photo alone eating most of the screen.
-                    Row(
+                    Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Flexible(
-                          child: RepaintBoundary(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth:
-                                    MediaQuery.of(context).size.width * 0.55,
-                                maxHeight:
-                                    MediaQuery.of(context).size.height * 0.55,
-                              ),
-                              child: AspectRatio(
-                                aspectRatio: _displayAspectRatio,
-                                child: InteractiveViewer(
-                                  minScale: 1.0,
-                                  maxScale: 4.0,
-                                  child: _buildTileMarkerOverlay(),
-                                ),
+                        RepaintBoundary(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: MediaQuery.of(context).size.width,
+                              maxHeight:
+                                  MediaQuery.of(context).size.height * 0.45,
+                            ),
+                            child: AspectRatio(
+                              aspectRatio: _displayAspectRatio,
+                              child: InteractiveViewer(
+                                minScale: 1.0,
+                                maxScale: 4.0,
+                                child: _buildTileMarkerOverlay(),
                               ),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(height: 8),
                         // FEZ-93 recovery flow: for when a reflection or
                         // other non-tile object gets picked up by
                         // detection, manually exclude it by re-detecting
@@ -2047,19 +2096,33 @@ class _ScanScreenState extends State<ScanScreen> {
                           children: [
                             TextButton.icon(
                               onPressed: _cropAndRedetect,
-                              icon: const Icon(Icons.crop, size: 16, color: Colors.white70),
+                              icon: const Icon(
+                                Icons.crop,
+                                size: 16,
+                                color: Colors.white70,
+                              ),
                               label: const Text(
                                 '範囲を切り抜いて\n再検出',
-                                style: TextStyle(color: Colors.white70, fontSize: 12),
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
                               ),
                             ),
                             if (_cropRegion != null)
                               TextButton.icon(
                                 onPressed: () => _redetectInRegion(null),
-                                icon: const Icon(Icons.undo, size: 16, color: Colors.white70),
+                                icon: const Icon(
+                                  Icons.undo,
+                                  size: 16,
+                                  color: Colors.white70,
+                                ),
                                 label: const Text(
                                   '元の範囲に\n戻す',
-                                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ),
                           ],
@@ -2123,9 +2186,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         final isWinningTile =
                             _confirmedWinningTileId == winningTileId;
                         final isMeldSelected = _meldSelection.contains(i);
-                        final isMeldEligible = _meldEligibleIndices.contains(
-                          i,
-                        );
+                        final isMeldEligible = _meldEligibleIndices.contains(i);
                         final canBeWinningTile =
                             _operation == HandOperation.score &&
                             tile != null &&
@@ -2154,8 +2215,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         final Widget glyphCore = GestureDetector(
                           onTap: _isSelectingMeld
                               ? () => _toggleMeldSelection(i)
-                              : () =>
-                                    _handleThumbnailTap(() => _onSlotTap(i)),
+                              : () => _handleThumbnailTap(() => _onSlotTap(i)),
                           child: Container(
                             width: 40,
                             height: 40,
@@ -2225,7 +2285,11 @@ class _ScanScreenState extends State<ScanScreen> {
 
                         Widget column = Column(
                           mainAxisSize: MainAxisSize.min,
-                          children: [cropImage, const SizedBox(height: 4), glyph],
+                          children: [
+                            cropImage,
+                            const SizedBox(height: 4),
+                            glyph,
+                          ],
                         );
 
                         // Meld-selection-mode affordance: a colored border
@@ -2308,7 +2372,6 @@ class _ScanScreenState extends State<ScanScreen> {
                     _buildInterpretationConfirmation(),
                     const SizedBox(height: 12),
                   ],
-
                 ],
               ),
             ),
@@ -2332,7 +2395,9 @@ class _ScanScreenState extends State<ScanScreen> {
               color: Colors.black,
               border: Border(top: BorderSide(color: Colors.white12)),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
                   height: 44,
@@ -2341,27 +2406,13 @@ class _ScanScreenState extends State<ScanScreen> {
                     color: Colors.white.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<HandOperation>(
-                      value: _operation,
-                      isDense: true,
-                      dropdownColor: Colors.grey.shade900,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      items: HandOperation.values
-                          .map(
-                            (operation) => DropdownMenuItem(
-                              value: operation,
-                              child: Text(_operationLabel(operation)),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (operation) {
-                        if (operation == null) return;
-                        setState(() {
-                          _operation = operation;
-                          _invalidateInterpretation();
-                        });
-                      },
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    widget.purpose.label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
@@ -2373,11 +2424,9 @@ class _ScanScreenState extends State<ScanScreen> {
                   // scrollable as a safety margin against overflow on a
                   // narrower device; this app's own landscape screens have
                   // room to show it in full without scrolling.
-                  Flexible(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: _buildQuickWinConditions(),
-                    ),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: _buildQuickWinConditions(),
                   ),
                 ],
                 const SizedBox(width: 8),
@@ -2403,12 +2452,14 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
+                SizedBox(
+                  width: double.infinity,
                   child: !_allDetectedTilesReady
                       ? OutlinedButton.icon(
-                          onPressed: _croppedImages.any((c) => c != null)
-                                  && !_isRunningFullClassification
-                                  && !_isClassifying.any((value) => value)
+                          onPressed:
+                              _croppedImages.any((c) => c != null) &&
+                                  !_isRunningFullClassification &&
+                                  !_isClassifying.any((value) => value)
                               ? _runClassification
                               : null,
                           icon: _isRunningFullClassification
@@ -2460,4 +2511,3 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 }
-

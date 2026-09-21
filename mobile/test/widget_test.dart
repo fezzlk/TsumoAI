@@ -1,48 +1,48 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/material.dart';
 import 'package:tsumoai_mobile/main.dart';
+import 'package:tsumoai_mobile/models/scan_purpose.dart';
 import 'package:tsumoai_mobile/screens/scan_screen.dart';
 
 void main() {
-  testWidgets('App builds smoke test', (WidgetTester tester) async {
-    await tester.pumpWidget(const TsumoAIApp());
-    expect(find.text('TsumoAI'), findsOneWidget);
-  });
-
-  testWidgets('home scan settings persist after returning from scan', (
+  testWidgets('home exposes the primary scan purposes', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const TsumoAIApp());
 
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
-    expect(
-      tester.widget<SegmentedButton<String>>(
-        find.byType(SegmentedButton<String>).first,
-      ).selected,
-      {'E'},
-    );
+    expect(find.text('点数計算'), findsOneWidget);
+    expect(find.text('待ち確認'), findsOneWidget);
+    expect(find.text('AI相談　何を切る？・鳴くべき？'), findsOneWidget);
+    expect(find.text('ログインしていません'), findsOneWidget);
+  });
 
-    await tester.tap(find.text('南'));
-    await tester.tap(find.byType(Switch));
-    await tester.pump();
+  testWidgets('wait purpose opens scan with a 13-tile default', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const TsumoAIApp());
 
-    await tester.tap(find.text('牌スキャン'));
+    await tester.tap(find.text('待ち確認'));
     await tester.pumpAndSettle();
+
     final scan = tester.widget<ScanScreen>(find.byType(ScanScreen));
-    expect(scan.autoClassify, isTrue);
-    expect(scan.initialRoundWind, 'S');
+    expect(scan.purpose, ScanPurpose.wait);
+    expect(scan.purpose.defaultTileCount, 13);
+  });
 
-    scan.onRoundWindChanged?.call('W');
-    await tester.pump();
-    Navigator.of(tester.element(find.byType(ScanScreen))).pop();
+  testWidgets('AI consultation distinguishes discard and call advice', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const TsumoAIApp());
+
+    await tester.tap(find.text('AI相談　何を切る？・鳴くべき？'));
     await tester.pumpAndSettle();
+    expect(find.text('何を切る？'), findsOneWidget);
+    expect(find.text('鳴くべき？'), findsOneWidget);
+  });
 
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
-    expect(
-      tester.widget<SegmentedButton<String>>(
-        find.byType(SegmentedButton<String>).first,
-      ).selected,
-      {'W'},
-    );
+  test('purpose defaults match the expected hand shape', () {
+    expect(ScanPurpose.score.defaultTileCount, 14);
+    expect(ScanPurpose.discard.defaultTileCount, 14);
+    expect(ScanPurpose.wait.defaultTileCount, 13);
+    expect(ScanPurpose.callAdvice.defaultTileCount, 13);
   });
 }

@@ -13,7 +13,14 @@ img.Image _darkBackground(int width, int height) {
 }
 
 void _fillTile(img.Image image, int x, int y, int w, int h) {
-  img.fillRect(image, x1: x, y1: y, x2: x + w - 1, y2: y + h - 1, color: img.ColorRgb8(240, 240, 235));
+  img.fillRect(
+    image,
+    x1: x,
+    y1: y,
+    x2: x + w - 1,
+    y2: y + h - 1,
+    color: img.ColorRgb8(240, 240, 235),
+  );
 }
 
 img.Image? _loadCaseImage(String name) {
@@ -22,23 +29,38 @@ img.Image? _loadCaseImage(String name) {
   return img.decodeImage(file.readAsBytesSync());
 }
 
-void _fillRotatedTile(img.Image image, double cx, double cy, double w, double h, double angleDeg) {
+void _fillRotatedTile(
+  img.Image image,
+  double cx,
+  double cy,
+  double w,
+  double h,
+  double angleDeg,
+) {
   final rad = angleDeg * math.pi / 180.0;
   final cosA = math.cos(rad), sinA = math.sin(rad);
-  final corners = [
-    (-w / 2, -h / 2),
-    (w / 2, -h / 2),
-    (w / 2, h / 2),
-    (-w / 2, h / 2),
-  ].map((c) {
-    final rx = c.$1 * cosA - c.$2 * sinA;
-    final ry = c.$1 * sinA + c.$2 * cosA;
-    return img.Point(cx + rx, cy + ry);
-  }).toList();
-  img.fillPolygon(image, vertices: corners, color: img.ColorRgb8(240, 240, 235));
+  final corners =
+      [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)].map((
+        c,
+      ) {
+        final rx = c.$1 * cosA - c.$2 * sinA;
+        final ry = c.$1 * sinA + c.$2 * cosA;
+        return img.Point(cx + rx, cy + ry);
+      }).toList();
+  img.fillPolygon(
+    image,
+    vertices: corners,
+    color: img.ColorRgb8(240, 240, 235),
+  );
 }
 
-typedef _PlacedTile = ({double cx, double cy, double w, double h, double angleDeg});
+typedef _PlacedTile = ({
+  double cx,
+  double cy,
+  double w,
+  double h,
+  double angleDeg,
+});
 
 /// Places [nTiles] tiles left-to-right: the first [straightCount] axis-
 /// aligned via [_fillTile] on a straight line, then the remainder curving
@@ -149,12 +171,12 @@ void main() {
     expect(boxes.length, nTiles);
   });
 
-  test('segmentTiles honors each selected count from 13 through 17', () {
+  test('segmentTiles honors each selected count from 13 through 18', () {
     const width = 550;
     const tileW = 500, tileH = 340, gap = 16;
     const pitch = tileH + gap;
 
-    for (final nTiles in [13, 14, 15, 16, 17]) {
+    for (final nTiles in [13, 14, 15, 16, 17, 18]) {
       final height = 20 + nTiles * pitch + 40;
       final canvas = _darkBackground(width, height);
       for (int i = 0; i < nTiles; i++) {
@@ -179,7 +201,7 @@ void main() {
       throwsArgumentError,
     );
     expect(
-      () => segmentTiles(canvas, expectedTileCount: 18),
+      () => segmentTiles(canvas, expectedTileCount: 19),
       throwsArgumentError,
     );
   });
@@ -217,9 +239,16 @@ void main() {
     // bounding box of the tilted tile (includes dark-background triangles
     // in its corners).
     final rad = angleDeg * math.pi / 180.0;
-    final halfSpanX = (tileW / 2) * math.cos(rad).abs() + (tileH / 2) * math.sin(rad).abs();
-    final halfSpanY = (tileW / 2) * math.sin(rad).abs() + (tileH / 2) * math.cos(rad).abs();
-    final roughBox = Rect.fromLTWH(cx - halfSpanX, cy - halfSpanY, halfSpanX * 2, halfSpanY * 2);
+    final halfSpanX =
+        (tileW / 2) * math.cos(rad).abs() + (tileH / 2) * math.sin(rad).abs();
+    final halfSpanY =
+        (tileW / 2) * math.sin(rad).abs() + (tileH / 2) * math.cos(rad).abs();
+    final roughBox = Rect.fromLTWH(
+      cx - halfSpanX,
+      cy - halfSpanY,
+      halfSpanX * 2,
+      halfSpanY * 2,
+    );
 
     final naive = img.copyCrop(
       canvas,
@@ -233,43 +262,66 @@ void main() {
     final naiveFraction = _whiteFraction(naive);
     final refinedFraction = _whiteFraction(refined);
 
-    expect(refinedFraction, greaterThan(naiveFraction + 0.1),
-        reason: 'straightened+tight crop should contain noticeably less background than the naive rough-box crop');
-    expect(refinedFraction, greaterThan(0.8),
-        reason: 'straightened+tight crop should be mostly tile, not background');
+    expect(
+      refinedFraction,
+      greaterThan(naiveFraction + 0.1),
+      reason:
+          'straightened+tight crop should contain noticeably less background than the naive rough-box crop',
+    );
+    expect(
+      refinedFraction,
+      greaterThan(0.8),
+      reason: 'straightened+tight crop should be mostly tile, not background',
+    );
   });
 
-  test('refineTileCrop straightens a tilted tile even with a TIGHT (nominal-size) roughBox', () {
-    // Regression test for FEZ-122: unlike the test above (whose roughBox is
-    // deliberately the tilted tile's own full rotated AABB, already
-    // containing its whole footprint), segmentTiles' curved-row slots are
-    // the NOMINAL (unrotated) tile size — the same size the tile would be
-    // if perfectly straight — because each slot tracks the blob's local
-    // centerline, not a size inflated for its own tilt. On a real curved
-    // hand, this tight roughBox no longer matched the earlier (already-
-    // fixed) full-AABB assumption, and a pre-straightening guard here
-    // (meant to reject a neighbor-contaminated blob) was rejecting a
-    // legitimate single tile's own rotation-driven bbox growth before ever
-    // attempting to straighten it — so real curved-row tiles came out
-    // un-rotated. See tile_segmenter.dart's `refineTileCropWithRect` for
-    // the fix (a looser pre-straightening bound; the actual neighbor-bleed
-    // guards, downstream of the rotation search, are untouched).
-    const canvasW = 1200, canvasH = 1200;
-    const tileW = 340.0, tileH = 500.0;
-    const cx = 600.0, cy = 600.0;
-    for (final angleDeg in [15.0, 20.0, 25.0, 30.0]) {
-      final canvas = _darkBackground(canvasW, canvasH);
-      _fillRotatedTile(canvas, cx, cy, tileW, tileH, angleDeg);
-      final roughBox = Rect.fromLTWH(cx - tileW / 2, cy - tileH / 2, tileW, tileH);
-      final naive = img.copyCrop(canvas,
-          x: roughBox.left.round(), y: roughBox.top.round(),
-          width: roughBox.width.round(), height: roughBox.height.round());
-      final refined = refineTileCrop(canvas, roughBox);
+  test(
+    'refineTileCrop straightens a tilted tile even with a TIGHT (nominal-size) roughBox',
+    () {
+      // Regression test for FEZ-122: unlike the test above (whose roughBox is
+      // deliberately the tilted tile's own full rotated AABB, already
+      // containing its whole footprint), segmentTiles' curved-row slots are
+      // the NOMINAL (unrotated) tile size — the same size the tile would be
+      // if perfectly straight — because each slot tracks the blob's local
+      // centerline, not a size inflated for its own tilt. On a real curved
+      // hand, this tight roughBox no longer matched the earlier (already-
+      // fixed) full-AABB assumption, and a pre-straightening guard here
+      // (meant to reject a neighbor-contaminated blob) was rejecting a
+      // legitimate single tile's own rotation-driven bbox growth before ever
+      // attempting to straighten it — so real curved-row tiles came out
+      // un-rotated. See tile_segmenter.dart's `refineTileCropWithRect` for
+      // the fix (a looser pre-straightening bound; the actual neighbor-bleed
+      // guards, downstream of the rotation search, are untouched).
+      const canvasW = 1200, canvasH = 1200;
+      const tileW = 340.0, tileH = 500.0;
+      const cx = 600.0, cy = 600.0;
+      for (final angleDeg in [15.0, 20.0, 25.0, 30.0]) {
+        final canvas = _darkBackground(canvasW, canvasH);
+        _fillRotatedTile(canvas, cx, cy, tileW, tileH, angleDeg);
+        final roughBox = Rect.fromLTWH(
+          cx - tileW / 2,
+          cy - tileH / 2,
+          tileW,
+          tileH,
+        );
+        final naive = img.copyCrop(
+          canvas,
+          x: roughBox.left.round(),
+          y: roughBox.top.round(),
+          width: roughBox.width.round(),
+          height: roughBox.height.round(),
+        );
+        final refined = refineTileCrop(canvas, roughBox);
 
-      expect(_whiteFraction(refined), greaterThan(_whiteFraction(naive) + 0.05),
-          reason: 'a $angleDeg° tilted tile should still be noticeably straightened from a tight roughBox');
-    }
-  });
+        expect(
+          _whiteFraction(refined),
+          greaterThan(_whiteFraction(naive) + 0.05),
+          reason:
+              'a $angleDeg° tilted tile should still be noticeably straightened from a tight roughBox',
+        );
+      }
+    },
+  );
 
   test('refineTileCrop does not grow into a neighboring touching tile', () {
     // Companion guard for the fix above: loosening the pre-straightening
@@ -281,13 +333,23 @@ void main() {
     const tileW = 340.0, tileH = 500.0;
     final canvas = _darkBackground(canvasW, canvasH);
     _fillTile(canvas, 100, 150, tileW.round(), tileH.round());
-    _fillTile(canvas, (100 + tileW).round(), 150, tileW.round(), tileH.round()); // touching, no gap
+    _fillTile(
+      canvas,
+      (100 + tileW).round(),
+      150,
+      tileW.round(),
+      tileH.round(),
+    ); // touching, no gap
     final roughBox = Rect.fromLTWH(100, 150, tileW, tileH);
 
     final refined = refineTileCrop(canvas, roughBox);
 
-    expect(refined.width, lessThan(tileW + tileW * 0.5),
-        reason: 'refined crop must not balloon out to include most of the touching neighbor tile');
+    expect(
+      refined.width,
+      lessThan(tileW + tileW * 0.5),
+      reason:
+          'refined crop must not balloon out to include most of the touching neighbor tile',
+    );
   });
 
   test('segmentTiles keeps each slot aligned to one tile on a curved (bent) row', () {
@@ -316,7 +378,11 @@ void main() {
 
     final boxes = segmentTiles(canvas);
 
-    expect(boxes.length, nTiles, reason: 'curved row should still resolve to the correct 13/14 hand size');
+    expect(
+      boxes.length,
+      nTiles,
+      reason: 'curved row should still resolve to the correct 13/14 hand size',
+    );
 
     // For each detected box, sample a grid of points and classify each by
     // which ground-truth tile's actual (rotated) footprint it falls in.
@@ -347,24 +413,42 @@ void main() {
       final maxCount = counts.reduce(math.max);
       final matchIdx = counts.indexOf(maxCount);
       final matchFraction = maxCount / total;
-      expect(matchFraction, greaterThan(0.5),
-          reason: 'detected box $box should be dominated by a single tile '
-              '(best match tile $matchIdx covers ${(matchFraction * 100).toStringAsFixed(0)}%)');
+      expect(
+        matchFraction,
+        greaterThan(0.5),
+        reason:
+            'detected box $box should be dominated by a single tile '
+            '(best match tile $matchIdx covers ${(matchFraction * 100).toStringAsFixed(0)}%)',
+      );
       for (int t = 0; t < groundTruth.length; t++) {
         if (t == matchIdx) continue;
         final fraction = counts[t] / total;
-        expect(fraction, lessThan(0.2),
-            reason: 'detected box $box should not substantially contain neighboring tile $t '
-                '(${(fraction * 100).toStringAsFixed(0)}%)');
+        expect(
+          fraction,
+          lessThan(0.2),
+          reason:
+              'detected box $box should not substantially contain neighboring tile $t '
+              '(${(fraction * 100).toStringAsFixed(0)}%)',
+        );
       }
     }
   });
 
   test('segmentTiles on real photos finds exactly fourteen', () {
-    for (final name in ['case-001', 'case-002', 'case-003', 'case-004', 'case-005', 'case-006']) {
+    for (final name in [
+      'case-001',
+      'case-002',
+      'case-003',
+      'case-004',
+      'case-005',
+      'case-006',
+    ]) {
       final image = _loadCaseImage(name);
-      if (image == null) continue; // eval fixture not present in this environment
-      final rgb = image.numChannels == 3 ? image : image.convert(numChannels: 3);
+      if (image == null)
+        continue; // eval fixture not present in this environment
+      final rgb = image.numChannels == 3
+          ? image
+          : image.convert(numChannels: 3);
       final boxes = segmentTiles(rgb, expectedTileCount: 14);
       expect(boxes.length, 14, reason: '$name should detect exactly 14 tiles');
     }
