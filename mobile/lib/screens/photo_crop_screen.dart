@@ -38,61 +38,6 @@ class PhotoCropScreen extends StatefulWidget {
 
 enum _CropHandle { topLeft, topRight, bottomLeft, bottomRight, body }
 
-/// Wraps [child] in a drag area that reports deltas via [onDragDelta],
-/// tracking exactly one pointer at a time. Plain `GestureDetector.onPanUpdate`
-/// fires once per *moving* pointer inside its area — so two fingers landing
-/// on the same handle/body region (an easy accident with a natural two-
-/// handed hold-and-drag) each report their own delta for the same frame,
-/// and a handler that applies every delta it receives ends up moving twice
-/// as far as either finger actually moved. Tracking only the first pointer
-/// until it lifts, and ignoring any other pointer in the meantime, avoids
-/// that while leaving ordinary single-finger dragging unchanged.
-class _SinglePointerDragArea extends StatefulWidget {
-  final Widget child;
-  final ValueChanged<Offset> onDragDelta;
-  const _SinglePointerDragArea({
-    required this.child,
-    required this.onDragDelta,
-  });
-
-  @override
-  State<_SinglePointerDragArea> createState() =>
-      _SinglePointerDragAreaState();
-}
-
-class _SinglePointerDragAreaState extends State<_SinglePointerDragArea> {
-  int? _activePointer;
-  Offset? _lastPosition;
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: (event) {
-        if (_activePointer != null) return;
-        _activePointer = event.pointer;
-        _lastPosition = event.position;
-      },
-      onPointerMove: (event) {
-        if (event.pointer != _activePointer || _lastPosition == null) return;
-        widget.onDragDelta(event.position - _lastPosition!);
-        _lastPosition = event.position;
-      },
-      onPointerUp: (event) {
-        if (event.pointer != _activePointer) return;
-        _activePointer = null;
-        _lastPosition = null;
-      },
-      onPointerCancel: (event) {
-        if (event.pointer != _activePointer) return;
-        _activePointer = null;
-        _lastPosition = null;
-      },
-      child: widget.child,
-    );
-  }
-}
-
 class _PhotoCropScreenState extends State<PhotoCropScreen> {
   late Rect _region = widget.initialRegion;
 
@@ -101,6 +46,45 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
   // re-detection meaningless; this is a generous floor, not a precision
   // limit — the detector itself handles the real fitting.
   static const double _minSize = 40;
+
+  // Exactly one drag — on any single handle OR the body — may be active
+  // across the WHOLE screen at a time, not just within whichever single
+  // widget a pointer happens to land on. A per-widget-only guard still let
+  // two simultaneous touches double a corner's movement: e.g. one thumb
+  // holding a corner handle while the other thumb rests anywhere inside
+  // the body region (very easy with a natural two-handed grip) — the body
+  // drag shifts every corner, including the one already being handle-
+  // dragged, so that corner moved by its own handle's delta AND the body's
+  // delta on top of it. Tracking one pointer/target pair here, shared by
+  // every handle and the body, and ignoring any other pointer entirely
+  // until it lifts, removes that regardless of which combination of
+  // targets the extra finger lands on.
+  int? _activePointer;
+  _CropHandle? _activeHandle;
+  Offset? _lastPointerPosition;
+
+  void _onPointerDown(_CropHandle handle, PointerDownEvent event) {
+    if (_activePointer != null) return;
+    _activePointer = event.pointer;
+    _activeHandle = handle;
+    _lastPointerPosition = event.position;
+  }
+
+  void _onPointerMove(PointerMoveEvent event, double scale) {
+    if (event.pointer != _activePointer || _lastPointerPosition == null) {
+      return;
+    }
+    final delta = (event.position - _lastPointerPosition!) / scale;
+    _lastPointerPosition = event.position;
+    _moveHandle(_activeHandle!, delta);
+  }
+
+  void _onPointerEnd(PointerEvent event) {
+    if (event.pointer != _activePointer) return;
+    _activePointer = null;
+    _activeHandle = null;
+    _lastPointerPosition = null;
+  }
 
   void _moveHandle(_CropHandle handle, Offset imageDelta) {
     final maxW = widget.rawWidth.toDouble();
@@ -207,7 +191,6 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
 
               Offset toScreen(Offset p) =>
                   Offset(dispLeft + p.dx * scale, dispTop + p.dy * scale);
-              Offset toImageDelta(Offset screenDelta) => screenDelta / scale;
 
               Widget handle(_CropHandle h, Offset point) {
                 final sp = toScreen(point);
@@ -216,9 +199,12 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                   top: sp.dy - _handleSize / 2,
                   width: _handleSize,
                   height: _handleSize,
-                  child: _SinglePointerDragArea(
-                    onDragDelta: (delta) =>
-                        _moveHandle(h, toImageDelta(delta)),
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (event) => _onPointerDown(h, event),
+                    onPointerMove: (event) => _onPointerMove(event, scale),
+                    onPointerUp: _onPointerEnd,
+                    onPointerCancel: _onPointerEnd,
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.greenAccent.withValues(alpha: 0.9),
@@ -271,11 +257,14 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                       top: regionScreenRect.top,
                       width: regionScreenRect.width,
                       height: regionScreenRect.height,
-                      child: _SinglePointerDragArea(
-                        onDragDelta: (delta) => _moveHandle(
-                          _CropHandle.body,
-                          toImageDelta(delta),
-                        ),
+                      child: Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerDown: (event) =>
+                            _onPointerDown(_CropHandle.body, event),
+                        onPointerMove: (event) =>
+                            _onPointerMove(event, scale),
+                        onPointerUp: _onPointerEnd,
+                        onPointerCancel: _onPointerEnd,
                         child: Container(
                           decoration: BoxDecoration(
                             border: Border.all(
