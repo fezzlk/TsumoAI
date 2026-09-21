@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
 import 'models/scan_purpose.dart';
+import 'screens/match_home_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/training_data_screen.dart';
@@ -204,7 +205,16 @@ class HomeScreen extends StatelessWidget {
             SizedBox(
               height: 58,
               child: ElevatedButton.icon(
-                onPressed: () => _showComingSoon(context, '対局セッション'),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => MatchHomeScreen(
+                      cameras: cameras,
+                      autoClassify: autoClassify,
+                      showTrainingDataActions: showTrainingDataActions,
+                    ),
+                  ),
+                ),
                 icon: const Icon(Icons.groups_outlined),
                 label: const Text('対局を始める'),
               ),

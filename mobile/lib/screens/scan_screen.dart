@@ -42,6 +42,8 @@ class ScanScreen extends StatefulWidget {
   final ValueChanged<String>? onRoundWindChanged;
   final ScanPurpose purpose;
   final bool showTrainingDataActions;
+  final ContextInput? initialContext;
+  final ValueChanged<bool>? onScoreConfirmed;
 
   const ScanScreen({
     super.key,
@@ -51,6 +53,8 @@ class ScanScreen extends StatefulWidget {
     this.onRoundWindChanged,
     this.purpose = ScanPurpose.score,
     this.showTrainingDataActions = false,
+    this.initialContext,
+    this.onScoreConfirmed,
   });
 
   @override
@@ -262,7 +266,9 @@ class _ScanScreenState extends State<ScanScreen> {
     super.initState();
     _operation = widget.purpose.operation;
     _expectedTileCount = widget.purpose.defaultTileCount;
-    _context = ContextInput(roundWind: widget.initialRoundWind);
+    _context =
+        widget.initialContext ??
+        ContextInput(roundWind: widget.initialRoundWind);
     _initCamera();
     _classifierInitialization = _initClassifier();
   }
@@ -1496,6 +1502,21 @@ class _ScanScreenState extends State<ScanScreen> {
                 ],
                 if (_scoreResult != null)
                   ScoreResultPanel(scoreResponse: _scoreResult!),
+                if (_scoreResult != null &&
+                    widget.onScoreConfirmed != null) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () {
+                        widget.onScoreConfirmed!(_context.isDealer);
+                        Navigator.of(dialogContext).pop();
+                        Navigator.of(context).pop();
+                      },
+                      child: const Text('この結果で局終了'),
+                    ),
+                  ),
+                ],
                 if (_analysisResult != null)
                   ConstrainedBox(
                     constraints: BoxConstraints(
