@@ -140,4 +140,61 @@ void main() {
       );
     },
   );
+
+  // Regression test for the follow-up "goes back to the original position"
+  // report: lifting a handle mid-drag and touching it again must continue
+  // from where it left off, not restart that handle's own delta at zero
+  // measured against the session's original baseline.
+  testWidgets(
+    'PhotoCropScreen: lifting and re-touching a handle continues its movement instead of resetting it',
+    (tester) async {
+      final getResult = await openCropScreen(tester);
+
+      final bottomLeftCenter = tester.getCenter(
+        find.byKey(const ValueKey('crop-handle-bottomLeft')),
+      );
+      final bottomRightCenter = tester.getCenter(
+        find.byKey(const ValueKey('crop-handle-bottomRight')),
+      );
+
+      // bottomRight: touches down and never moves for the whole test —
+      // the "fixed finger" from the report.
+      final gestureBottomRight = await tester.startGesture(bottomRightCenter);
+      await tester.pump();
+
+      // bottomLeft: moves up by 30, then lifts and touches down again to
+      // move a further 10.
+      var gestureBottomLeft = await tester.startGesture(bottomLeftCenter);
+      await tester.pump();
+      await gestureBottomLeft.moveBy(const Offset(0, -30));
+      await tester.pump();
+      await gestureBottomLeft.up();
+      await tester.pump();
+
+      gestureBottomLeft = await tester.startGesture(bottomLeftCenter);
+      await tester.pump();
+      await gestureBottomLeft.moveBy(const Offset(0, -10));
+      await tester.pump();
+      await gestureBottomLeft.up();
+      await gestureBottomRight.up();
+      await tester.pump();
+
+      await tester.tap(find.text('確定'));
+      await tester.pumpAndSettle();
+
+      final region = getResult();
+      expect(region, isNotNull);
+      // bottomLeft's total displacement is 30+10=40; bottomRight never
+      // moved (0) and was active throughout, so the shared `bottom` edge
+      // averages to 20 up from the start — not ~5, which is what resetting
+      // bottomLeft's delta to just its second touch's own -10 (averaged
+      // with bottomRight's 0) would give.
+      expect(
+        region!.bottom,
+        closeTo(_initialRegion.bottom - 20, 2),
+        reason:
+            'bottomLeft\'s movement across the lift/re-touch should accumulate to 40, not reset to 10',
+      );
+    },
+  );
 }

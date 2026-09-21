@@ -55,100 +55,118 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
   // once, so `_bodyActive`/`_anyHandleActive` below block that combination
   // in either direction.
   //
-  // Every edge is recomputed, on every move event from ANY active handle,
-  // from `_dragBaseline` (the region snapshot from when the current,
-  // possibly multi-touch, gesture started) plus each currently-active
-  // owning handle's own total on-screen displacement since ITS OWN
-  // pointer went down — never by adding this event's incremental delta
-  // onto whatever `_region` already holds. That distinction matters once
-  // two handles share an edge: topLeft and bottomLeft both own `left`.
-  // Incremental deltas applied to the live `_region` compound — swipe both
-  // fingers left by the same amount and the first handle's move already
-  // shifted `left`, so the second handle's "move left by the same amount
-  // again" lands on top of that, doubling the edge's total movement.
-  //
-  // A shared edge with BOTH owning handles active is set to the AVERAGE of
-  // their two independently-computed values, not whichever handle's event
-  // happened to fire most recently: two real fingers are never in perfect
-  // lock-step, so "last event wins" made the edge flip back and forth by
-  // that small per-frame discrepancy each time either finger's next sample
-  // arrived — visible as jitter/flicker even once the systematic 2x error
-  // was gone. Averaging still converges on the same result when both
-  // fingers agree, but stays smooth through their small natural
-  // disagreement instead of oscillating between the two raw values.
-  Rect? _dragBaseline;
+  // `_baseline` is a "commit point": every currently-active handle's
+  // contribution to the edge(s) it owns is `_baseline.<field> +` that
+  // handle's own on-screen displacement *since the last commit* (tracked
+  // as `_lastKnownPosition[handle] - _referencePosition[handle]`), and a
+  // shared edge with more than one active owner averages their
+  // contributions. `_rebase()` — called on every pointer down/up that
+  // changes which handles are active — sets `_baseline` to whatever
+  // `_region` currently is and resets every still-active handle's
+  // reference point to its current position, i.e. commits the exact
+  // on-screen state at that instant and makes every remaining/new handle's
+  // future movement purely incremental from there. Three things this
+  // fixes, all from the same root cause (measuring against a single
+  // baseline fixed at the very start of a whole multi-touch session,
+  // instead of one that moves forward every time the situation changes):
+  // - Two fingers sharing an edge, swiping the same direction by the same
+  //   amount, no longer double that edge's movement (each averaged
+  //   contribution is measured from the shared commit point, not stacked
+  //   on the live, already-mutated region).
+  // - Two fingers not in perfect lock-step no longer visibly jitter (their
+  //   contributions are averaged, not whichever's event happened to fire
+  //   last).
+  // - Lifting one of two fingers on a shared edge, or lifting and
+  //   re-touching the same handle mid-drag, no longer snaps that edge back
+  //   toward (or to) its pre-drag position: without a fresh commit at the
+  //   moment of the lift, the lifted handle's contribution simply
+  //   vanishes from the average, leaving only the other (possibly
+  //   stationary) handle's own baseline-relative value.
+  late Rect _baseline = widget.initialRegion;
   final Map<_CropHandle, int> _activePointers = {};
-  final Map<_CropHandle, Offset> _pointerDownPositions = {};
-  final Map<_CropHandle, Offset> _totalDeltaByHandle = {};
+  final Map<_CropHandle, Offset> _referencePosition = {};
+  final Map<_CropHandle, Offset> _lastKnownPosition = {};
 
   bool get _bodyActive => _activePointers.containsKey(_CropHandle.body);
   bool get _anyHandleActive =>
       _activePointers.keys.any((h) => h != _CropHandle.body);
 
+  void _rebase() {
+    _baseline = _region;
+    for (final h in _activePointers.keys) {
+      _referencePosition[h] = _lastKnownPosition[h]!;
+    }
+  }
+
   void _onPointerDown(_CropHandle handle, PointerDownEvent event) {
     if (_activePointers.containsKey(handle)) return;
     if (handle == _CropHandle.body ? _anyHandleActive : _bodyActive) return;
-    _dragBaseline ??= _region;
     _activePointers[handle] = event.pointer;
-    _pointerDownPositions[handle] = event.position;
-    _totalDeltaByHandle[handle] = Offset.zero;
+    _lastKnownPosition[handle] = event.position;
+    _rebase();
   }
 
   void _onPointerMove(_CropHandle handle, PointerMoveEvent event, double scale) {
     if (_activePointers[handle] != event.pointer) return;
-    final downPosition = _pointerDownPositions[handle];
-    final baseline = _dragBaseline;
-    if (downPosition == null || baseline == null) return;
-    _totalDeltaByHandle[handle] = (event.position - downPosition) / scale;
-    setState(() => _region = _computeRegion(baseline));
+    _lastKnownPosition[handle] = event.position;
+    setState(() => _region = _computeRegion(scale));
   }
 
   void _onPointerEnd(_CropHandle handle, PointerEvent event) {
     if (_activePointers[handle] != event.pointer) return;
     _activePointers.remove(handle);
-    _pointerDownPositions.remove(handle);
-    _totalDeltaByHandle.remove(handle);
-    if (_activePointers.isEmpty) _dragBaseline = null;
+    _referencePosition.remove(handle);
+    _lastKnownPosition.remove(handle);
+    if (_activePointers.isEmpty) return;
+    // Commits `_region` exactly as it is right now (removing this handle
+    // doesn't change the CURRENT value, only what future moves are
+    // measured from) — see the class-level doc comment for why this must
+    // happen at every membership change, not just be left for the next
+    // move event.
+    _rebase();
   }
 
-  /// The average of `baseline.<field>` + each currently-active handle in
-  /// [owners]' own total delta component ([isX]: dx, else dy) — or, when
-  /// none of [owners] is currently active, [fallback] (the edge's current
-  /// live value, so it stays put rather than snapping back to baseline
-  /// once whichever handle was moving it has lifted).
+  /// The average, over every currently-active handle in [owners], of
+  /// `_baseline.<field>` (via [field]) plus that handle's own on-screen
+  /// displacement since the last [_rebase] ([isX]: dx component, else dy,
+  /// scaled from screen to image space by [scale]) — or, when none of
+  /// [owners] is currently active, [fallback] (the edge's current live
+  /// value, so it stays put with no owner touching it).
   double _averagedEdge(
     List<_CropHandle> owners,
-    Rect baseline,
     double Function(Rect) field,
     bool isX,
     double fallback,
+    double scale,
   ) {
     final active = owners.where(_activePointers.containsKey).toList();
     if (active.isEmpty) return fallback;
     var sum = 0.0;
     for (final h in active) {
-      final d = _totalDeltaByHandle[h] ?? Offset.zero;
-      sum += field(baseline) + (isX ? d.dx : d.dy);
+      final d = (_lastKnownPosition[h]! - _referencePosition[h]!) / scale;
+      sum += field(_baseline) + (isX ? d.dx : d.dy);
     }
     return sum / active.length;
   }
 
-  /// The region after applying every currently-active handle's own total
-  /// on-screen displacement (each measured from that handle's own pointer-
-  /// down) to [baseline] — see the class-level doc comment above for why
-  /// this recomputes fresh from every active handle each event, and
-  /// averages a shared edge's two contributions, rather than incrementally
-  /// mutating the live `_region`.
-  Rect _computeRegion(Rect baseline) {
+  /// The region after applying every currently-active handle's own
+  /// displacement since the last [_rebase] to `_baseline` — see the
+  /// class-level doc comment for why this recomputes fresh from every
+  /// active handle each event (averaging a shared edge's contributions)
+  /// rather than incrementally mutating the live `_region`.
+  Rect _computeRegion(double scale) {
     final maxW = widget.rawWidth.toDouble();
     final maxH = widget.rawHeight.toDouble();
 
     if (_bodyActive) {
-      final d = _totalDeltaByHandle[_CropHandle.body] ?? Offset.zero;
+      final d =
+          (_lastKnownPosition[_CropHandle.body]! -
+              _referencePosition[_CropHandle.body]!) /
+          scale;
       // Preserve size exactly while clamping position — matches
       // `TileBoxEditorScreen`'s `panRegion`, so a drag that hits the
       // photo's edge stops there instead of shrinking the selection.
-      final shifted = baseline.shift(d);
+      final shifted = _baseline.shift(d);
       final left = shifted.width >= maxW
           ? (maxW - shifted.width) / 2
           : shifted.left.clamp(0.0, maxW - shifted.width);
@@ -161,31 +179,31 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
     final current = _region;
     final rawLeft = _averagedEdge(
       [_CropHandle.topLeft, _CropHandle.bottomLeft],
-      baseline,
       (r) => r.left,
       true,
       current.left,
+      scale,
     );
     final rawTop = _averagedEdge(
       [_CropHandle.topLeft, _CropHandle.topRight],
-      baseline,
       (r) => r.top,
       false,
       current.top,
+      scale,
     );
     final rawRight = _averagedEdge(
       [_CropHandle.topRight, _CropHandle.bottomRight],
-      baseline,
       (r) => r.right,
       true,
       current.right,
+      scale,
     );
     final rawBottom = _averagedEdge(
       [_CropHandle.bottomLeft, _CropHandle.bottomRight],
-      baseline,
       (r) => r.bottom,
       false,
       current.bottom,
+      scale,
     );
 
     // Each edge is clamped against the OPPOSITE edge's own (independently
