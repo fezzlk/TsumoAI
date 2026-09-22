@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// This app is locked to landscape only (`main.dart`'s
-/// `SystemChrome.setPreferredOrientations`). `flutter test`'s default
+/// The app is portrait-first. `flutter test`'s default
 /// surface is 800x600 logical points — comfortably larger in both
-/// dimensions than any real phone in landscape — so an overflow that's
+/// dimensions than many real phones — so an overflow that's
 /// invisible in a plain `tester.pumpWidget(...)` call can still crash or
 /// hide content on the real device, only discoverable after a full
 /// build+install cycle.
@@ -19,9 +18,8 @@ import 'package:flutter_test/flutter_test.dart';
 /// so both sizes matter, not just landscape.
 ///
 /// [kLandscapeTestPadding]/[kPortraitTestPadding] approximate that
-/// device's home-indicator safe-area inset (conservative; exact
-/// left/right notch insets depend on which landscape orientation the
-/// device is rotated to and aren't modeled here — this catches the common
+/// device's home-indicator safe-area inset (conservative; exact insets
+/// aren't modeled here — this catches the common
 /// "content doesn't fit" class of bug, not every possible safe-area edge
 /// case).
 const kLandscapeTestSize = Size(874, 402);
@@ -49,26 +47,22 @@ Future<void> pumpAtDeviceSize(
 }
 
 /// Shorthand for [pumpAtDeviceSize] at [kLandscapeTestSize].
-Future<void> pumpAtDeviceLandscapeSize(
-  WidgetTester tester,
-  Widget child,
-) => pumpAtDeviceSize(
-  tester,
-  child,
-  size: kLandscapeTestSize,
-  padding: kLandscapeTestPadding,
-);
+Future<void> pumpAtDeviceLandscapeSize(WidgetTester tester, Widget child) =>
+    pumpAtDeviceSize(
+      tester,
+      child,
+      size: kLandscapeTestSize,
+      padding: kLandscapeTestPadding,
+    );
 
 /// Shorthand for [pumpAtDeviceSize] at [kPortraitTestSize].
-Future<void> pumpAtDevicePortraitSize(
-  WidgetTester tester,
-  Widget child,
-) => pumpAtDeviceSize(
-  tester,
-  child,
-  size: kPortraitTestSize,
-  padding: kPortraitTestPadding,
-);
+Future<void> pumpAtDevicePortraitSize(WidgetTester tester, Widget child) =>
+    pumpAtDeviceSize(
+      tester,
+      child,
+      size: kPortraitTestSize,
+      padding: kPortraitTestPadding,
+    );
 
 /// Fails the test if any widget in the current tree reports a layout
 /// overflow (Flutter renders these as a "yellow and black stripes"
