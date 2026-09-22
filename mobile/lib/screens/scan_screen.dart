@@ -36,6 +36,7 @@ import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
 import '../services/history_service.dart';
 import '../services/auth_service.dart';
+import '../services/capture_framing.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
 
@@ -490,15 +491,17 @@ class _ScanScreenState extends State<ScanScreen> {
     try {
       final xFile = await _controller!.takePicture();
       final bytes = await File(xFile.path).readAsBytes();
-      // Off the main isolate: decoding a high-resolution JPEG synchronously
-      // here blocked the UI thread long enough that the camera preview
-      // visibly froze on a stale frame right after the shutter.
-      final decoded = await compute(img.decodeImage, bytes);
-      if (decoded == null) throw Exception('画像のデコードに失敗');
+      // The preview is a centered 16:9 frame. Persist exactly that frame so
+      // detection, result display, box editing and training upload all share
+      // the same image and coordinate system instead of reverting to the
+      // camera plugin's full portrait JPEG after capture.
+      final framed = await compute(prepareCapturedFrame, bytes);
+      final framedBytes = framed.bytes;
+      final decoded = framed.image;
       capturedOk = true;
 
       setState(() {
-        _capturedBytes = bytes;
+        _capturedBytes = framedBytes;
         _capturedImage = decoded;
         _phase = _ScanPhase.detecting;
         for (int i = 0; i < _maxPhysicalTiles; i++) {
@@ -520,7 +523,7 @@ class _ScanScreenState extends State<ScanScreen> {
       // phase (that fallback used to trigger on a count outside 13/14, which
       // was hitting often enough to be disruptive on its own).
       final detected = await compute(segmentTilesWithHintsForExpectedCount, (
-        bytes: bytes,
+        bytes: framedBytes,
         expectedTileCount: _expectedTileCount,
         allowExtendedAuto: _expectedTileCount == null,
       ));
@@ -1925,7 +1928,7 @@ class _ScanScreenState extends State<ScanScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           AspectRatio(
-            aspectRatio: 16 / 9,
+            aspectRatio: captureFrameAspectRatio,
             child: Stack(
               fit: StackFit.expand,
               children: [
