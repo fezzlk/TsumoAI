@@ -30,18 +30,24 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
 ({List<Rect> boxes, List<double> angleHints}) segmentTilesWithHints(
   img.Image image, {
   int? expectedTileCount,
-}) => _segmentCore(image, expectedTileCount: expectedTileCount);
+  bool allowExtendedAuto = false,
+}) => _segmentCore(
+  image,
+  expectedTileCount: expectedTileCount,
+  allowExtendedAuto: allowExtendedAuto,
+);
 
 ({List<Rect> boxes, List<double> angleHints}) _segmentCore(
   img.Image image, {
   int? expectedTileCount,
+  bool allowExtendedAuto = false,
 }) {
   if (expectedTileCount != null &&
-      (expectedTileCount < 13 || expectedTileCount > 17)) {
+      (expectedTileCount < 13 || expectedTileCount > 18)) {
     throw ArgumentError.value(
       expectedTileCount,
       'expectedTileCount',
-      'must be between 13 and 17',
+      'must be between 13 and 18',
     );
   }
   const scale = 4;
@@ -106,7 +112,13 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
         }
       }
 
-      components.add((x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, area: count));
+      components.add((
+        x: minX,
+        y: minY,
+        w: maxX - minX + 1,
+        h: maxY - minY + 1,
+        area: count,
+      ));
     }
   }
 
@@ -128,8 +140,10 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
 
   // Decide run orientation once, from how ALL surviving components are
   // spatially arranged (not any single component's own aspect ratio).
-  int spanMinX = filtered.first.x, spanMaxX = filtered.first.x + filtered.first.w;
-  int spanMinY = filtered.first.y, spanMaxY = filtered.first.y + filtered.first.h;
+  int spanMinX = filtered.first.x,
+      spanMaxX = filtered.first.x + filtered.first.w;
+  int spanMinY = filtered.first.y,
+      spanMaxY = filtered.first.y + filtered.first.h;
   for (final c in filtered) {
     if (c.x < spanMinX) spanMinX = c.x;
     if (c.x + c.w > spanMaxX) spanMaxX = c.x + c.w;
@@ -171,6 +185,7 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
     dims,
     blobPitches,
     expectedTileCount: expectedTileCount,
+    allowExtendedAuto: allowExtendedAuto,
   );
 
   // Subdivide each kept component into individual tiles, scaling back up
@@ -221,18 +236,23 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
         final sy = c.y + (j * subH).toInt();
         final ey = c.y + ((j + 1) * subH).toInt();
         final rel0 = sy - c.y;
-        final rel1 = math.min(centerline.centers.length, math.max(rel0 + 1, ey - c.y));
+        final rel1 = math.min(
+          centerline.centers.length,
+          math.max(rel0 + 1, ey - c.y),
+        );
         final sliceCenter = _median(centerline.centers.sublist(rel0, rel1));
         var sx = (sliceCenter - halfExtent).round();
         var ex = sx + centerline.extent.round();
         sx = sx.clamp(0, mW);
         ex = ex.clamp(sx, mW);
-        result.add(Rect.fromLTWH(
-          (sx * scale).toDouble(),
-          (sy * scale).toDouble(),
-          ((ex - sx) * scale).toDouble(),
-          ((ey - sy) * scale).toDouble(),
-        ));
+        result.add(
+          Rect.fromLTWH(
+            (sx * scale).toDouble(),
+            (sy * scale).toDouble(),
+            ((ex - sx) * scale).toDouble(),
+            ((ey - sy) * scale).toDouble(),
+          ),
+        );
         angleHints.add(angleHintFromSlope(centerline, rel0, rel1));
       }
     } else {
@@ -241,18 +261,23 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
         final sx = c.x + (j * subW).toInt();
         final ex = c.x + ((j + 1) * subW).toInt();
         final rel0 = sx - c.x;
-        final rel1 = math.min(centerline.centers.length, math.max(rel0 + 1, ex - c.x));
+        final rel1 = math.min(
+          centerline.centers.length,
+          math.max(rel0 + 1, ex - c.x),
+        );
         final sliceCenter = _median(centerline.centers.sublist(rel0, rel1));
         var sy = (sliceCenter - halfExtent).round();
         var ey = sy + centerline.extent.round();
         sy = sy.clamp(0, mH);
         ey = ey.clamp(sy, mH);
-        result.add(Rect.fromLTWH(
-          (sx * scale).toDouble(),
-          (sy * scale).toDouble(),
-          ((ex - sx) * scale).toDouble(),
-          ((ey - sy) * scale).toDouble(),
-        ));
+        result.add(
+          Rect.fromLTWH(
+            (sx * scale).toDouble(),
+            (sy * scale).toDouble(),
+            ((ex - sx) * scale).toDouble(),
+            ((ey - sy) * scale).toDouble(),
+          ),
+        );
         angleHints.add(angleHintFromSlope(centerline, rel0, rel1));
       }
     }
@@ -270,23 +295,30 @@ List<Rect> segmentTilesFromBytes(Uint8List bytes) {
   // clears the tag once applied); kept here defensively so this function is
   // correct standalone, e.g. if called directly on a fresh capture.
   final oriented = img.bakeOrientation(decoded);
-  final rgb = oriented.numChannels == 3 ? oriented : oriented.convert(numChannels: 3);
+  final rgb = oriented.numChannels == 3
+      ? oriented
+      : oriented.convert(numChannels: 3);
   return segmentTiles(rgb);
 }
 
 /// Same as [segmentTilesFromBytes], but returns hints too (see
 /// [segmentTilesWithHints]) — for the `compute()` isolate entry point.
-({List<Rect> boxes, List<double> angleHints}) segmentTilesWithHintsFromBytes(Uint8List bytes) {
+({List<Rect> boxes, List<double> angleHints}) segmentTilesWithHintsFromBytes(
+  Uint8List bytes,
+) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return (boxes: <Rect>[], angleHints: <double>[]);
   final oriented = img.bakeOrientation(decoded);
-  final rgb = oriented.numChannels == 3 ? oriented : oriented.convert(numChannels: 3);
+  final rgb = oriented.numChannels == 3
+      ? oriented
+      : oriented.convert(numChannels: 3);
   return segmentTilesWithHints(rgb);
 }
 
 typedef TileSegmentationRequest = ({
   Uint8List bytes,
-  int expectedTileCount,
+  int? expectedTileCount,
+  bool allowExtendedAuto,
 });
 
 /// Decode a captured image and segment it using the exact tile count selected
@@ -303,6 +335,7 @@ segmentTilesWithHintsForExpectedCount(TileSegmentationRequest request) {
   return segmentTilesWithHints(
     rgb,
     expectedTileCount: request.expectedTileCount,
+    allowExtendedAuto: request.allowExtendedAuto,
   );
 }
 
@@ -313,7 +346,8 @@ segmentTilesWithHintsForExpectedCount(TileSegmentationRequest request) {
 /// This is a small, local, per-tile refinement; it does not touch (and
 /// cannot destabilize) the whole-row detection/counting in [segmentTiles].
 /// Falls back to a plain crop of [roughBox] if no clear tile blob is found.
-img.Image refineTileCrop(img.Image source, Rect roughBox) => refineTileCropWithRect(source, roughBox).image;
+img.Image refineTileCrop(img.Image source, Rect roughBox) =>
+    refineTileCropWithRect(source, roughBox).image;
 
 /// Same as [refineTileCrop], but also reports the region it actually used,
 /// in [source]'s own pixel space, as a [TileQuad] — for callers that want
@@ -349,9 +383,19 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) => refineTileCropWithR
   final py0 = (roughBox.top - marginY).round().clamp(0, srcH - 1);
   final px1 = (roughBox.right + marginX).round().clamp(px0 + 1, srcW);
   final py1 = (roughBox.bottom + marginY).round().clamp(py0 + 1, srcH);
-  final padded = img.copyCrop(source, x: px0, y: py0, width: px1 - px0, height: py1 - py0);
+  final padded = img.copyCrop(
+    source,
+    x: px0,
+    y: py0,
+    width: px1 - px0,
+    height: py1 - py0,
+  );
 
-  final blob = _pickCentralBlob(_findLocalBlobs(padded), padded.width, padded.height);
+  final blob = _pickCentralBlob(
+    _findLocalBlobs(padded),
+    padded.width,
+    padded.height,
+  );
   if (blob == null) return fallbackResult();
 
   // Touching tiles can share a seam too faint to separate even in this
@@ -384,11 +428,20 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) => refineTileCropWithR
   ({img.Image image, TileQuad sourceQuad}) noRotationResult() {
     final tight = _tightCropToBlobRect(blob, padded.width, padded.height);
     if (tight == null) return fallbackResult();
-    if (expectedArea > 0 && tight.width * tight.height > expectedArea * 1.6) return fallbackResult();
+    if (expectedArea > 0 && tight.width * tight.height > expectedArea * 1.6) {
+      return fallbackResult();
+    }
     return (
-      image: img.copyCrop(padded, x: tight.left.round(), y: tight.top.round(),
-          width: tight.width.round(), height: tight.height.round()),
-      sourceQuad: TileQuad.fromRect(tight.translate(px0.toDouble(), py0.toDouble())),
+      image: img.copyCrop(
+        padded,
+        x: tight.left.round(),
+        y: tight.top.round(),
+        width: tight.width.round(),
+        height: tight.height.round(),
+      ),
+      sourceQuad: TileQuad.fromRect(
+        tight.translate(px0.toDouble(), py0.toDouble()),
+      ),
     );
   }
 
@@ -415,8 +468,16 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) => refineTileCropWithR
   img.Image? bestImage;
   _LocalBlob? bestBlob;
   for (final candidate in candidates) {
-    final rotated = img.copyRotate(padded, angle: candidate, interpolation: img.Interpolation.linear);
-    final rBlob = _pickCentralBlob(_findLocalBlobs(rotated), rotated.width, rotated.height);
+    final rotated = img.copyRotate(
+      padded,
+      angle: candidate,
+      interpolation: img.Interpolation.linear,
+    );
+    final rBlob = _pickCentralBlob(
+      _findLocalBlobs(rotated),
+      rotated.width,
+      rotated.height,
+    );
     if (rBlob == null) continue;
     final area = _bboxArea(rBlob).toDouble();
     if (area < bestArea) {
@@ -464,7 +525,11 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) => refineTileCropWithR
 /// [pad] on each side. Rotates the point cloud analytically (a plain 2D
 /// rotation this function fully controls and inverts exactly) rather than
 /// reasoning about a real [img.copyRotate] pixel buffer's canvas geometry.
-List<Offset> _rotatedRectCorners(List<(int, int)> points, double angleDeg, double pad) {
+List<Offset> _rotatedRectCorners(
+  List<(int, int)> points,
+  double angleDeg,
+  double pad,
+) {
   double sumX = 0, sumY = 0;
   for (final p in points) {
     sumX += p.$1;
@@ -517,8 +582,13 @@ int _bboxArea(_LocalBlob b) => (b.maxX - b.minX + 1) * (b.maxY - b.minY + 1);
 img.Image? _tightCropToBlob(img.Image image, _LocalBlob blob) {
   final rect = _tightCropToBlobRect(blob, image.width, image.height);
   if (rect == null) return null;
-  return img.copyCrop(image, x: rect.left.round(), y: rect.top.round(),
-      width: rect.width.round(), height: rect.height.round());
+  return img.copyCrop(
+    image,
+    x: rect.left.round(),
+    y: rect.top.round(),
+    width: rect.width.round(),
+    height: rect.height.round(),
+  );
 }
 
 /// The region [_tightCropToBlob] would crop to, without doing the crop —
@@ -530,7 +600,12 @@ Rect? _tightCropToBlobRect(_LocalBlob blob, int imageWidth, int imageHeight) {
   final y = (blob.minY - pad).clamp(0, imageHeight - 1);
   final x1 = (blob.maxX + pad + 1).clamp(x + 1, imageWidth);
   final y1 = (blob.maxY + pad + 1).clamp(y + 1, imageHeight);
-  return Rect.fromLTRB(x.toDouble(), y.toDouble(), x1.toDouble(), y1.toDouble());
+  return Rect.fromLTRB(
+    x.toDouble(),
+    y.toDouble(),
+    x1.toDouble(),
+    y1.toDouble(),
+  );
 }
 
 /// A connected white-pixel blob found in a small local crop (full
@@ -540,7 +615,14 @@ Rect? _tightCropToBlobRect(_LocalBlob blob, int imageWidth, int imageHeight) {
 class _LocalBlob {
   final int minX, minY, maxX, maxY, area;
   final List<(int, int)> points;
-  _LocalBlob(this.minX, this.minY, this.maxX, this.maxY, this.area, this.points);
+  _LocalBlob(
+    this.minX,
+    this.minY,
+    this.maxX,
+    this.maxY,
+    this.area,
+    this.points,
+  );
 }
 
 List<_LocalBlob> _findLocalBlobs(img.Image local) {
@@ -873,7 +955,14 @@ const int _centerlineSmoothWindow = 5;
 /// Falls back to a single centered value spanning [w]/[h] when no row (or
 /// column) anywhere in the blob has enough coverage to be trusted.
 _Centerline _blobCenterline(
-    Uint8List mask, int maskW, int x, int y, int w, int h, bool vertical) {
+  Uint8List mask,
+  int maskW,
+  int x,
+  int y,
+  int w,
+  int h,
+  bool vertical,
+) {
   final crossDim = vertical ? w : h;
   final runDim = vertical ? h : w;
   final centers = List<double>.filled(runDim, double.nan);
@@ -895,12 +984,18 @@ _Centerline _blobCenterline(
 
   final extent = widths.isNotEmpty ? _median(widths) : crossDim.toDouble();
 
-  final validIdx = [for (int r = 0; r < runDim; r++) if (!centers[r].isNaN) r];
+  final validIdx = [
+    for (int r = 0; r < runDim; r++)
+      if (!centers[r].isNaN) r,
+  ];
   if (validIdx.isEmpty) {
     // No signal anywhere in this blob; fall back to a single centered value
     // for every slot, equivalent to today's fixed-position behavior.
     final fallbackCenter = (vertical ? x : y) + crossDim / 2;
-    return (centers: List<double>.filled(runDim, fallbackCenter), extent: extent);
+    return (
+      centers: List<double>.filled(runDim, fallbackCenter),
+      extent: extent,
+    );
   }
   for (int r = 0; r < validIdx.first; r++) {
     centers[r] = centers[validIdx.first];
@@ -934,7 +1029,15 @@ _Centerline _blobCenterline(
 /// between touching tiles stays visible instead of being bridged by the
 /// CLOSE step. Shared by [_blobPitch] (whole-blob periodicity) and
 /// [_snapBoundaries] (per-boundary local seam snapping).
-List<double> _runProfile(Uint8List maskRaw, int maskW, int x, int y, int w, int h, bool vertical) {
+List<double> _runProfile(
+  Uint8List maskRaw,
+  int maskW,
+  int x,
+  int y,
+  int w,
+  int h,
+  bool vertical,
+) {
   if (vertical) {
     final profile = List<double>.filled(h, 0.0);
     for (int ry = 0; ry < h; ry++) {
@@ -962,7 +1065,15 @@ List<double> _runProfile(Uint8List maskRaw, int maskW, int x, int y, int w, int 
 /// restricted to its bounding box. Returns (pitch_px, confidence, dim) —
 /// dim is the blob's extent along the run axis, in the same (downscaled)
 /// units as [maskRaw].
-(int?, double, int) _blobPitch(Uint8List maskRaw, int maskW, int x, int y, int w, int h, bool vertical) {
+(int?, double, int) _blobPitch(
+  Uint8List maskRaw,
+  int maskW,
+  int x,
+  int y,
+  int w,
+  int h,
+  bool vertical,
+) {
   final dim = vertical ? h : w;
   final profile = _runProfile(maskRaw, maskW, x, y, w, h, vertical);
   final (pitch, confidence) = _estimatePitch(profile, dim);
@@ -972,6 +1083,7 @@ List<double> _runProfile(Uint8List maskRaw, int maskW, int x, int y, int w, int 
 // ───────── Joint tile-count resolution ─────────
 
 const List<int> _handSizes = [13, 14];
+const List<int> _extendedHandSizes = [13, 14, 15, 16, 17, 18];
 const double _dropMinCost = 0.3;
 const double _dropCostMultiplier = 2.0;
 const double _maxTotalCost = 3.0;
@@ -1008,16 +1120,22 @@ List<int> _resolveTileCounts(
   List<double> dims,
   List<(int?, double, int)> blobPitches, {
   int? expectedTileCount,
+  bool allowExtendedAuto = false,
 }) {
   const referenceConfidence = 0.50;
   const minConfidence = 0.30;
 
-  final ownPitches = [for (final bp in blobPitches) if (bp.$1 != null) bp.$1!.toDouble()];
+  final ownPitches = [
+    for (final bp in blobPitches)
+      if (bp.$1 != null) bp.$1!.toDouble(),
+  ];
   final confidentPitches = [
     for (final bp in blobPitches)
       if (bp.$1 != null && bp.$2 >= referenceConfidence) bp.$1!.toDouble(),
   ];
-  final referencePitch = confidentPitches.isNotEmpty ? _median(confidentPitches) : null;
+  final referencePitch = confidentPitches.isNotEmpty
+      ? _median(confidentPitches)
+      : null;
   final fallbackPitch = ownPitches.isNotEmpty ? _median(ownPitches) : null;
 
   final perBlobCosts = <Map<int, double>>[];
@@ -1041,7 +1159,7 @@ List<int> _resolveTileCounts(
   List<int>? bestCombo;
   double bestCost = double.infinity;
   final allowedHandSizes = expectedTileCount == null
-      ? _handSizes
+      ? (allowExtendedAuto ? _extendedHandSizes : _handSizes)
       : <int>[expectedTileCount];
   final maxHand = allowedHandSizes.reduce(math.max);
 

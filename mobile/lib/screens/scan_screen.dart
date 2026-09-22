@@ -14,7 +14,9 @@ import '../services/api_client.dart';
 import '../services/tile_detector.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
+import '../models/history_entry.dart';
 import '../models/interpretation_request.dart';
+import '../models/scan_purpose.dart';
 import '../models/interpretation_result.dart';
 import '../models/tile_observation.dart';
 import '../widgets/tile_image_picker.dart';
@@ -31,6 +33,8 @@ import '../services/meld_detector.dart';
 import '../models/tile_quad.dart';
 import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
+import '../services/history_service.dart';
+import '../services/auth_service.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
 
@@ -39,6 +43,11 @@ class ScanScreen extends StatefulWidget {
   final bool autoClassify;
   final String initialRoundWind;
   final ValueChanged<String>? onRoundWindChanged;
+  final ScanPurpose purpose;
+  final bool showTrainingDataActions;
+  final ContextInput? initialContext;
+  final ValueChanged<bool>? onScoreConfirmed;
+  final String? historyRoundLabel;
 
   const ScanScreen({
     super.key,
@@ -46,6 +55,11 @@ class ScanScreen extends StatefulWidget {
     this.autoClassify = false,
     this.initialRoundWind = 'E',
     this.onRoundWindChanged,
+    this.purpose = ScanPurpose.score,
+    this.showTrainingDataActions = false,
+    this.initialContext,
+    this.onScoreConfirmed,
+    this.historyRoundLabel,
   });
 
   @override
@@ -56,12 +70,15 @@ enum _ScanPhase { camera, detecting, results }
 
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
-  static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17];
+  static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
   CameraController? _controller;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
   final ApiClient _api = ApiClient();
   final TrainingDataClient _trainingClient = TrainingDataClient();
+  final HistoryService _historyService = HistoryService();
+  late final String _historyEntryId = HistoryService.createId();
+  late final DateTime _historyCreatedAt = DateTime.now().toUtc();
 
   _ScanPhase _phase = _ScanPhase.camera;
 
@@ -127,7 +144,9 @@ class _ScanScreenState extends State<ScanScreen> {
   Timer? _analysisTimer;
   TileDetectorResult? _liveDetectorResult;
   int _stableDetectionStreak = 0;
-  int _expectedTileCount = TileDetector.targetTileCount;
+  int? _expectedTileCount;
+  int? _autoDetectedTileCount;
+  int? _stableCandidateCount;
   static const int _requiredStableFrames = 2;
   static const Duration _analysisInterval = Duration(seconds: 1);
 
@@ -139,7 +158,8 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _trainingDataSent = false;
   bool _isUndoingTraining = false;
   List<String> _sentTrainingEntryIds = [];
-  ScoreResponse? _scoreResult;
+  ScoreResponse? _tsumoScoreResult;
+  ScoreResponse? _ronScoreResult;
   bool _isNotWinning = false;
   InterpretationResult? _interpretation;
   String? _confirmedWinningTileId;
@@ -149,7 +169,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // manual choice may never be silently overwritten.
   bool _winningTileManuallySet = false;
   final List<ConfirmedMeld> _confirmedMelds = [];
-  HandOperation _operation = HandOperation.score;
+  late HandOperation _operation;
   Map<String, dynamic>? _analysisResult;
   final RequestEpoch _requestEpoch = RequestEpoch();
 
@@ -239,7 +259,8 @@ class _ScanScreenState extends State<ScanScreen> {
   void _invalidateAnalysis() {
     _requestEpoch.invalidate();
     _analysisResult = null;
-    _scoreResult = null;
+    _tsumoScoreResult = null;
+    _ronScoreResult = null;
     _isNotWinning = false;
   }
 
@@ -253,7 +274,11 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void initState() {
     super.initState();
-    _context = ContextInput(roundWind: widget.initialRoundWind);
+    _operation = widget.purpose.operation;
+    _expectedTileCount = widget.purpose.defaultTileCount;
+    _context =
+        widget.initialContext ??
+        ContextInput(roundWind: widget.initialRoundWind);
     _initCamera();
     _classifierInitialization = _initClassifier();
   }
@@ -289,9 +314,7 @@ class _ScanScreenState extends State<ScanScreen> {
       // actually determines CameraPreview's aspect ratio (it checks
       // `lockedCaptureOrientation` before the ambient sensor) and the
       // orientation `takePicture()` bakes into the photo.
-      await _controller!.lockCaptureOrientation(
-        DeviceOrientation.landscapeLeft,
-      );
+      await _controller!.lockCaptureOrientation(DeviceOrientation.portraitUp);
       if (mounted) setState(() {});
       await _startLiveDetection();
     } catch (e) {
@@ -342,12 +365,22 @@ class _ScanScreenState extends State<ScanScreen> {
       final result = await TileDetector.detect(frame);
       if (!mounted || _phase != _ScanPhase.camera) return;
 
-      final isFullDetection = result.tileCount == _expectedTileCount;
+      final candidateCount = result.tileCount;
+      final isSupportedCount = candidateCount >= 13 && candidateCount <= 18;
+      final isFullDetection = _expectedTileCount == null
+          ? isSupportedCount
+          : candidateCount == _expectedTileCount;
       setState(() {
         _liveDetectorResult = result;
-        _stableDetectionStreak = isFullDetection
-            ? _stableDetectionStreak + 1
-            : 0;
+        if (_expectedTileCount == null && isSupportedCount) {
+          _autoDetectedTileCount = candidateCount;
+        }
+        if (isFullDetection && _stableCandidateCount == candidateCount) {
+          _stableDetectionStreak += 1;
+        } else {
+          _stableCandidateCount = isFullDetection ? candidateCount : null;
+          _stableDetectionStreak = isFullDetection ? 1 : 0;
+        }
       });
 
       if (_autoCaptureEnabled &&
@@ -430,10 +463,11 @@ class _ScanScreenState extends State<ScanScreen> {
       // no longer needs to fall back to the separate manual grid-alignment
       // phase (that fallback used to trigger on a count outside 13/14, which
       // was hitting often enough to be disruptive on its own).
-      final detected = await compute(
-        segmentTilesWithHintsForExpectedCount,
-        (bytes: bytes, expectedTileCount: _expectedTileCount),
-      );
+      final detected = await compute(segmentTilesWithHintsForExpectedCount, (
+        bytes: bytes,
+        expectedTileCount: _expectedTileCount,
+        allowExtendedAuto: _expectedTileCount == null,
+      ));
       if (!mounted) return;
       await _classifyBoxesAndFinish(
         detected.boxes,
@@ -467,6 +501,11 @@ class _ScanScreenState extends State<ScanScreen> {
     if (srcImage == null) return;
 
     setState(() {
+      if (_expectedTileCount == null &&
+          boxes.length >= 13 &&
+          boxes.length <= 18) {
+        _autoDetectedTileCount = boxes.length;
+      }
       for (int i = 0; i < _maxPhysicalTiles; i++) {
         _tiles[i] = null;
         _predictedTiles[i] = null;
@@ -510,8 +549,14 @@ class _ScanScreenState extends State<ScanScreen> {
     final imageBytes = _capturedBytes;
     if (srcImage == null || imageBytes == null) return;
 
-    final initialRegion = _cropRegion ??
-        Rect.fromLTWH(0, 0, srcImage.width.toDouble(), srcImage.height.toDouble());
+    final initialRegion =
+        _cropRegion ??
+        Rect.fromLTWH(
+          0,
+          0,
+          srcImage.width.toDouble(),
+          srcImage.height.toDouble(),
+        );
 
     final region = await Navigator.of(context).push<Rect>(
       MaterialPageRoute(
@@ -542,12 +587,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final x = (region?.left ?? 0).round().clamp(0, srcImage.width - 1);
     final y = (region?.top ?? 0).round().clamp(0, srcImage.height - 1);
-    final w = (region?.width ?? srcImage.width.toDouble())
-        .round()
-        .clamp(1, srcImage.width - x);
-    final h = (region?.height ?? srcImage.height.toDouble())
-        .round()
-        .clamp(1, srcImage.height - y);
+    final w = (region?.width ?? srcImage.width.toDouble()).round().clamp(
+      1,
+      srcImage.width - x,
+    );
+    final h = (region?.height ?? srcImage.height.toDouble()).round().clamp(
+      1,
+      srcImage.height - y,
+    );
     // The exact rect actually cropped to, in `_capturedImage`'s pixel space
     // — built from the clamped ints above, not the raw `region` argument,
     // so it's pixel-exact with what `copyCrop` below and the box-offset
@@ -568,11 +615,14 @@ class _ScanScreenState extends State<ScanScreen> {
     // Reuse the same encode for the results-screen preview when actually
     // cropped; when resetting to the full photo, prefer the original
     // `_capturedBytes` over this redundant re-encode (no generation loss).
-    setState(() => _cropDisplayBytes = clampedRegion != null ? regionBytes : null);
-    final detected = await compute(
-      segmentTilesWithHintsForExpectedCount,
-      (bytes: regionBytes, expectedTileCount: _expectedTileCount),
+    setState(
+      () => _cropDisplayBytes = clampedRegion != null ? regionBytes : null,
     );
+    final detected = await compute(segmentTilesWithHintsForExpectedCount, (
+      bytes: regionBytes,
+      expectedTileCount: _expectedTileCount,
+      allowExtendedAuto: _expectedTileCount == null,
+    ));
     if (!mounted) return;
 
     // Detection ran on the cropped sub-image, so its boxes are relative to
@@ -889,7 +939,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
     setState(() {
       _isScoring = true;
-      _scoreResult = null;
+      _tsumoScoreResult = null;
+      _ronScoreResult = null;
       _analysisResult = null;
       _isNotWinning = false;
     });
@@ -917,30 +968,48 @@ class _ScanScreenState extends State<ScanScreen> {
             ...state.hand.closedTiles,
             for (final meld in state.hand.melds) ...meld.tiles,
           ].where((tile) => tile.endsWith('r')).length;
-          final result = await _api.calculateScore(
-            ScoreRequest(
-              hand: HandInput(
-                closedTiles: state.hand.closedTiles,
-                melds: state.hand.melds
-                    .map(
-                      (meld) => Meld(
-                        type: meld.type,
-                        tiles: meld.tiles,
-                        open: meld.open,
-                      ),
-                    )
-                    .toList(growable: false),
-                winTile: winTile,
-              ),
-              context: _context.copyWith(akaDora: akaDoraCount),
-              rules: rules,
-            ),
+          final hand = HandInput(
+            closedTiles: state.hand.closedTiles,
+            melds: state.hand.melds
+                .map(
+                  (meld) =>
+                      Meld(type: meld.type, tiles: meld.tiles, open: meld.open),
+                )
+                .toList(growable: false),
+            winTile: winTile,
           );
+          final baseContext = _context.copyWith(akaDora: akaDoraCount);
+          final results = await Future.wait([
+            _api.calculateScore(
+              ScoreRequest(
+                hand: hand,
+                context: _contextForWinType(baseContext, 'tsumo'),
+                rules: rules,
+              ),
+            ),
+            _api.calculateScore(
+              ScoreRequest(
+                hand: hand,
+                context: _contextForWinType(baseContext, 'ron'),
+                rules: rules,
+              ),
+            ),
+          ]);
+          final tsumoResult = results[0];
+          final ronResult = results[1];
           if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
           setState(() {
-            _scoreResult = result;
-            _isNotWinning = result == null;
+            _tsumoScoreResult = tsumoResult;
+            _ronScoreResult = ronResult;
+            _isNotWinning = tsumoResult == null && ronResult == null;
           });
+          if (tsumoResult != null || ronResult != null) {
+            await _saveScoreHistory(
+              tsumoResponse: tsumoResult,
+              ronResponse: ronResult,
+            );
+          }
+          if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
           _showResultDialog();
           break;
         case HandOperation.tenpai:
@@ -951,6 +1020,8 @@ class _ScanScreenState extends State<ScanScreen> {
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
+            await _saveAnalysisHistory(result);
+            if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
             _showResultDialog();
           }
           break;
@@ -962,6 +1033,21 @@ class _ScanScreenState extends State<ScanScreen> {
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
+            await _saveAnalysisHistory(result);
+            if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
+            _showResultDialog();
+          }
+          break;
+        case HandOperation.callAnalysis:
+          final result = await _api.analyzeCalls(
+            state: state,
+            context: _context,
+            rules: rules,
+          );
+          if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+            setState(() => _analysisResult = result);
+            await _saveAnalysisHistory(result);
+            if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
             _showResultDialog();
           }
           break;
@@ -973,6 +1059,111 @@ class _ScanScreenState extends State<ScanScreen> {
     } finally {
       if (mounted) setState(() => _isScoring = false);
     }
+  }
+
+  ContextInput _contextForWinType(ContextInput base, String winType) {
+    if (winType == 'tsumo') {
+      return base.copyWith(winType: 'tsumo', houtei: false, chankan: false);
+    }
+    return base.copyWith(
+      winType: 'ron',
+      haitei: false,
+      rinshan: false,
+      chiihou: false,
+      tenhou: false,
+    );
+  }
+
+  Future<void> _saveScoreHistory({
+    required ScoreResponse? tsumoResponse,
+    required ScoreResponse? ronResponse,
+  }) async {
+    String label(String winType, ScoreResponse? response) => response == null
+        ? '$winType: 不成立'
+        : '$winType: ${response.result.han}翻${response.result.fu}符 '
+              '${response.result.pointLabel}';
+    Map<String, dynamic>? resultDetails(ScoreResponse? response) {
+      if (response == null) return null;
+      final result = response.result;
+      return {
+        'han': result.han,
+        'fu': result.fu,
+        'point_label': result.pointLabel,
+        'ron': result.points.ron,
+        'tsumo_dealer_pay': result.points.tsumoDealerPay,
+        'tsumo_non_dealer_pay': result.points.tsumoNonDealerPay,
+        'yaku': result.yaku.map((item) => item.name).toList(growable: false),
+      };
+    }
+
+    await _historyService.save(
+      HistoryEntry(
+        id: _historyEntryId,
+        createdAt: _historyCreatedAt,
+        updatedAt: DateTime.now().toUtc(),
+        purpose: 'score',
+        title: '点数計算',
+        summary: [
+          label('ツモ', tsumoResponse),
+          label('ロン', ronResponse),
+        ].join(' / '),
+        roundLabel: widget.historyRoundLabel,
+        details: {
+          'tiles': _tiles.whereType<String>().toList(growable: false),
+          'context': _context.toJson(),
+          'tsumo': resultDetails(tsumoResponse),
+          'ron': resultDetails(ronResponse),
+        },
+        accountUid: AuthService.currentUser?.uid,
+      ),
+    );
+  }
+
+  Future<void> _saveAnalysisHistory(Map<String, dynamic> result) async {
+    final purpose = switch (widget.purpose) {
+      ScanPurpose.wait => 'wait',
+      ScanPurpose.callAdvice => 'call_advice',
+      _ => 'discard',
+    };
+    await _historyService.save(
+      HistoryEntry(
+        id: _historyEntryId,
+        createdAt: _historyCreatedAt,
+        updatedAt: DateTime.now().toUtc(),
+        purpose: purpose,
+        title: widget.purpose.label,
+        summary: _analysisSummary(result),
+        roundLabel: widget.historyRoundLabel,
+        details: {
+          'tiles': _tiles.whereType<String>().toList(growable: false),
+          'context': _context.toJson(),
+          'result': result,
+        },
+        accountUid: AuthService.currentUser?.uid,
+      ),
+    );
+  }
+
+  String _analysisSummary(Map<String, dynamic> result) {
+    if (widget.purpose == ScanPurpose.wait) {
+      final tiles = (result['improving_tiles'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map((item) => item['tile'])
+          .whereType<String>()
+          .join(' / ');
+      return tiles.isEmpty ? '待ち・有効牌なし' : '待ち・有効牌 $tiles';
+    }
+    if (widget.purpose == ScanPurpose.callAdvice) {
+      final count = (result['calls'] as List<dynamic>? ?? const []).length;
+      return '鳴き候補 $count件';
+    }
+    final discards = (result['discards'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .take(3)
+        .map((item) => item['discard'])
+        .whereType<String>()
+        .join(' / ');
+    return discards.isEmpty ? '打牌候補なし' : '打牌候補 $discards';
   }
 
   void _onSlotTap(int index) async {
@@ -998,13 +1189,14 @@ class _ScanScreenState extends State<ScanScreen> {
   /// separately-routed sheet.
   /// Applies a new `_context` and clears any stale result computed from the
   /// old one — shared by every place that edits it (the 詳細条件 sheet, the
-  /// quick ツモ/ロン・リーチ controls in the bottom bar, and
+  /// quick リーチ controls in the bottom bar, and
   /// `GameStatePanel`). Callers still wrap this in their own `setState`.
   void _updateContext(ContextInput c) {
     final roundWindChanged = _context.roundWind != c.roundWind;
     _context = c;
     if (roundWindChanged) widget.onRoundWindChanged?.call(c.roundWind);
-    _scoreResult = null;
+    _tsumoScoreResult = null;
+    _ronScoreResult = null;
     _analysisResult = null;
     _isNotWinning = false;
   }
@@ -1097,16 +1289,12 @@ class _ScanScreenState extends State<ScanScreen> {
     for (int index = 0; index < _maxPhysicalTiles; index++) {
       if (_tileQuads[index] != null || _tiles[index] != null) last = index;
     }
-    return math
-        .max(_expectedTileCount, last + 1)
-        .clamp(_expectedTileCount, _maxPhysicalTiles);
+    final expected =
+        _expectedTileCount ??
+        _autoDetectedTileCount ??
+        widget.purpose.defaultTileCount;
+    return math.max(expected, last + 1).clamp(expected, _maxPhysicalTiles);
   }
-
-  String _operationLabel(HandOperation operation) => switch (operation) {
-    HandOperation.score => '点数計算',
-    HandOperation.tenpai => 'テンパイ・待ち',
-    HandOperation.discardAnalysis => '打牌分析',
-  };
 
   /// Physical-tile indices eligible to join a new meld: identified, and not
   /// already claimed by an existing `ConfirmedMeld`.
@@ -1184,13 +1372,12 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
-  /// Compact ツモ/ロン + リーチ(一発) controls for the bottom action bar —
-  /// the two win-time conditions used on nearly every hand, pulled out of
+  /// Compact リーチ(一発) controls for the bottom action bar —
+  /// the win-time conditions used on many hands, pulled out of
   /// the "詳細条件" sheet (`ContextInputPanel`) so they don't need an extra
   /// tap to reach. Everything else (海底・河底・嶺上・槍槓・地和・天和) stays
   /// in that sheet.
   Widget _buildQuickWinConditions() {
-    final isTsumo = _context.winType == 'tsumo';
     final isNoneRiichi = !_context.riichi && !_context.doubleRiichi;
     final isRiichi = _context.riichi && !_context.doubleRiichi;
     final isDoubleRiichi = _context.doubleRiichi;
@@ -1198,22 +1385,6 @@ class _ScanScreenState extends State<ScanScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _quickChip(
-          'ツモ',
-          isTsumo,
-          () => setState(
-            () => _updateContext(_context.copyWith(winType: 'tsumo')),
-          ),
-        ),
-        const SizedBox(width: 3),
-        _quickChip(
-          'ロン',
-          !isTsumo,
-          () => setState(
-            () => _updateContext(_context.copyWith(winType: 'ron')),
-          ),
-        ),
-        const SizedBox(width: 8),
         _quickChip(
           'なし',
           isNoneRiichi,
@@ -1253,9 +1424,8 @@ class _ScanScreenState extends State<ScanScreen> {
             '一発',
             _context.ippatsu,
             () => setState(
-              () => _updateContext(
-                _context.copyWith(ippatsu: !_context.ippatsu),
-              ),
+              () =>
+                  _updateContext(_context.copyWith(ippatsu: !_context.ippatsu)),
             ),
           ),
         ],
@@ -1384,10 +1554,8 @@ class _ScanScreenState extends State<ScanScreen> {
             if (detection == MeldDetection.kan) ...[
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () => _confirmMeldSelection(
-                    type: 'ankan',
-                    open: false,
-                  ),
+                  onPressed: () =>
+                      _confirmMeldSelection(type: 'ankan', open: false),
                   child: const Text('暗槓（閉じ）'),
                 ),
               ),
@@ -1406,9 +1574,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       detection == MeldDetection.pon ||
                           detection == MeldDetection.chi
                       ? () => _confirmMeldSelection(
-                          type: detection == MeldDetection.pon
-                              ? 'pon'
-                              : 'chi',
+                          type: detection == MeldDetection.pon ? 'pon' : 'chi',
                           open: true,
                         )
                       : null,
@@ -1421,7 +1587,8 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// Shows the score/analysis result (`_scoreResult`/`_analysisResult`/
+  /// Shows the score/analysis result (`_tsumoScoreResult`/`_ronScoreResult`/
+  /// `_analysisResult`/
   /// `_isNotWinning`, whichever `_confirmAndAnalyze` just set) as a popup
   /// instead of appending it inline to the scrolling results column —
   /// closes only via the ✕ button (`barrierDismissible: false`, no
@@ -1470,8 +1637,33 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                if (_scoreResult != null)
-                  ScoreResultPanel(scoreResponse: _scoreResult!),
+                if (_tsumoScoreResult != null || _ronScoreResult != null)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.65,
+                    ),
+                    child: SingleChildScrollView(
+                      child: ScoreResultPanel(
+                        tsumoResponse: _tsumoScoreResult,
+                        ronResponse: _ronScoreResult,
+                      ),
+                    ),
+                  ),
+                if ((_tsumoScoreResult != null || _ronScoreResult != null) &&
+                    widget.onScoreConfirmed != null) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () {
+                        widget.onScoreConfirmed!(_context.isDealer);
+                        Navigator.of(dialogContext).pop();
+                        Navigator.of(context).pop();
+                      },
+                      child: const Text('この結果で局終了'),
+                    ),
+                  ),
+                ],
                 if (_analysisResult != null)
                   ConstrainedBox(
                     constraints: BoxConstraints(
@@ -1684,13 +1876,17 @@ class _ScanScreenState extends State<ScanScreen> {
             top: 68,
             left: 0,
             right: 0,
-            child: Center(child: _buildExpectedTileCountSelector()),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _buildExpectedTileCountSelector(),
+            ),
           ),
           // Live detection tile-count badge + auto/manual shutter toggle
           // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
           // real devices, so manual capture must remain available).
           Positioned(
-            top: 8,
+            top: 122,
             right: 12,
             child: Row(
               children: [
@@ -1742,7 +1938,10 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildLiveTileCountBadge() {
     final count = _liveDetectorResult?.tileCount ?? 0;
-    final isReady = count == _expectedTileCount;
+    final isReady = _expectedTileCount == null
+        ? count >= 13 && count <= 18
+        : count == _expectedTileCount;
+    final expectedLabel = _expectedTileCount?.toString() ?? '自動';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1760,7 +1959,7 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const SizedBox(width: 6),
           Text(
-            '$count / $_expectedTileCount 牌',
+            '$count / $expectedLabel 牌',
             style: TextStyle(
               color: Colors.white,
               fontSize: 13,
@@ -1772,7 +1971,7 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _buildExpectedTileCountSelector() {
+  Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
       decoration: BoxDecoration(
@@ -1789,20 +1988,26 @@ class _ScanScreenState extends State<ScanScreen> {
           const SizedBox(width: 8),
           SegmentedButton<int>(
             segments: [
+              const ButtonSegment<int>(value: 0, label: Text('自動')),
               for (final count in _selectableTileCounts)
                 ButtonSegment<int>(value: count, label: Text('$count')),
             ],
-            selected: {_expectedTileCount},
+            selected: {_expectedTileCount ?? 0},
             showSelectedIcon: false,
             style: const ButtonStyle(
               visualDensity: VisualDensity.compact,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            onSelectionChanged: (selection) {
+            onSelectionChanged: (selection) async {
+              final selected = selection.single == 0 ? null : selection.single;
               setState(() {
-                _expectedTileCount = selection.single;
+                _expectedTileCount = selected;
                 _stableDetectionStreak = 0;
+                _stableCandidateCount = null;
               });
+              if (redetectOnChange && _capturedImage != null) {
+                await _redetectInRegion(_cropRegion);
+              }
             },
           ),
         ],
@@ -1902,6 +2107,13 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: _buildExpectedTileCountSelector(
+                      redetectOnChange: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   // Retake, above the photo as its own bar (not overlaid on
                   // it) so it can't be mis-tapped during the photo's own
                   // pinch-zoom/pan gestures, and not pinned to the bottom
@@ -1918,12 +2130,17 @@ class _ScanScreenState extends State<ScanScreen> {
                   Container(
                     color: Colors.black87,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    child: Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         TextButton.icon(
                           onPressed: _backToCamera,
-                          icon: const Icon(Icons.replay, size: 18, color: Colors.white70),
+                          icon: const Icon(
+                            Icons.replay,
+                            size: 18,
+                            color: Colors.white70,
+                          ),
                           label: const Text(
                             '撮り直す',
                             style: TextStyle(color: Colors.white70),
@@ -1944,7 +2161,8 @@ class _ScanScreenState extends State<ScanScreen> {
                             style: TextStyle(color: Colors.white70),
                           ),
                         ),
-                        if (_trainingTilesReady)
+                        if (widget.showTrainingDataActions &&
+                            _trainingTilesReady)
                           TextButton.icon(
                             onPressed: _isSendingTraining || _isUndoingTraining
                                 ? null
@@ -1975,7 +2193,9 @@ class _ScanScreenState extends State<ScanScreen> {
                                   : _trainingDataSent
                                   ? '取り消す'
                                   : '学習データ送信',
-                              style: const TextStyle(color: Colors.orangeAccent),
+                              style: const TextStyle(
+                                color: Colors.orangeAccent,
+                              ),
                             ),
                           ),
                       ],
@@ -2008,31 +2228,28 @@ class _ScanScreenState extends State<ScanScreen> {
                     // ground: bigger than the pillarboxed version, but
                     // still leaves the controls below reachable without
                     // this photo alone eating most of the screen.
-                    Row(
+                    Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Flexible(
-                          child: RepaintBoundary(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth:
-                                    MediaQuery.of(context).size.width * 0.55,
-                                maxHeight:
-                                    MediaQuery.of(context).size.height * 0.55,
-                              ),
-                              child: AspectRatio(
-                                aspectRatio: _displayAspectRatio,
-                                child: InteractiveViewer(
-                                  minScale: 1.0,
-                                  maxScale: 4.0,
-                                  child: _buildTileMarkerOverlay(),
-                                ),
+                        RepaintBoundary(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: MediaQuery.of(context).size.width,
+                              maxHeight:
+                                  MediaQuery.of(context).size.height * 0.45,
+                            ),
+                            child: AspectRatio(
+                              aspectRatio: _displayAspectRatio,
+                              child: InteractiveViewer(
+                                minScale: 1.0,
+                                maxScale: 4.0,
+                                child: _buildTileMarkerOverlay(),
                               ),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(height: 8),
                         // FEZ-93 recovery flow: for when a reflection or
                         // other non-tile object gets picked up by
                         // detection, manually exclude it by re-detecting
@@ -2047,19 +2264,33 @@ class _ScanScreenState extends State<ScanScreen> {
                           children: [
                             TextButton.icon(
                               onPressed: _cropAndRedetect,
-                              icon: const Icon(Icons.crop, size: 16, color: Colors.white70),
+                              icon: const Icon(
+                                Icons.crop,
+                                size: 16,
+                                color: Colors.white70,
+                              ),
                               label: const Text(
                                 '範囲を切り抜いて\n再検出',
-                                style: TextStyle(color: Colors.white70, fontSize: 12),
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
                               ),
                             ),
                             if (_cropRegion != null)
                               TextButton.icon(
                                 onPressed: () => _redetectInRegion(null),
-                                icon: const Icon(Icons.undo, size: 16, color: Colors.white70),
+                                icon: const Icon(
+                                  Icons.undo,
+                                  size: 16,
+                                  color: Colors.white70,
+                                ),
                                 label: const Text(
                                   '元の範囲に\n戻す',
-                                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ),
                           ],
@@ -2123,9 +2354,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         final isWinningTile =
                             _confirmedWinningTileId == winningTileId;
                         final isMeldSelected = _meldSelection.contains(i);
-                        final isMeldEligible = _meldEligibleIndices.contains(
-                          i,
-                        );
+                        final isMeldEligible = _meldEligibleIndices.contains(i);
                         final canBeWinningTile =
                             _operation == HandOperation.score &&
                             tile != null &&
@@ -2154,8 +2383,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         final Widget glyphCore = GestureDetector(
                           onTap: _isSelectingMeld
                               ? () => _toggleMeldSelection(i)
-                              : () =>
-                                    _handleThumbnailTap(() => _onSlotTap(i)),
+                              : () => _handleThumbnailTap(() => _onSlotTap(i)),
                           child: Container(
                             width: 40,
                             height: 40,
@@ -2225,7 +2453,11 @@ class _ScanScreenState extends State<ScanScreen> {
 
                         Widget column = Column(
                           mainAxisSize: MainAxisSize.min,
-                          children: [cropImage, const SizedBox(height: 4), glyph],
+                          children: [
+                            cropImage,
+                            const SizedBox(height: 4),
+                            glyph,
+                          ],
                         );
 
                         // Meld-selection-mode affordance: a colored border
@@ -2308,7 +2540,6 @@ class _ScanScreenState extends State<ScanScreen> {
                     _buildInterpretationConfirmation(),
                     const SizedBox(height: 12),
                   ],
-
                 ],
               ),
             ),
@@ -2316,7 +2547,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
           // Fixed action bar: always reachable without scrolling, unlike
           // everything above. Left to right: function (HandOperation)
-          // dropdown, quick ツモ/ロン・リーチ(一発) controls + 詳細条件
+          // dropdown, quick リーチ(一発) controls + 詳細条件
           // (score mode only), then the main action — "識別実行" until every
           // detected tile has a result, then a plain "実行" that runs
           // `_runInterpretationAndAnalyze` (interpretation + confirm+analyze
@@ -2332,7 +2563,9 @@ class _ScanScreenState extends State<ScanScreen> {
               color: Colors.black,
               border: Border(top: BorderSide(color: Colors.white12)),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
                   height: 44,
@@ -2341,43 +2574,27 @@ class _ScanScreenState extends State<ScanScreen> {
                     color: Colors.white.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<HandOperation>(
-                      value: _operation,
-                      isDense: true,
-                      dropdownColor: Colors.grey.shade900,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
-                      items: HandOperation.values
-                          .map(
-                            (operation) => DropdownMenuItem(
-                              value: operation,
-                              child: Text(_operationLabel(operation)),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (operation) {
-                        if (operation == null) return;
-                        setState(() {
-                          _operation = operation;
-                          _invalidateInterpretation();
-                        });
-                      },
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    widget.purpose.label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
                 if (_operation == HandOperation.score) ...[
                   const SizedBox(width: 8),
-                  // ツモ/ロン・リーチ(一発) — used on nearly every hand, so
+                  // リーチ(一発) — used on many hands, so
                   // they sit directly in the bar instead of behind 詳細条件
                   // (see `_buildQuickWinConditions`). Horizontally
                   // scrollable as a safety margin against overflow on a
                   // narrower device; this app's own landscape screens have
                   // room to show it in full without scrolling.
-                  Flexible(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: _buildQuickWinConditions(),
-                    ),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: _buildQuickWinConditions(),
                   ),
                 ],
                 const SizedBox(width: 8),
@@ -2386,7 +2603,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   // calculation, so there's nothing useful to set here in
                   // tenpai/discard-analysis mode. The rare situational
                   // flags (海底・河底・嶺上・槍槓・地和・天和) — everything
-                  // except ツモ/ロン・リーチ(一発), which moved to the bar
+                  // except リーチ(一発), which moved to the bar
                   // itself above — still live behind this icon.
                   onPressed: _operation == HandOperation.score
                       ? _showContextDetailsSheet
@@ -2403,12 +2620,14 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
+                SizedBox(
+                  width: double.infinity,
                   child: !_allDetectedTilesReady
                       ? OutlinedButton.icon(
-                          onPressed: _croppedImages.any((c) => c != null)
-                                  && !_isRunningFullClassification
-                                  && !_isClassifying.any((value) => value)
+                          onPressed:
+                              _croppedImages.any((c) => c != null) &&
+                                  !_isRunningFullClassification &&
+                                  !_isClassifying.any((value) => value)
                               ? _runClassification
                               : null,
                           icon: _isRunningFullClassification
@@ -2460,4 +2679,3 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 }
-

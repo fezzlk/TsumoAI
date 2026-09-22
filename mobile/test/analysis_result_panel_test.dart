@@ -62,4 +62,32 @@ void main() {
       expect(find.text('有効牌 5枚'), findsOneWidget);
     },
   );
+
+  testWidgets('call result renders possible tile and consumed tiles', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      subject({
+        'current_shanten': 2,
+        'calls': [
+          {
+            'call_tile': '3m',
+            'call_type': 'chi',
+            'consumed_tiles': ['1m', '2m'],
+            'shanten_after_call': 1,
+            'recommendation': 'improves',
+            'discards': [
+              {'discard': 'E'},
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(find.text('鳴ける可能性'), findsOneWidget);
+    expect(find.text('チー'), findsOneWidget);
+    expect(find.text('シャンテン数が進む'), findsOneWidget);
+    expect(find.byKey(const ValueKey('analysis-call-3m-0')), findsOneWidget);
+    expect(find.text('鳴いた後の候補: E'), findsOneWidget);
+  });
 }

@@ -140,6 +140,18 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  Future<Map<String, dynamic>> analyzeCalls({
+    required ConfirmedHandStateV1 state,
+    required ContextInput context,
+    required RuleSet rules,
+  }) async {
+    final response = await _dio.post(
+      '$_baseUrl/api/v1/calls/analyze',
+      data: _analysisPayload(state, context, rules),
+    );
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
   Map<String, dynamic> _analysisPayload(
     ConfirmedHandStateV1 state,
     ContextInput context,

@@ -30,14 +30,16 @@ class GameStatePanel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _windSelector(
                 '場風',
                 context_.roundWind,
                 (v) => onChanged(context_.copyWith(roundWind: v)),
               ),
-              const SizedBox(width: 8),
               _windSelector(
                 '自風',
                 context_.seatWind,
@@ -45,20 +47,8 @@ class GameStatePanel extends StatelessWidget {
                   context_.copyWith(seatWind: v, isDealer: v == 'E'),
                 ),
               ),
-              const SizedBox(width: 16),
-              _numberInput(
-                '本場',
-                context_.honba,
-                (v) => onChanged(context_.copyWith(honba: v)),
-              ),
-              const SizedBox(width: 12),
-              _numberInput(
-                '供託',
-                context_.kyotaku,
-                (v) => onChanged(context_.copyWith(kyotaku: v)),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
+              SizedBox(
+                width: 210,
                 child: _indicatorRow(
                   context,
                   'ドラ表示牌',
@@ -66,17 +56,18 @@ class GameStatePanel extends StatelessWidget {
                   (list) => onChanged(context_.copyWith(doraIndicators: list)),
                 ),
               ),
-              const SizedBox(width: 12),
               // Always visible (not just when riichi is set) — 裏ドラ表示牌
               // is a table fact from the photo like ドラ表示牌 itself, so it
               // sits in the same row rather than appearing/disappearing
               // based on a different field.
-              Expanded(
+              SizedBox(
+                width: 210,
                 child: _indicatorRow(
                   context,
                   '裏ドラ表示牌',
                   context_.uraDoraIndicators,
-                  (list) => onChanged(context_.copyWith(uraDoraIndicators: list)),
+                  (list) =>
+                      onChanged(context_.copyWith(uraDoraIndicators: list)),
                 ),
               ),
             ],
@@ -96,7 +87,10 @@ class GameStatePanel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 11),
+        ),
         const SizedBox(width: 4),
         Container(
           height: 30,
@@ -113,64 +107,14 @@ class GameStatePanel extends StatelessWidget {
               style: const TextStyle(color: Colors.white, fontSize: 13),
               items: winds
                   .map(
-                    (w) => DropdownMenuItem(
-                      value: w,
-                      child: Text(windLabels[w]!),
-                    ),
+                    (w) =>
+                        DropdownMenuItem(value: w, child: Text(windLabels[w]!)),
                   )
                   .toList(),
               onChanged: (v) {
                 if (v != null) onValueChanged(v);
               },
             ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _numberInput(
-    String label,
-    int value,
-    ValueChanged<int> onValueChanged,
-  ) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
-        const SizedBox(width: 4),
-        GestureDetector(
-          onTap: () {
-            if (value > 0) onValueChanged(value - 1);
-          },
-          child: Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            alignment: Alignment.center,
-            child: const Text('-', style: TextStyle(color: Colors.white54, fontSize: 14)),
-          ),
-        ),
-        Container(
-          width: 28,
-          height: 24,
-          alignment: Alignment.center,
-          child: Text('$value', style: const TextStyle(color: Colors.white, fontSize: 13)),
-        ),
-        GestureDetector(
-          onTap: () => onValueChanged(value + 1),
-          child: Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            alignment: Alignment.center,
-            child: const Text('+', style: TextStyle(color: Colors.white54, fontSize: 14)),
           ),
         ),
       ],
@@ -186,7 +130,10 @@ class GameStatePanel extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 11),
+        ),
         const SizedBox(width: 6),
         Expanded(
           child: Wrap(
@@ -225,7 +172,11 @@ class GameStatePanel extends StatelessWidget {
                         const Positioned(
                           right: 0,
                           top: 0,
-                          child: Icon(Icons.close, size: 10, color: Colors.redAccent),
+                          child: Icon(
+                            Icons.close,
+                            size: 10,
+                            color: Colors.redAccent,
+                          ),
                         ),
                       ],
                     ),
@@ -242,7 +193,10 @@ class GameStatePanel extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.white24, style: BorderStyle.solid),
+                    border: Border.all(
+                      color: Colors.white24,
+                      style: BorderStyle.solid,
+                    ),
                   ),
                   alignment: Alignment.center,
                   child: const Icon(Icons.add, size: 16, color: Colors.white54),

@@ -37,6 +37,14 @@ API docs:
 - `http://localhost:8000/` は案内レスポンスを返します
 - `http://localhost:8000/score-ui` は点数算出UIです
 
+設計資料:
+
+- [製品・UI・システム全体設計](docs/tsumoai-product-ui-system-design.md)
+- [モバイルナビゲーション仕様](docs/tsumoai-mobile-navigation-spec.md)
+- [モバイルナビゲーション（draw.io）](docs/tsumoai-mobile-navigation.drawio)
+- [画面レイアウト仕様](docs/tsumoai-screen-layout-spec.md)
+- [画面レイアウト（draw.io）](docs/tsumoai-screen-layout.drawio)
+
 Health check:
 
 ```bash

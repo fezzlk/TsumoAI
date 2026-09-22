@@ -7,6 +7,9 @@ from app.hand_scoring import score_hand_shape
 from app.hand_validation import validate_hand_context, validate_hand_tiles_and_melds, validate_winning_hand
 from app.schemas import (
     AnalysisRequestBase,
+    CallAnalysisRequest,
+    CallAnalysisResponse,
+    CallAnalysisResult,
     DiscardAnalysisRequest,
     DiscardAnalysisResponse,
     DiscardAnalysisResult,
@@ -95,3 +98,102 @@ def analyze_discard_options(request: DiscardAnalysisRequest) -> DiscardAnalysisR
         shanten=min(result.shanten for result in discard_results),
         discards=discard_results,
     )
+
+
+def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
+    completed_melds = len(request.melds)
+    expected = 13 - completed_melds * 3
+    closed_counts, visible_counts = _validated_counts(request, expected, "call analysis")
+    current_shanten = calculate_shanten(closed_counts, completed_melds)
+    calls: list[CallAnalysisResult] = []
+
+    def recommendation(shanten: int) -> str:
+        if shanten < current_shanten:
+            return "improves"
+        if shanten == current_shanten:
+            return "keeps"
+        return "worsens"
+
+    def add_open_call(call_tile_index: int, call_type: str, consumed_indices: list[int]) -> None:
+        reduced = list(closed_counts)
+        for index in consumed_indices:
+            reduced[index] -= 1
+        visible = list(visible_counts)
+        visible[call_tile_index] += 1
+        discard_options = analyze_discards(tuple(reduced), completed_melds + 1, tuple(visible))
+        best_shanten = discard_options[0].shanten
+        best_discards = [item for item in discard_options if item.shanten == best_shanten]
+        calls.append(
+            CallAnalysisResult(
+                call_tile=index_to_tile(call_tile_index),
+                call_type=call_type,
+                consumed_tiles=[index_to_tile(index) for index in consumed_indices],
+                shanten_after_call=best_shanten,
+                recommendation=recommendation(best_shanten),
+                discards=[
+                    DiscardAnalysisResult(
+                        discard=item.discard,
+                        shanten=item.shanten,
+                        improving_tiles=_wait_results(
+                            request,
+                            [],
+                            item.waits,
+                            predict_scores=False,
+                        ),
+                        total_remaining=sum(wait.remaining for wait in item.waits),
+                    )
+                    for item in best_discards
+                ],
+            )
+        )
+
+    for call_index in range(34):
+        if visible_counts[call_index] >= 4:
+            continue
+        if closed_counts[call_index] >= 2:
+            add_open_call(call_index, "pon", [call_index, call_index])
+
+        if closed_counts[call_index] >= 3:
+            reduced = list(closed_counts)
+            reduced[call_index] -= 3
+            visible = list(visible_counts)
+            visible[call_index] += 1
+            replacement_tiles = enumerate_improving_tiles(
+                tuple(reduced), completed_melds + 1, tuple(visible)
+            )
+            replacement_shanten = calculate_shanten(tuple(reduced), completed_melds + 1)
+            calls.append(
+                CallAnalysisResult(
+                    call_tile=index_to_tile(call_index),
+                    call_type="kan",
+                    consumed_tiles=[index_to_tile(call_index)] * 3,
+                    shanten_after_call=replacement_shanten,
+                    recommendation=recommendation(replacement_shanten),
+                    replacement_tiles=_wait_results(
+                        request,
+                        [],
+                        replacement_tiles,
+                        predict_scores=False,
+                    ),
+                )
+            )
+
+        if call_index >= 27:
+            continue
+        rank = call_index % 9
+        suit_start = call_index - rank
+        for sequence_start in range(max(0, rank - 2), min(rank, 6) + 1):
+            sequence = [suit_start + sequence_start + offset for offset in range(3)]
+            consumed = [index for index in sequence if index != call_index]
+            if all(closed_counts[index] > 0 for index in consumed):
+                add_open_call(call_index, "chi", consumed)
+
+    calls.sort(
+        key=lambda item: (
+            item.shanten_after_call,
+            {"pon": 0, "chi": 1, "kan": 2}[item.call_type],
+            item.call_tile,
+            item.consumed_tiles,
+        )
+    )
+    return CallAnalysisResponse(current_shanten=current_shanten, calls=calls)
