@@ -105,20 +105,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
         child: Column(
           children: [
             _accountStatus(),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
+            Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'all', label: Text('すべて')),
-                  ButtonSegment(value: 'score', label: Text('点数')),
-                  ButtonSegment(value: 'wait', label: Text('待ち')),
-                  ButtonSegment(value: 'advice', label: Text('AI相談')),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _filterChip('all', 'すべて'),
+                  _filterChip('score', '点数'),
+                  _filterChip('wait', '待ち'),
+                  _filterChip('advice', 'AI相談'),
                 ],
-                selected: {_filter},
-                showSelectedIcon: false,
-                onSelectionChanged: (value) =>
-                    setState(() => _filter = value.single),
               ),
             ),
             const SizedBox(height: 8),
@@ -178,6 +175,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
       );
     },
+  );
+
+  Widget _filterChip(String value, String label) => ChoiceChip(
+    label: Text(label),
+    selected: _filter == value,
+    onSelected: (_) => setState(() => _filter = value),
   );
 
   Widget _entryTile(HistoryEntry entry) => ListTile(

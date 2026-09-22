@@ -26,6 +26,7 @@ import '../widgets/game_state_panel.dart';
 import '../widgets/score_result_panel.dart';
 import '../widgets/analysis_result_panel.dart';
 import '../widgets/tile_marker_overlay.dart';
+import '../widgets/tile_count_selector.dart';
 import '../services/training_data_client.dart';
 import '../services/tile_segmenter.dart';
 import '../services/tile_assets.dart';
@@ -1437,8 +1438,9 @@ class _ScanScreenState extends State<ScanScreen> {
     final isRiichi = _context.riichi && !_context.doubleRiichi;
     final isDoubleRiichi = _context.doubleRiichi;
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      spacing: 4,
+      runSpacing: 4,
       children: [
         _quickChip(
           'なし',
@@ -1453,7 +1455,6 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ),
         ),
-        const SizedBox(width: 3),
         _quickChip(
           'リーチ',
           isRiichi,
@@ -1463,7 +1464,6 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ),
         ),
-        const SizedBox(width: 3),
         _quickChip(
           'Wリーチ',
           isDoubleRiichi,
@@ -1474,7 +1474,6 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
         ),
         if (_context.riichi || _context.doubleRiichi) ...[
-          const SizedBox(width: 3),
           _quickChip(
             '一発',
             _context.ippatsu,
@@ -1530,22 +1529,27 @@ class _ScanScreenState extends State<ScanScreen> {
         ? null
         : _tiles[int.parse(_confirmedWinningTileId!.split('-').last)];
 
-    return Row(
+    final meldControls = Wrap(
+      spacing: 4,
       children: [
         TextButton.icon(
           onPressed: _meldEligibleIndices.isEmpty ? null : _startMeldSelection,
           icon: const Icon(Icons.add, size: 18),
           label: const Text('副露を追加'),
         ),
-        const SizedBox(width: 4),
         TextButton.icon(
           onPressed: _confirmedMelds.isEmpty ? null : _resetMelds,
           icon: const Icon(Icons.restart_alt, size: 18),
           label: const Text('副露をリセット'),
         ),
-        const Spacer(),
-        if (_operation == HandOperation.score &&
-            _identifiedIndices.isNotEmpty) ...[
+      ],
+    );
+    final hasWinningTileControls =
+        _operation == HandOperation.score && _identifiedIndices.isNotEmpty;
+    final winningControls = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasWinningTileControls) ...[
           const Text(
             'あがり牌',
             style: TextStyle(color: Colors.white70, fontSize: 12),
@@ -1576,6 +1580,22 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
         ],
       ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!hasWinningTileControls) return meldControls;
+        if (constraints.maxWidth < 420) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              meldControls,
+              Align(alignment: Alignment.centerRight, child: winningControls),
+            ],
+          );
+        }
+        return Row(children: [meldControls, const Spacer(), winningControls]);
+      },
     );
   }
 
@@ -1905,50 +1925,49 @@ class _ScanScreenState extends State<ScanScreen> {
         fit: StackFit.expand,
         children: [
           Center(child: CameraPreview(_controller!)),
-          // Simple instruction
           Positioned(
-            top: 20,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  '解析対象の牌がすべて映るように撮影してください',
-                  style: TextStyle(color: Colors.white, fontSize: 14),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: 68,
-            left: 0,
-            right: 0,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: _buildExpectedTileCountSelector(),
-            ),
-          ),
-          // Live detection tile-count badge + auto/manual shutter toggle
-          // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
-          // real devices, so manual capture must remain available).
-          Positioned(top: 122, left: 12, child: _buildLensSelector()),
-          Positioned(
-            top: 122,
+            top: 12,
+            left: 12,
             right: 12,
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _buildLiveTileCountBadge(),
-                const SizedBox(width: 8),
-                _buildAutoCaptureToggle(),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    '解析対象の牌がすべて映るように撮影してください',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _buildExpectedTileCountSelector(),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _buildLensSelector(),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildLiveTileCountBadge(),
+                        const SizedBox(width: 8),
+                        _buildAutoCaptureToggle(),
+                      ],
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -2067,46 +2086,19 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.65),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            '牌数',
-            style: TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          const SizedBox(width: 8),
-          SegmentedButton<int>(
-            segments: [
-              const ButtonSegment<int>(value: 0, label: Text('自動')),
-              for (final count in _selectableTileCounts)
-                ButtonSegment<int>(value: count, label: Text('$count')),
-            ],
-            selected: {_expectedTileCount ?? 0},
-            showSelectedIcon: false,
-            style: const ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            onSelectionChanged: (selection) async {
-              final selected = selection.single == 0 ? null : selection.single;
-              setState(() {
-                _expectedTileCount = selected;
-                _stableDetectionStreak = 0;
-                _stableCandidateCount = null;
-              });
-              if (redetectOnChange && _capturedImage != null) {
-                await _redetectInRegion(_cropRegion);
-              }
-            },
-          ),
-        ],
-      ),
+    return TileCountSelector(
+      selectedCount: _expectedTileCount,
+      counts: _selectableTileCounts,
+      onChanged: (selected) async {
+        setState(() {
+          _expectedTileCount = selected;
+          _stableDetectionStreak = 0;
+          _stableCandidateCount = null;
+        });
+        if (redetectOnChange && _capturedImage != null) {
+          await _redetectInRegion(_cropRegion);
+        }
+      },
     );
   }
 
@@ -2202,12 +2194,7 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: _buildExpectedTileCountSelector(
-                      redetectOnChange: true,
-                    ),
-                  ),
+                  _buildExpectedTileCountSelector(redetectOnChange: true),
                   const SizedBox(height: 8),
                   // Retake, above the photo as its own bar (not overlaid on
                   // it) so it can't be mis-tapped during the photo's own
@@ -2683,14 +2670,9 @@ class _ScanScreenState extends State<ScanScreen> {
                   const SizedBox(width: 8),
                   // リーチ(一発) — used on many hands, so
                   // they sit directly in the bar instead of behind 詳細条件
-                  // (see `_buildQuickWinConditions`). Horizontally
-                  // scrollable as a safety margin against overflow on a
-                  // narrower device; this app's own landscape screens have
-                  // room to show it in full without scrolling.
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: _buildQuickWinConditions(),
-                  ),
+                  // (see `_buildQuickWinConditions`). Choices wrap so every
+                  // option remains visible on narrow portrait screens.
+                  _buildQuickWinConditions(),
                 ],
                 const SizedBox(width: 8),
                 IconButton(
