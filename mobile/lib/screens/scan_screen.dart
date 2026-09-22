@@ -158,7 +158,8 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _trainingDataSent = false;
   bool _isUndoingTraining = false;
   List<String> _sentTrainingEntryIds = [];
-  ScoreResponse? _scoreResult;
+  ScoreResponse? _tsumoScoreResult;
+  ScoreResponse? _ronScoreResult;
   bool _isNotWinning = false;
   InterpretationResult? _interpretation;
   String? _confirmedWinningTileId;
@@ -258,7 +259,8 @@ class _ScanScreenState extends State<ScanScreen> {
   void _invalidateAnalysis() {
     _requestEpoch.invalidate();
     _analysisResult = null;
-    _scoreResult = null;
+    _tsumoScoreResult = null;
+    _ronScoreResult = null;
     _isNotWinning = false;
   }
 
@@ -937,7 +939,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
     setState(() {
       _isScoring = true;
-      _scoreResult = null;
+      _tsumoScoreResult = null;
+      _ronScoreResult = null;
       _analysisResult = null;
       _isNotWinning = false;
     });
@@ -965,31 +968,47 @@ class _ScanScreenState extends State<ScanScreen> {
             ...state.hand.closedTiles,
             for (final meld in state.hand.melds) ...meld.tiles,
           ].where((tile) => tile.endsWith('r')).length;
-          final result = await _api.calculateScore(
-            ScoreRequest(
-              hand: HandInput(
-                closedTiles: state.hand.closedTiles,
-                melds: state.hand.melds
-                    .map(
-                      (meld) => Meld(
-                        type: meld.type,
-                        tiles: meld.tiles,
-                        open: meld.open,
-                      ),
-                    )
-                    .toList(growable: false),
-                winTile: winTile,
-              ),
-              context: _context.copyWith(akaDora: akaDoraCount),
-              rules: rules,
-            ),
+          final hand = HandInput(
+            closedTiles: state.hand.closedTiles,
+            melds: state.hand.melds
+                .map(
+                  (meld) =>
+                      Meld(type: meld.type, tiles: meld.tiles, open: meld.open),
+                )
+                .toList(growable: false),
+            winTile: winTile,
           );
+          final baseContext = _context.copyWith(akaDora: akaDoraCount);
+          final results = await Future.wait([
+            _api.calculateScore(
+              ScoreRequest(
+                hand: hand,
+                context: _contextForWinType(baseContext, 'tsumo'),
+                rules: rules,
+              ),
+            ),
+            _api.calculateScore(
+              ScoreRequest(
+                hand: hand,
+                context: _contextForWinType(baseContext, 'ron'),
+                rules: rules,
+              ),
+            ),
+          ]);
+          final tsumoResult = results[0];
+          final ronResult = results[1];
           if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
           setState(() {
-            _scoreResult = result;
-            _isNotWinning = result == null;
+            _tsumoScoreResult = tsumoResult;
+            _ronScoreResult = ronResult;
+            _isNotWinning = tsumoResult == null && ronResult == null;
           });
-          if (result != null) await _saveScoreHistory(result);
+          if (tsumoResult != null || ronResult != null) {
+            await _saveScoreHistory(
+              tsumoResponse: tsumoResult,
+              ronResponse: ronResult,
+            );
+          }
           if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
           _showResultDialog();
           break;
@@ -1042,8 +1061,41 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  Future<void> _saveScoreHistory(ScoreResponse response) async {
-    final result = response.result;
+  ContextInput _contextForWinType(ContextInput base, String winType) {
+    if (winType == 'tsumo') {
+      return base.copyWith(winType: 'tsumo', houtei: false, chankan: false);
+    }
+    return base.copyWith(
+      winType: 'ron',
+      haitei: false,
+      rinshan: false,
+      chiihou: false,
+      tenhou: false,
+    );
+  }
+
+  Future<void> _saveScoreHistory({
+    required ScoreResponse? tsumoResponse,
+    required ScoreResponse? ronResponse,
+  }) async {
+    String label(String winType, ScoreResponse? response) => response == null
+        ? '$winType: 不成立'
+        : '$winType: ${response.result.han}翻${response.result.fu}符 '
+              '${response.result.pointLabel}';
+    Map<String, dynamic>? resultDetails(ScoreResponse? response) {
+      if (response == null) return null;
+      final result = response.result;
+      return {
+        'han': result.han,
+        'fu': result.fu,
+        'point_label': result.pointLabel,
+        'ron': result.points.ron,
+        'tsumo_dealer_pay': result.points.tsumoDealerPay,
+        'tsumo_non_dealer_pay': result.points.tsumoNonDealerPay,
+        'yaku': result.yaku.map((item) => item.name).toList(growable: false),
+      };
+    }
+
     await _historyService.save(
       HistoryEntry(
         id: _historyEntryId,
@@ -1051,18 +1103,16 @@ class _ScanScreenState extends State<ScanScreen> {
         updatedAt: DateTime.now().toUtc(),
         purpose: 'score',
         title: '点数計算',
-        summary: '${result.han}翻${result.fu}符 ${result.pointLabel}',
+        summary: [
+          label('ツモ', tsumoResponse),
+          label('ロン', ronResponse),
+        ].join(' / '),
         roundLabel: widget.historyRoundLabel,
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
           'context': _context.toJson(),
-          'han': result.han,
-          'fu': result.fu,
-          'point_label': result.pointLabel,
-          'ron': result.points.ron,
-          'tsumo_dealer_pay': result.points.tsumoDealerPay,
-          'tsumo_non_dealer_pay': result.points.tsumoNonDealerPay,
-          'yaku': result.yaku.map((item) => item.name).toList(growable: false),
+          'tsumo': resultDetails(tsumoResponse),
+          'ron': resultDetails(ronResponse),
         },
         accountUid: AuthService.currentUser?.uid,
       ),
@@ -1139,13 +1189,14 @@ class _ScanScreenState extends State<ScanScreen> {
   /// separately-routed sheet.
   /// Applies a new `_context` and clears any stale result computed from the
   /// old one — shared by every place that edits it (the 詳細条件 sheet, the
-  /// quick ツモ/ロン・リーチ controls in the bottom bar, and
+  /// quick リーチ controls in the bottom bar, and
   /// `GameStatePanel`). Callers still wrap this in their own `setState`.
   void _updateContext(ContextInput c) {
     final roundWindChanged = _context.roundWind != c.roundWind;
     _context = c;
     if (roundWindChanged) widget.onRoundWindChanged?.call(c.roundWind);
-    _scoreResult = null;
+    _tsumoScoreResult = null;
+    _ronScoreResult = null;
     _analysisResult = null;
     _isNotWinning = false;
   }
@@ -1321,13 +1372,12 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
-  /// Compact ツモ/ロン + リーチ(一発) controls for the bottom action bar —
-  /// the two win-time conditions used on nearly every hand, pulled out of
+  /// Compact リーチ(一発) controls for the bottom action bar —
+  /// the win-time conditions used on many hands, pulled out of
   /// the "詳細条件" sheet (`ContextInputPanel`) so they don't need an extra
   /// tap to reach. Everything else (海底・河底・嶺上・槍槓・地和・天和) stays
   /// in that sheet.
   Widget _buildQuickWinConditions() {
-    final isTsumo = _context.winType == 'tsumo';
     final isNoneRiichi = !_context.riichi && !_context.doubleRiichi;
     final isRiichi = _context.riichi && !_context.doubleRiichi;
     final isDoubleRiichi = _context.doubleRiichi;
@@ -1335,21 +1385,6 @@ class _ScanScreenState extends State<ScanScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _quickChip(
-          'ツモ',
-          isTsumo,
-          () => setState(
-            () => _updateContext(_context.copyWith(winType: 'tsumo')),
-          ),
-        ),
-        const SizedBox(width: 3),
-        _quickChip(
-          'ロン',
-          !isTsumo,
-          () =>
-              setState(() => _updateContext(_context.copyWith(winType: 'ron'))),
-        ),
-        const SizedBox(width: 8),
         _quickChip(
           'なし',
           isNoneRiichi,
@@ -1552,7 +1587,8 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// Shows the score/analysis result (`_scoreResult`/`_analysisResult`/
+  /// Shows the score/analysis result (`_tsumoScoreResult`/`_ronScoreResult`/
+  /// `_analysisResult`/
   /// `_isNotWinning`, whichever `_confirmAndAnalyze` just set) as a popup
   /// instead of appending it inline to the scrolling results column —
   /// closes only via the ✕ button (`barrierDismissible: false`, no
@@ -1601,9 +1637,19 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                if (_scoreResult != null)
-                  ScoreResultPanel(scoreResponse: _scoreResult!),
-                if (_scoreResult != null &&
+                if (_tsumoScoreResult != null || _ronScoreResult != null)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.65,
+                    ),
+                    child: SingleChildScrollView(
+                      child: ScoreResultPanel(
+                        tsumoResponse: _tsumoScoreResult,
+                        ronResponse: _ronScoreResult,
+                      ),
+                    ),
+                  ),
+                if ((_tsumoScoreResult != null || _ronScoreResult != null) &&
                     widget.onScoreConfirmed != null) ...[
                   const SizedBox(height: 12),
                   SizedBox(
@@ -2501,7 +2547,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
           // Fixed action bar: always reachable without scrolling, unlike
           // everything above. Left to right: function (HandOperation)
-          // dropdown, quick ツモ/ロン・リーチ(一発) controls + 詳細条件
+          // dropdown, quick リーチ(一発) controls + 詳細条件
           // (score mode only), then the main action — "識別実行" until every
           // detected tile has a result, then a plain "実行" that runs
           // `_runInterpretationAndAnalyze` (interpretation + confirm+analyze
@@ -2540,7 +2586,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
                 if (_operation == HandOperation.score) ...[
                   const SizedBox(width: 8),
-                  // ツモ/ロン・リーチ(一発) — used on nearly every hand, so
+                  // リーチ(一発) — used on many hands, so
                   // they sit directly in the bar instead of behind 詳細条件
                   // (see `_buildQuickWinConditions`). Horizontally
                   // scrollable as a safety margin against overflow on a
@@ -2557,7 +2603,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   // calculation, so there's nothing useful to set here in
                   // tenpai/discard-analysis mode. The rare situational
                   // flags (海底・河底・嶺上・槍槓・地和・天和) — everything
-                  // except ツモ/ロン・リーチ(一発), which moved to the bar
+                  // except リーチ(一発), which moved to the bar
                   // itself above — still live behind this icon.
                   onPressed: _operation == HandOperation.score
                       ? _showContextDetailsSheet
