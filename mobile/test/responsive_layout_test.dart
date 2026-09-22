@@ -37,14 +37,18 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    for (final label in ['自動', '13', '14', '15', '16', '17', '18']) {
+    final labels = ['自動', '13', '14', '15', '16', '17', '18'];
+    final verticalCenters = <double>[];
+    for (final label in labels) {
       final finder = find.text(label);
       expect(finder, findsOneWidget);
       expect(
         tester.getRect(finder).right,
         lessThanOrEqualTo(_narrowPortrait.width),
       );
+      verticalCenters.add(tester.getCenter(finder).dy);
     }
+    expect(verticalCenters.toSet(), hasLength(1));
     expectNoOverflow(tester);
 
     await tester.tap(find.text('18'));
