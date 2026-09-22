@@ -1921,92 +1921,137 @@ class _ScanScreenState extends State<ScanScreen> {
     }
 
     return SafeArea(
-      child: Stack(
-        fit: StackFit.expand,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Center(child: CameraPreview(_controller!)),
-          Positioned(
-            top: 12,
-            left: 12,
-            right: 12,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    '解析対象の牌がすべて映るように撮影してください',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                _buildWideCameraPreview(),
+                Positioned(
+                  left: 12,
+                  top: 8,
+                  child: IconButton.filledTonal(
+                    onPressed: () => Navigator.maybePop(context),
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: '戻る',
                   ),
                 ),
-                const SizedBox(height: 8),
-                _buildExpectedTileCountSelector(),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _buildLensSelector(),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildLiveTileCountBadge(),
-                        const SizedBox(width: 8),
-                        _buildAutoCaptureToggle(),
+                Positioned(
+                  top: 12,
+                  left: 64,
+                  right: 64,
+                  child: Text(
+                    '牌を横一列に収めてください',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      shadows: const [
+                        Shadow(color: Colors.black, blurRadius: 6),
                       ],
                     ),
-                  ],
+                  ),
+                ),
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  top: 70,
+                  bottom: 20,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: Colors.greenAccent.withValues(alpha: 0.8),
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 12,
+                  bottom: 8,
+                  child: _buildLiveTileCountBadge(),
                 ),
               ],
             ),
           ),
-          // Capture button
-          Positioned(
-            bottom: 40,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: GestureDetector(
-                onTap: _isCapturing ? null : _capture,
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 4),
-                    color: _isCapturing
-                        ? Colors.grey
-                        : Colors.white.withValues(alpha: 0.3),
+          Expanded(
+            child: Container(
+              color: Colors.black,
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+              child: Column(
+                children: [
+                  _buildExpectedTileCountSelector(),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [_buildLensSelector(), _buildAutoCaptureToggle()],
                   ),
-                  child: _isCapturing
-                      ? const Padding(
-                          padding: EdgeInsets.all(20),
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 3,
-                          ),
-                        )
-                      : const Icon(
-                          Icons.camera_alt,
-                          color: Colors.white,
-                          size: 32,
-                        ),
-                ),
+                  const Spacer(),
+                  _buildCaptureButton(),
+                  const SizedBox(height: 12),
+                  const Text(
+                    '0.5×は近距離向けです。牌が小さい場合は1×へ切り替えてください。',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWideCameraPreview() {
+    final previewSize = _controller!.value.previewSize;
+    if (previewSize == null) return CameraPreview(_controller!);
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: previewSize.height,
+          height: previewSize.width,
+          child: CameraPreview(_controller!),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCaptureButton() {
+    return Semantics(
+      button: true,
+      label: '撮影',
+      child: GestureDetector(
+        onTap: _isCapturing ? null : _capture,
+        child: Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 4),
+            color: _isCapturing
+                ? Colors.grey
+                : Colors.white.withValues(alpha: 0.18),
+          ),
+          child: _isCapturing
+              ? const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 3,
+                  ),
+                )
+              : const Icon(Icons.camera_alt, color: Colors.white, size: 32),
+        ),
       ),
     );
   }
