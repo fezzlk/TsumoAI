@@ -22,6 +22,7 @@ from app.recognition_feedback_store import RecognitionFeedbackStore
 from app.recognition_job_manager import RecognitionJobManager
 from app.hand_scoring import score_hand_shape
 from app.hand_analysis import analyze_call_options, analyze_discard_options, analyze_tenpai
+from app.history_store import HistoryStore
 from app.interpretation import interpret_observations, request_from_hand_estimate
 from app.interpretation.confirmation import assemble_confirmed_hand_state
 from app.interpretation.models import (
@@ -37,6 +38,9 @@ from app.schemas import (
     ContextInput,
     CallAnalysisRequest,
     CallAnalysisResponse,
+    HistoryItem,
+    HistoryItemUpsert,
+    HistoryListResponse,
     DatasetUploadRequest,
     DatasetUploadResponse,
     DiscardAnalysisRequest,
@@ -80,6 +84,7 @@ recognition_jobs = RecognitionJobManager(repo=repo, model_name=settings.openai_m
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 gcs_feedback_store = GCSFeedbackStore()
+history_store = HistoryStore()
 gcs_dataset_store = GCSFeedbackStore(prefix=settings.gcs_dataset_prefix)
 accuracy_store = GCSFeedbackStore(prefix=settings.gcs_accuracy_prefix)
 recognition_feedback_store = RecognitionFeedbackStore()
@@ -318,6 +323,43 @@ def analyze_calls_endpoint(req: CallAnalysisRequest) -> CallAnalysisResponse:
         return analyze_call_options(req)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/history", response_model=HistoryListResponse)
+def list_history(
+    limit: int = Query(default=200, ge=1, le=500),
+    user: dict = Depends(get_current_user),
+) -> HistoryListResponse:
+    try:
+        items = history_store.list(user["uid"], limit=limit)
+        return HistoryListResponse(items=[HistoryItem.model_validate(item) for item in items])
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="History synchronization is unavailable") from exc
+
+
+@app.put("/api/v1/history/{item_id}", response_model=HistoryItem)
+def upsert_history(
+    item_id: UUID,
+    payload: HistoryItemUpsert,
+    user: dict = Depends(get_current_user),
+) -> HistoryItem:
+    try:
+        if len(json.dumps(payload.details, ensure_ascii=False)) > 50_000:
+            raise HTTPException(status_code=422, detail="History details are too large")
+        stored = history_store.upsert(user["uid"], str(item_id), payload.model_dump(mode="json"))
+        return HistoryItem.model_validate(stored)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="History synchronization is unavailable") from exc
+
+
+@app.delete("/api/v1/history")
+def delete_history(user: dict = Depends(get_current_user)) -> dict:
+    try:
+        return {"deleted_count": history_store.delete_all(user["uid"])}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="History synchronization is unavailable") from exc
 
 
 @app.post("/api/v1/interpretations", response_model=InterpretationResponse)

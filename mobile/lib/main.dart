@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'firebase_options.dart';
 import 'models/scan_purpose.dart';
 import 'screens/match_home_screen.dart';
+import 'screens/history_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/training_data_screen.dart';
@@ -223,7 +224,10 @@ class HomeScreen extends StatelessWidget {
             SizedBox(
               height: 50,
               child: OutlinedButton.icon(
-                onPressed: () => _showComingSoon(context, '利用履歴'),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const HistoryScreen()),
+                ),
                 icon: const Icon(Icons.history),
                 label: const Text('利用履歴'),
               ),

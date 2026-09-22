@@ -428,8 +428,9 @@ img.Image refineTileCrop(img.Image source, Rect roughBox) =>
   ({img.Image image, TileQuad sourceQuad}) noRotationResult() {
     final tight = _tightCropToBlobRect(blob, padded.width, padded.height);
     if (tight == null) return fallbackResult();
-    if (expectedArea > 0 && tight.width * tight.height > expectedArea * 1.6)
+    if (expectedArea > 0 && tight.width * tight.height > expectedArea * 1.6) {
       return fallbackResult();
+    }
     return (
       image: img.copyCrop(
         padded,

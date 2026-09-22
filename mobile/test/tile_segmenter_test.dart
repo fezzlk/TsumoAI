@@ -444,8 +444,9 @@ void main() {
       'case-006',
     ]) {
       final image = _loadCaseImage(name);
-      if (image == null)
+      if (image == null) {
         continue; // eval fixture not present in this environment
+      }
       final rgb = image.numChannels == 3
           ? image
           : image.convert(numChannels: 3);

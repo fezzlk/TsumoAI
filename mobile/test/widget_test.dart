@@ -1,7 +1,16 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tsumoai_mobile/main.dart';
 import 'package:tsumoai_mobile/models/scan_purpose.dart';
 import 'package:tsumoai_mobile/screens/scan_screen.dart';
+import 'package:tsumoai_mobile/screens/history_screen.dart';
+import 'package:tsumoai_mobile/services/history_service.dart';
+import 'package:tsumoai_mobile/models/history_entry.dart';
+
+class _FakeHistoryService extends HistoryService {
+  @override
+  Future<List<HistoryEntry>> loadLocal() async => [];
+}
 
 void main() {
   testWidgets('home exposes the primary scan purposes', (
@@ -37,6 +46,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('何を切る？'), findsOneWidget);
     expect(find.text('鳴くべき？'), findsOneWidget);
+  });
+
+  testWidgets('history is available without login', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: HistoryScreen(service: _FakeHistoryService())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('端末内履歴'), findsOneWidget);
+    expect(find.text('履歴はまだありません'), findsOneWidget);
+    expect(find.text('ログイン'), findsOneWidget);
   });
 
   test('purpose defaults match the expected hand shape', () {

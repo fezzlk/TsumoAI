@@ -14,6 +14,7 @@ import '../services/api_client.dart';
 import '../services/tile_detector.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
+import '../models/history_entry.dart';
 import '../models/interpretation_request.dart';
 import '../models/scan_purpose.dart';
 import '../models/interpretation_result.dart';
@@ -32,6 +33,8 @@ import '../services/meld_detector.dart';
 import '../models/tile_quad.dart';
 import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
+import '../services/history_service.dart';
+import '../services/auth_service.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
 
@@ -44,6 +47,7 @@ class ScanScreen extends StatefulWidget {
   final bool showTrainingDataActions;
   final ContextInput? initialContext;
   final ValueChanged<bool>? onScoreConfirmed;
+  final String? historyRoundLabel;
 
   const ScanScreen({
     super.key,
@@ -55,6 +59,7 @@ class ScanScreen extends StatefulWidget {
     this.showTrainingDataActions = false,
     this.initialContext,
     this.onScoreConfirmed,
+    this.historyRoundLabel,
   });
 
   @override
@@ -71,6 +76,9 @@ class _ScanScreenState extends State<ScanScreen> {
   late final Future<void> _classifierInitialization;
   final ApiClient _api = ApiClient();
   final TrainingDataClient _trainingClient = TrainingDataClient();
+  final HistoryService _historyService = HistoryService();
+  late final String _historyEntryId = HistoryService.createId();
+  late final DateTime _historyCreatedAt = DateTime.now().toUtc();
 
   _ScanPhase _phase = _ScanPhase.camera;
 
@@ -981,6 +989,8 @@ class _ScanScreenState extends State<ScanScreen> {
             _scoreResult = result;
             _isNotWinning = result == null;
           });
+          if (result != null) await _saveScoreHistory(result);
+          if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
           _showResultDialog();
           break;
         case HandOperation.tenpai:
@@ -991,6 +1001,8 @@ class _ScanScreenState extends State<ScanScreen> {
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
+            await _saveAnalysisHistory(result);
+            if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
             _showResultDialog();
           }
           break;
@@ -1002,6 +1014,8 @@ class _ScanScreenState extends State<ScanScreen> {
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
+            await _saveAnalysisHistory(result);
+            if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
             _showResultDialog();
           }
           break;
@@ -1013,6 +1027,8 @@ class _ScanScreenState extends State<ScanScreen> {
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
+            await _saveAnalysisHistory(result);
+            if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
             _showResultDialog();
           }
           break;
@@ -1024,6 +1040,80 @@ class _ScanScreenState extends State<ScanScreen> {
     } finally {
       if (mounted) setState(() => _isScoring = false);
     }
+  }
+
+  Future<void> _saveScoreHistory(ScoreResponse response) async {
+    final result = response.result;
+    await _historyService.save(
+      HistoryEntry(
+        id: _historyEntryId,
+        createdAt: _historyCreatedAt,
+        updatedAt: DateTime.now().toUtc(),
+        purpose: 'score',
+        title: '点数計算',
+        summary: '${result.han}翻${result.fu}符 ${result.pointLabel}',
+        roundLabel: widget.historyRoundLabel,
+        details: {
+          'tiles': _tiles.whereType<String>().toList(growable: false),
+          'context': _context.toJson(),
+          'han': result.han,
+          'fu': result.fu,
+          'point_label': result.pointLabel,
+          'ron': result.points.ron,
+          'tsumo_dealer_pay': result.points.tsumoDealerPay,
+          'tsumo_non_dealer_pay': result.points.tsumoNonDealerPay,
+          'yaku': result.yaku.map((item) => item.name).toList(growable: false),
+        },
+        accountUid: AuthService.currentUser?.uid,
+      ),
+    );
+  }
+
+  Future<void> _saveAnalysisHistory(Map<String, dynamic> result) async {
+    final purpose = switch (widget.purpose) {
+      ScanPurpose.wait => 'wait',
+      ScanPurpose.callAdvice => 'call_advice',
+      _ => 'discard',
+    };
+    await _historyService.save(
+      HistoryEntry(
+        id: _historyEntryId,
+        createdAt: _historyCreatedAt,
+        updatedAt: DateTime.now().toUtc(),
+        purpose: purpose,
+        title: widget.purpose.label,
+        summary: _analysisSummary(result),
+        roundLabel: widget.historyRoundLabel,
+        details: {
+          'tiles': _tiles.whereType<String>().toList(growable: false),
+          'context': _context.toJson(),
+          'result': result,
+        },
+        accountUid: AuthService.currentUser?.uid,
+      ),
+    );
+  }
+
+  String _analysisSummary(Map<String, dynamic> result) {
+    if (widget.purpose == ScanPurpose.wait) {
+      final tiles = (result['improving_tiles'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map((item) => item['tile'])
+          .whereType<String>()
+          .join(' / ');
+      return tiles.isEmpty ? '待ち・有効牌なし' : '待ち・有効牌 $tiles';
+    }
+    if (widget.purpose == ScanPurpose.callAdvice) {
+      final count = (result['calls'] as List<dynamic>? ?? const []).length;
+      return '鳴き候補 $count件';
+    }
+    final discards = (result['discards'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .take(3)
+        .map((item) => item['discard'])
+        .whereType<String>()
+        .join(' / ');
+    return discards.isEmpty ? '打牌候補なし' : '打牌候補 $discards';
   }
 
   void _onSlotTap(int index) async {

@@ -265,6 +265,24 @@ class CallAnalysisResponse(BaseModel):
     calls: list[CallAnalysisResult] = Field(default_factory=list)
 
 
+class HistoryItemUpsert(BaseModel):
+    created_at: datetime
+    purpose: Literal["score", "wait", "discard", "call_advice"]
+    title: str = Field(min_length=1, max_length=80)
+    summary: str = Field(min_length=1, max_length=300)
+    round_label: str | None = Field(default=None, max_length=40)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class HistoryItem(HistoryItemUpsert):
+    id: UUID
+    updated_at: datetime
+
+
+class HistoryListResponse(BaseModel):
+    items: list[HistoryItem] = Field(default_factory=list)
+
+
 class RecognizeAndScorePayload(BaseModel):
     context: ContextInput
     rules: RuleSet
