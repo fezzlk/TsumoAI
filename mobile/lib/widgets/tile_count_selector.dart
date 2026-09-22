@@ -31,16 +31,18 @@ class TileCountSelector extends StatelessWidget {
             style: TextStyle(color: Colors.white70, fontSize: 12),
           ),
           const SizedBox(height: 4),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
+          Row(
             children: [
-              for (final count in options)
-                _CountButton(
-                  count: count,
-                  selected: count == selectedCount,
-                  onPressed: () => onChanged(count),
+              for (var index = 0; index < options.length; index++) ...[
+                if (index > 0) const SizedBox(width: 3),
+                Expanded(
+                  child: _CountButton(
+                    count: options[index],
+                    selected: options[index] == selectedCount,
+                    onPressed: () => onChanged(options[index]),
+                  ),
                 ),
+              ],
             ],
           ),
         ],
@@ -77,11 +79,12 @@ class _CountButton extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
             onTap: onPressed,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: count == null ? 54 : 40),
-              child: Center(
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
                 child: Text(
                   label,
+                  maxLines: 1,
                   style: TextStyle(
                     color: selected ? Colors.white : Colors.white70,
                     fontWeight: selected ? FontWeight.bold : FontWeight.normal,
