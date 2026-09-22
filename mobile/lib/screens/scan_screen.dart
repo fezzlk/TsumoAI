@@ -72,6 +72,8 @@ class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
   static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
   CameraController? _controller;
+  CameraDescription? _activeCamera;
+  bool _isSwitchingCamera = false;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
   final ApiClient _api = ApiClient();
@@ -293,10 +295,47 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  Future<void> _initCamera() async {
+  CameraDescription _preferredCamera() {
+    final rearCameras = widget.cameras
+        .where((camera) => camera.lensDirection == CameraLensDirection.back)
+        .toList();
+    final candidates = rearCameras.isEmpty ? widget.cameras : rearCameras;
+    for (final lensType in [CameraLensType.ultraWide, CameraLensType.wide]) {
+      for (final camera in candidates) {
+        if (camera.lensType == lensType) return camera;
+      }
+    }
+    return candidates.first;
+  }
+
+  CameraDescription? _rearCameraFor(CameraLensType lensType) {
+    for (final camera in widget.cameras) {
+      if (camera.lensDirection == CameraLensDirection.back &&
+          camera.lensType == lensType) {
+        return camera;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _initCamera([CameraDescription? camera]) async {
     if (widget.cameras.isEmpty) return;
-    _controller = CameraController(
-      widget.cameras.first,
+    final selectedCamera = camera ?? _preferredCamera();
+    final previousController = _controller;
+    if (previousController != null) {
+      await _stopLiveDetection();
+      await previousController.dispose();
+    }
+    if (mounted) {
+      setState(() {
+        _controller = null;
+        _activeCamera = selectedCamera;
+        _liveDetectorResult = null;
+      });
+    }
+
+    final controller = CameraController(
+      selectedCamera,
       ResolutionPreset.high,
       enableAudio: false,
       // Needed for startImageStream()'s live auto-detect (see below) to get
@@ -304,8 +343,9 @@ class _ScanScreenState extends State<ScanScreen> {
       // (still JPEG) is unaffected.
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
+    _controller = controller;
     try {
-      await _controller!.initialize();
+      await controller.initialize();
       // The phone is held nearly flat, pointed down at tiles on a table —
       // the accelerometer can't reliably tell landscape from portrait in
       // that position, so ambient device-orientation detection (what both
@@ -314,11 +354,26 @@ class _ScanScreenState extends State<ScanScreen> {
       // actually determines CameraPreview's aspect ratio (it checks
       // `lockedCaptureOrientation` before the ambient sensor) and the
       // orientation `takePicture()` bakes into the photo.
-      await _controller!.lockCaptureOrientation(DeviceOrientation.portraitUp);
+      await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
+      if (_controller != controller) {
+        await controller.dispose();
+        return;
+      }
       if (mounted) setState(() {});
       await _startLiveDetection();
     } catch (e) {
       debugPrint('Camera init error: $e');
+    }
+  }
+
+  Future<void> _switchCameraLens(CameraLensType lensType) async {
+    final camera = _rearCameraFor(lensType);
+    if (camera == null || camera == _activeCamera || _isSwitchingCamera) return;
+    setState(() => _isSwitchingCamera = true);
+    try {
+      await _initCamera(camera);
+    } finally {
+      if (mounted) setState(() => _isSwitchingCamera = false);
     }
   }
 
@@ -1885,6 +1940,7 @@ class _ScanScreenState extends State<ScanScreen> {
           // Live detection tile-count badge + auto/manual shutter toggle
           // (FEZ-96 verification: auto-shutter behavior is unconfirmed on
           // real devices, so manual capture must remain available).
+          Positioned(top: 122, left: 12, child: _buildLensSelector()),
           Positioned(
             top: 122,
             right: 12,
@@ -1968,6 +2024,45 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildLensSelector() {
+    final ultraWide = _rearCameraFor(CameraLensType.ultraWide);
+    final wide = _rearCameraFor(CameraLensType.wide);
+    if (ultraWide == null || wide == null) return const SizedBox.shrink();
+
+    final selectedLens = _activeCamera?.lensType ?? CameraLensType.ultraWide;
+    return SegmentedButton<CameraLensType>(
+      segments: const [
+        ButtonSegment(
+          value: CameraLensType.ultraWide,
+          label: Text('0.5×'),
+          tooltip: '近い距離で横一列の牌を収める',
+        ),
+        ButtonSegment(
+          value: CameraLensType.wide,
+          label: Text('1×'),
+          tooltip: '標準カメラで撮影する',
+        ),
+      ],
+      selected: {selectedLens},
+      showSelectedIcon: false,
+      style: ButtonStyle(
+        minimumSize: const WidgetStatePropertyAll(Size(48, 44)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 10),
+        ),
+        foregroundColor: const WidgetStatePropertyAll(Colors.white),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          return states.contains(WidgetState.selected)
+              ? Colors.green.shade700.withValues(alpha: 0.9)
+              : Colors.black.withValues(alpha: 0.7);
+        }),
+      ),
+      onSelectionChanged: _isSwitchingCamera
+          ? null
+          : (selection) => _switchCameraLens(selection.single),
     );
   }
 
