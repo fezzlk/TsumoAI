@@ -338,7 +338,13 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final controller = CameraController(
       selectedCamera,
-      ResolutionPreset.high,
+      // On iOS, `high` is only 720x1280. In portrait that leaves a
+      // 720x405 image after the 16:9 result crop: roughly 51 horizontal
+      // pixels per tile for a 14-tile hand, which is far below the
+      // classifier's 224x224 input. `ultraHigh` targets 2160x3840, retaining
+      // about 154 pixels per tile after the same crop while still allowing
+      // the plugin to fall back on devices that cannot provide it.
+      ResolutionPreset.ultraHigh,
       enableAudio: false,
       // Needed for startImageStream()'s live auto-detect (see below) to get
       // a predictable YUV plane layout on both Android and iOS; takePicture()
