@@ -3,6 +3,10 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 
 const double captureFrameAspectRatio = 16 / 9;
+const double captureGuideLeftFactor = 0.04;
+const double captureGuideTopFactor = 0.30;
+const double captureGuideWidthFactor = 0.92;
+const double captureGuideHeightFactor = 0.60;
 
 typedef PreparedCapture = ({Uint8List bytes, img.Image image});
 
@@ -10,11 +14,29 @@ PreparedCapture prepareCapturedFrame(Uint8List sourceBytes) {
   final decoded = img.decodeImage(sourceBytes);
   if (decoded == null) throw const FormatException('画像のデコードに失敗');
   final oriented = img.bakeOrientation(decoded);
-  final framed = cropToCaptureFrame(oriented);
+  final previewFrame = cropToCaptureFrame(oriented);
+  final framed = cropToCaptureGuide(previewFrame);
   return (
     bytes: Uint8List.fromList(img.encodeJpg(framed, quality: 95)),
     image: framed,
   );
+}
+
+/// Crops the visible 16:9 preview to the green guide shown to the user.
+/// Detection, classification and result editing all receive this same image,
+/// so reflections or table edges outside the guide cannot become tile boxes.
+img.Image cropToCaptureGuide(img.Image previewFrame) {
+  final x = (previewFrame.width * captureGuideLeftFactor).round();
+  final y = (previewFrame.height * captureGuideTopFactor).round();
+  final width = (previewFrame.width * captureGuideWidthFactor).round().clamp(
+    1,
+    previewFrame.width - x,
+  );
+  final height = (previewFrame.height * captureGuideHeightFactor).round().clamp(
+    1,
+    previewFrame.height - y,
+  );
+  return img.copyCrop(previewFrame, x: x, y: y, width: width, height: height);
 }
 
 img.Image cropToCaptureFrame(
