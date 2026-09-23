@@ -1953,7 +1953,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   left: 64,
                   right: 64,
                   child: Text(
-                    '牌を横一列に収めてください',
+                    '牌を緑枠内に横一列で収めてください',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white,
@@ -1965,19 +1965,22 @@ class _ScanScreenState extends State<ScanScreen> {
                     ),
                   ),
                 ),
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  top: 70,
-                  bottom: 20,
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: Colors.greenAccent.withValues(alpha: 0.8),
-                          width: 2,
+                Align(
+                  // Matches cropToCaptureGuide(): the guide is the actual
+                  // detection area, not merely a visual suggestion.
+                  alignment: const Alignment(0, 0.5),
+                  child: FractionallySizedBox(
+                    widthFactor: captureGuideWidthFactor,
+                    heightFactor: captureGuideHeightFactor,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: Colors.greenAccent.withValues(alpha: 0.8),
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
