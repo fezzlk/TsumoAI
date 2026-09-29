@@ -50,6 +50,7 @@ class ScanScreen extends StatefulWidget {
   final ContextInput? initialContext;
   final ValueChanged<bool>? onScoreConfirmed;
   final String? historyRoundLabel;
+  final MahjongRuleSettings ruleSettings;
 
   const ScanScreen({
     super.key,
@@ -62,6 +63,7 @@ class ScanScreen extends StatefulWidget {
     this.initialContext,
     this.onScoreConfirmed,
     this.historyRoundLabel,
+    this.ruleSettings = const MahjongRuleSettings(),
   });
 
   @override
@@ -1018,7 +1020,7 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       );
       if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-      final rules = RuleSet();
+      final rules = widget.ruleSettings.rules;
       switch (_operation) {
         case HandOperation.score:
           final winTile = state.hand.winTile;
@@ -1176,6 +1178,7 @@ class _ScanScreenState extends State<ScanScreen> {
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
           'context': _context.toJson(),
+          'rule_settings': widget.ruleSettings.toJson(),
           'tsumo': resultDetails(tsumoResponse),
           'ron': resultDetails(ronResponse),
         },
@@ -1202,6 +1205,7 @@ class _ScanScreenState extends State<ScanScreen> {
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
           'context': _context.toJson(),
+          'rule_settings': widget.ruleSettings.toJson(),
           'result': result,
         },
         accountUid: AuthService.currentUser?.uid,
@@ -1730,6 +1734,8 @@ class _ScanScreenState extends State<ScanScreen> {
                       child: ScoreResultPanel(
                         tsumoResponse: _tsumoScoreResult,
                         ronResponse: _ronScoreResult,
+                        ruleSettings: widget.ruleSettings,
+                        isOpenHand: _confirmedMelds.any((meld) => meld.open),
                       ),
                     ),
                   ),

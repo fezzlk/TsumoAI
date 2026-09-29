@@ -23,6 +23,8 @@ from app.recognition_job_manager import RecognitionJobManager
 from app.hand_scoring import score_hand_shape
 from app.hand_analysis import analyze_call_options, analyze_discard_options, analyze_tenpai
 from app.history_store import HistoryStore
+from app.user_settings_store import UserSettingsStore
+from app.question_template_store import QuestionTemplateStore
 from app.interpretation import interpret_observations, request_from_hand_estimate
 from app.interpretation.confirmation import assemble_confirmed_hand_state
 from app.interpretation.models import (
@@ -41,6 +43,11 @@ from app.schemas import (
     HistoryItem,
     HistoryItemUpsert,
     HistoryListResponse,
+    MahjongRuleSettings,
+    MahjongRuleSettingsDocument,
+    QuestionTemplateItem,
+    QuestionTemplateListResponse,
+    QuestionTemplateUpsert,
     DatasetUploadRequest,
     DatasetUploadResponse,
     DiscardAnalysisRequest,
@@ -85,6 +92,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 gcs_feedback_store = GCSFeedbackStore()
 history_store = HistoryStore()
+user_settings_store = UserSettingsStore()
+question_template_store = QuestionTemplateStore()
 gcs_dataset_store = GCSFeedbackStore(prefix=settings.gcs_dataset_prefix)
 accuracy_store = GCSFeedbackStore(prefix=settings.gcs_accuracy_prefix)
 recognition_feedback_store = RecognitionFeedbackStore()
@@ -360,6 +369,87 @@ def delete_history(user: dict = Depends(get_current_user)) -> dict:
         return {"deleted_count": history_store.delete_all(user["uid"])}
     except Exception as exc:
         raise HTTPException(status_code=503, detail="History synchronization is unavailable") from exc
+
+
+@app.get("/api/v1/settings/mahjong-rules", response_model=MahjongRuleSettingsDocument)
+def get_mahjong_rule_settings(
+    user: dict = Depends(get_current_user),
+) -> MahjongRuleSettingsDocument:
+    try:
+        stored = user_settings_store.get(user["uid"], "mahjong_rules")
+        if stored is None:
+            raise HTTPException(status_code=404, detail="Mahjong rule settings are not saved")
+        return MahjongRuleSettingsDocument.model_validate(stored)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Settings synchronization is unavailable") from exc
+
+
+@app.put("/api/v1/settings/mahjong-rules", response_model=MahjongRuleSettingsDocument)
+def upsert_mahjong_rule_settings(
+    payload: MahjongRuleSettings,
+    user: dict = Depends(get_current_user),
+) -> MahjongRuleSettingsDocument:
+    try:
+        stored = user_settings_store.upsert(
+            user["uid"], "mahjong_rules", payload.model_dump(mode="json")
+        )
+        return MahjongRuleSettingsDocument.model_validate(stored)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Settings synchronization is unavailable") from exc
+
+
+@app.get("/api/v1/question-templates", response_model=QuestionTemplateListResponse)
+def list_question_templates(
+    user: dict = Depends(get_current_user),
+) -> QuestionTemplateListResponse:
+    try:
+        items = question_template_store.list(user["uid"])
+        return QuestionTemplateListResponse(
+            items=[QuestionTemplateItem.model_validate(item) for item in items]
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Template synchronization is unavailable") from exc
+
+
+@app.put("/api/v1/question-templates/{item_id}", response_model=QuestionTemplateItem)
+def upsert_question_template(
+    item_id: UUID,
+    payload: QuestionTemplateUpsert,
+    user: dict = Depends(get_current_user),
+) -> QuestionTemplateItem:
+    try:
+        duplicate = next(
+            (
+                item
+                for item in question_template_store.list(user["uid"])
+                if item.get("body") == payload.body and item.get("id") != str(item_id)
+            ),
+            None,
+        )
+        if duplicate is not None:
+            return QuestionTemplateItem.model_validate(duplicate)
+        stored = question_template_store.upsert(
+            user["uid"], str(item_id), payload.model_dump(mode="json")
+        )
+        return QuestionTemplateItem.model_validate(stored)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Template synchronization is unavailable") from exc
+
+
+@app.delete("/api/v1/question-templates/{item_id}", status_code=204)
+def delete_question_template(
+    item_id: UUID,
+    user: dict = Depends(get_current_user),
+) -> Response:
+    try:
+        question_template_store.delete(user["uid"], str(item_id))
+        return Response(status_code=204)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Template synchronization is unavailable") from exc
 
 
 @app.post("/api/v1/interpretations", response_model=InterpretationResponse)

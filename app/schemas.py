@@ -149,6 +149,18 @@ class RuleSet(BaseModel):
     renpu_fu: Literal[2, 4] = 4
 
 
+class MahjongRuleSettings(BaseModel):
+    version: Literal[1] = 1
+    rules: RuleSet = Field(default_factory=RuleSet)
+    tobi_end: bool = True
+    chips_enabled: bool = False
+    open_hand_chips_enabled: bool = True
+
+
+class MahjongRuleSettingsDocument(MahjongRuleSettings):
+    updated_at: datetime
+
+
 class ScoreRequest(BaseModel):
     recognition_id: UUID | None = None
     hand: HandInput
@@ -281,6 +293,22 @@ class HistoryItem(HistoryItemUpsert):
 
 class HistoryListResponse(BaseModel):
     items: list[HistoryItem] = Field(default_factory=list)
+
+
+class QuestionTemplateUpsert(BaseModel):
+    name: str = Field(min_length=1, max_length=30)
+    body: str = Field(min_length=1, max_length=300)
+    created_at: datetime | None = None
+
+
+class QuestionTemplateItem(QuestionTemplateUpsert):
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuestionTemplateListResponse(BaseModel):
+    items: list[QuestionTemplateItem] = Field(default_factory=list)
 
 
 class RecognizeAndScorePayload(BaseModel):

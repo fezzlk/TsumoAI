@@ -142,7 +142,7 @@ class RuleSet {
   final bool kazoeYakumanAri;
   final int renpuFu;
 
-  RuleSet({
+  const RuleSet({
     this.akaAri = true,
     this.kuitanAri = true,
     this.doubleYakumanAri = true,
@@ -157,6 +157,74 @@ class RuleSet {
         'kazoe_yakuman_ari': kazoeYakumanAri,
         'renpu_fu': renpuFu,
       };
+
+  factory RuleSet.fromJson(Map<String, dynamic> json) => RuleSet(
+        akaAri: json['aka_ari'] as bool? ?? true,
+        kuitanAri: json['kuitan_ari'] as bool? ?? true,
+        doubleYakumanAri: json['double_yakuman_ari'] as bool? ?? true,
+        kazoeYakumanAri: json['kazoe_yakuman_ari'] as bool? ?? true,
+        renpuFu: json['renpu_fu'] as int? ?? 4,
+      );
+
+  RuleSet copyWith({
+    bool? akaAri,
+    bool? kuitanAri,
+    bool? doubleYakumanAri,
+    bool? kazoeYakumanAri,
+    int? renpuFu,
+  }) => RuleSet(
+        akaAri: akaAri ?? this.akaAri,
+        kuitanAri: kuitanAri ?? this.kuitanAri,
+        doubleYakumanAri: doubleYakumanAri ?? this.doubleYakumanAri,
+        kazoeYakumanAri: kazoeYakumanAri ?? this.kazoeYakumanAri,
+        renpuFu: renpuFu ?? this.renpuFu,
+      );
+}
+
+class MahjongRuleSettings {
+  const MahjongRuleSettings({
+    this.rules = const RuleSet(),
+    this.tobiEnd = true,
+    this.chipsEnabled = false,
+    this.openHandChipsEnabled = true,
+  });
+
+  final RuleSet rules;
+  final bool tobiEnd;
+  final bool chipsEnabled;
+  final bool openHandChipsEnabled;
+
+  factory MahjongRuleSettings.fromJson(Map<String, dynamic> json) =>
+      MahjongRuleSettings(
+        rules: RuleSet.fromJson(
+          Map<String, dynamic>.from(json['rules'] as Map? ?? const {}),
+        ),
+        tobiEnd: json['tobi_end'] as bool? ?? true,
+        chipsEnabled: json['chips_enabled'] as bool? ?? false,
+        openHandChipsEnabled:
+            json['open_hand_chips_enabled'] as bool? ?? true,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'version': 1,
+        'rules': rules.toJson(),
+        'tobi_end': tobiEnd,
+        'chips_enabled': chipsEnabled,
+        'open_hand_chips_enabled': openHandChipsEnabled,
+      };
+
+  MahjongRuleSettings copyWith({
+    RuleSet? rules,
+    bool? tobiEnd,
+    bool? chipsEnabled,
+    bool? openHandChipsEnabled,
+  }) => MahjongRuleSettings(
+        rules: rules ?? this.rules,
+        tobiEnd: tobiEnd ?? this.tobiEnd,
+        chipsEnabled: chipsEnabled ?? this.chipsEnabled,
+        openHandChipsEnabled:
+            openHandChipsEnabled ?? this.openHandChipsEnabled,
+      );
 }
 
 class ScoreRequest {

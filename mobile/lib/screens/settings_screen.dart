@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../models/score_request.dart';
+import 'mahjong_rules_screen.dart';
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -7,12 +10,16 @@ class SettingsScreen extends StatefulWidget {
     required this.onAutoClassifyChanged,
     required this.showTrainingDataActions,
     required this.onShowTrainingDataActionsChanged,
+    required this.ruleSettings,
+    required this.onRuleSettingsChanged,
   });
 
   final bool autoClassify;
   final ValueChanged<bool> onAutoClassifyChanged;
   final bool showTrainingDataActions;
   final ValueChanged<bool> onShowTrainingDataActionsChanged;
+  final MahjongRuleSettings ruleSettings;
+  final ValueChanged<MahjongRuleSettings> onRuleSettingsChanged;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -56,6 +63,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
             const Divider(),
+            ListTile(
+              leading: const Icon(Icons.grid_view_outlined),
+              title: const Text('麻雀ルール'),
+              subtitle: const Text('計算・対局・チップのルール'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => MahjongRulesScreen(
+                    settings: widget.ruleSettings,
+                    onChanged: widget.onRuleSettingsChanged,
+                  ),
+                ),
+              ),
+            ),
             const ListTile(
               leading: Icon(Icons.auto_awesome_outlined),
               title: Text('AI利用状況・残り枠'),

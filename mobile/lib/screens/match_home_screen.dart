@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/match_state.dart';
 import '../models/scan_purpose.dart';
+import '../models/score_request.dart';
 import 'scan_screen.dart';
 
 class MatchHomeScreen extends StatefulWidget {
@@ -11,11 +12,13 @@ class MatchHomeScreen extends StatefulWidget {
     required this.cameras,
     required this.autoClassify,
     required this.showTrainingDataActions,
+    this.ruleSettings = const MahjongRuleSettings(),
   });
 
   final List<CameraDescription> cameras;
   final bool autoClassify;
   final bool showTrainingDataActions;
+  final MahjongRuleSettings ruleSettings;
 
   @override
   State<MatchHomeScreen> createState() => _MatchHomeScreenState();
@@ -34,6 +37,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           initialContext: _match.current.contextFor(winner),
           historyRoundLabel: _match.current.roundLabel,
           showTrainingDataActions: widget.showTrainingDataActions,
+          ruleSettings: widget.ruleSettings,
           onScoreConfirmed: (_) => setState(() => _match.recordWin(winner)),
         ),
       ),
@@ -51,6 +55,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           initialContext: _match.current.contextFor(referenceSeat),
           historyRoundLabel: _match.current.roundLabel,
           showTrainingDataActions: widget.showTrainingDataActions,
+          ruleSettings: widget.ruleSettings,
         ),
       ),
     );

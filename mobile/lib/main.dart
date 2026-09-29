@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
 import 'models/scan_purpose.dart';
+import 'models/score_request.dart';
 import 'screens/match_home_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/scan_screen.dart';
@@ -15,6 +16,8 @@ import 'screens/settings_screen.dart';
 import 'screens/training_data_screen.dart';
 import 'services/app_preferences.dart';
 import 'services/auth_service.dart';
+import 'services/question_template_service.dart';
+import 'services/rule_settings_service.dart';
 
 List<CameraDescription> cameras = const [];
 
@@ -46,10 +49,13 @@ Future<void> main() async {
 
   final showTrainingDataActions =
       await AppPreferences.showTrainingDataActions();
+  final initialRuleSettings = await RuleSettingsService().synchronize();
+  unawaited(QuestionTemplateService().synchronize());
   runApp(
     TsumoAIApp(
       startupError: startupError,
       initialShowTrainingDataActions: showTrainingDataActions,
+      initialRuleSettings: initialRuleSettings,
     ),
   );
 }
@@ -59,10 +65,12 @@ class TsumoAIApp extends StatefulWidget {
     super.key,
     this.startupError,
     this.initialShowTrainingDataActions = false,
+    this.initialRuleSettings = const MahjongRuleSettings(),
   });
 
   final String? startupError;
   final bool initialShowTrainingDataActions;
+  final MahjongRuleSettings initialRuleSettings;
 
   @override
   State<TsumoAIApp> createState() => _TsumoAIAppState();
@@ -72,16 +80,35 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
   bool _autoClassify = false;
   bool _showTrainingDataActions = false;
   String _roundWind = 'E';
+  late MahjongRuleSettings _ruleSettings;
+  final RuleSettingsService _ruleSettingsService = RuleSettingsService();
+  final QuestionTemplateService _questionTemplateService =
+      QuestionTemplateService();
 
   @override
   void initState() {
     super.initState();
     _showTrainingDataActions = widget.initialShowTrainingDataActions;
+    _ruleSettings = widget.initialRuleSettings;
   }
 
   void _setShowTrainingDataActions(bool value) {
     setState(() => _showTrainingDataActions = value);
     unawaited(AppPreferences.setShowTrainingDataActions(value));
+  }
+
+  void _setRuleSettings(MahjongRuleSettings value) {
+    setState(() => _ruleSettings = value);
+    unawaited(_ruleSettingsService.save(value));
+  }
+
+  Future<void> _synchronizeRuleSettings() async {
+    final results = await Future.wait([
+      _ruleSettingsService.synchronize(),
+      _questionTemplateService.synchronize(),
+    ]);
+    final value = results.first as MahjongRuleSettings;
+    if (mounted) setState(() => _ruleSettings = value);
   }
 
   @override
@@ -102,9 +129,12 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
         autoClassify: _autoClassify,
         roundWind: _roundWind,
         showTrainingDataActions: _showTrainingDataActions,
+        ruleSettings: _ruleSettings,
         onAutoClassifyChanged: (value) => setState(() => _autoClassify = value),
         onRoundWindChanged: (value) => setState(() => _roundWind = value),
         onShowTrainingDataActionsChanged: _setShowTrainingDataActions,
+        onRuleSettingsChanged: _setRuleSettings,
+        onAuthenticationChanged: _synchronizeRuleSettings,
       ),
     );
   }
@@ -118,9 +148,12 @@ class HomeScreen extends StatelessWidget {
     required this.autoClassify,
     required this.roundWind,
     required this.showTrainingDataActions,
+    required this.ruleSettings,
     required this.onAutoClassifyChanged,
     required this.onRoundWindChanged,
     required this.onShowTrainingDataActionsChanged,
+    required this.onRuleSettingsChanged,
+    required this.onAuthenticationChanged,
   });
 
   final List<CameraDescription> cameras;
@@ -128,9 +161,12 @@ class HomeScreen extends StatelessWidget {
   final bool autoClassify;
   final String roundWind;
   final bool showTrainingDataActions;
+  final MahjongRuleSettings ruleSettings;
   final ValueChanged<bool> onAutoClassifyChanged;
   final ValueChanged<String> onRoundWindChanged;
   final ValueChanged<bool> onShowTrainingDataActionsChanged;
+  final ValueChanged<MahjongRuleSettings> onRuleSettingsChanged;
+  final Future<void> Function() onAuthenticationChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -213,6 +249,7 @@ class HomeScreen extends StatelessWidget {
                       cameras: cameras,
                       autoClassify: autoClassify,
                       showTrainingDataActions: showTrainingDataActions,
+                      ruleSettings: ruleSettings,
                     ),
                   ),
                 ),
@@ -365,6 +402,7 @@ class HomeScreen extends StatelessWidget {
           onRoundWindChanged: onRoundWindChanged,
           purpose: purpose,
           showTrainingDataActions: showTrainingDataActions,
+          ruleSettings: ruleSettings,
         ),
       ),
     );
@@ -415,6 +453,8 @@ class HomeScreen extends StatelessWidget {
           onAutoClassifyChanged: onAutoClassifyChanged,
           showTrainingDataActions: showTrainingDataActions,
           onShowTrainingDataActionsChanged: onShowTrainingDataActionsChanged,
+          ruleSettings: ruleSettings,
+          onRuleSettingsChanged: onRuleSettingsChanged,
         ),
       ),
     );
@@ -423,6 +463,7 @@ class HomeScreen extends StatelessWidget {
   Future<void> _signIn(BuildContext context) async {
     try {
       await AuthService.ensureSignedIn();
+      await onAuthenticationChanged();
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(
@@ -434,6 +475,7 @@ class HomeScreen extends StatelessWidget {
   Future<void> _signOut(BuildContext context) async {
     try {
       await AuthService.signOut();
+      await onAuthenticationChanged();
       if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
