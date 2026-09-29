@@ -87,6 +87,49 @@ test('embedded page scripts remain valid JavaScript', () => {
   }
 });
 
+test('training dashboard external script remains valid JavaScript', () => {
+  assert.doesNotThrow(
+    () => new vm.Script(readStatic('training_data.js'), { filename: 'training_data.js' }),
+  );
+});
+
+test('training dashboard fails closed for a signed-in non-admin user', async () => {
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) {
+      elements.set(id, { hidden: false, textContent: '', style: {} });
+    }
+    return elements.get(id);
+  };
+  let authChanged;
+  const auth = {
+    currentUser: null,
+    onAuthStateChanged(callback) { authChanged = callback; },
+    signInWithPopup: async () => {},
+    signOut: async () => {},
+  };
+  const firebaseAuth = () => auth;
+  firebaseAuth.GoogleAuthProvider = class {};
+  const context = vm.createContext({
+    window: { TsumoFirebaseConfig: {} },
+    document: { getElementById: element },
+    firebase: { initializeApp() {}, auth: firebaseAuth },
+    fetch: async () => { throw new Error('fetch must not run'); },
+    Headers, Blob, URL, console, setTimeout, clearTimeout,
+    confirm: () => false,
+  });
+  vm.runInContext(readStatic('training_data.js'), context);
+
+  await authChanged({
+    email: 'normal@example.test',
+    getIdTokenResult: async () => ({ claims: { admin: false } }),
+  });
+
+  assert.equal(element('authGate').hidden, false);
+  assert.equal(element('appContent').hidden, true);
+  assert.match(element('authError').textContent, /管理者権限/);
+});
+
 test('anonymous submissions show a login prompt without sending a request', async () => {
   const h = createHarness();
   await h.signOut();

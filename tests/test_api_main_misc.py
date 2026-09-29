@@ -61,6 +61,8 @@ def test_recognize_rejects_empty_image_upload():
 def test_training_data_viewer_page_available():
     response = client.get("/training-data")
     assert response.status_code == 200
+    assert '/static/training_data.css' in response.text
+    assert '/static/training_data.js' in response.text
 
 
 def test_anonymous_recognition_rate_limit_returns_429(monkeypatch):
