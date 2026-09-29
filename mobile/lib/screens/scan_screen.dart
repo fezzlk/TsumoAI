@@ -37,6 +37,7 @@ import '../services/request_epoch.dart';
 import '../services/history_service.dart';
 import '../services/auth_service.dart';
 import '../services/capture_framing.dart';
+import '../services/performance_trace.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
 
@@ -162,6 +163,7 @@ class _ScanScreenState extends State<ScanScreen> {
   CameraImage? _latestFrame;
   Timer? _analysisTimer;
   Timer? _scoreRecalculationTimer;
+  PerformanceTrace? _performanceTrace;
   TileDetectorResult? _liveDetectorResult;
   int _stableDetectionStreak = 0;
   int? _expectedTileCount;
@@ -316,6 +318,16 @@ class _ScanScreenState extends State<ScanScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _scheduleRecognitionFirstPaint() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final trace = _performanceTrace;
+      if (trace == null || !mounted || _phase != _ScanPhase.results) return;
+      trace.mark('recognitionFirstPaint');
+      trace.log();
+      if (identical(_performanceTrace, trace)) _performanceTrace = null;
+    });
   }
 
   @override
@@ -528,8 +540,19 @@ class _ScanScreenState extends State<ScanScreen> {
         _isCapturing) {
       return;
     }
+    final trace = PerformanceTrace(
+      name: 'tileRecognition',
+      metadata: {
+        'purpose': widget.purpose.name,
+        'expected_tile_count': _expectedTileCount,
+        'capture_mode': _autoCaptureEnabled ? 'automatic' : 'manual',
+      },
+    );
+    _performanceTrace = trace;
+    trace.mark('captureRequested');
     setState(() => _isCapturing = true);
     await _stopLiveDetection();
+    trace.mark('imageStreamStopped');
     // Mirrors CameraScreen's original auto-detect prototype: the native
     // camera needs a moment to fully release the image stream before
     // takePicture(), or the capture can fail/stall.
@@ -542,7 +565,9 @@ class _ScanScreenState extends State<ScanScreen> {
     bool capturedOk = false;
     try {
       final xFile = await _controller!.takePicture();
+      trace.mark('pictureTaken');
       final bytes = await File(xFile.path).readAsBytes();
+      trace.mark('bytesRead');
       // The preview is a centered 16:9 frame. Persist exactly that frame so
       // detection, result display, box editing and training upload all share
       // the same image and coordinate system instead of reverting to the
@@ -550,6 +575,7 @@ class _ScanScreenState extends State<ScanScreen> {
       final framed = await compute(prepareCapturedFrame, bytes);
       final framedBytes = framed.bytes;
       final decoded = framed.image;
+      trace.mark('jpegDecoded');
       capturedOk = true;
 
       setState(() {
@@ -587,12 +613,16 @@ class _ScanScreenState extends State<ScanScreen> {
         expectedTileCount: _expectedTileCount,
         allowExtendedAuto: _expectedTileCount == null,
       ));
+      trace.mark('segmentationCompleted');
       if (!mounted) return;
       await _classifyBoxesAndFinish(
         detected.boxes,
         angleHints: detected.angleHints,
       );
     } catch (e) {
+      trace.mark('captureFailed');
+      trace.log();
+      if (identical(_performanceTrace, trace)) _performanceTrace = null;
       _showError('撮影エラー: $e');
       // If capture/decode itself failed, stay on the camera phase; if it was
       // detection that failed after a successful capture, still move on to
@@ -652,6 +682,7 @@ class _ScanScreenState extends State<ScanScreen> {
       // (every tile in a row would otherwise show the same size marker).
       _tileQuads[i] = refined.sourceQuad;
     }
+    _performanceTrace?.mark('cropsPrepared');
 
     if (!_usesWinConditionWizard) {
       setState(() => _phase = _ScanPhase.results);
@@ -664,6 +695,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _recognitionComplete = true;
         if (_winConditionsComplete) _phase = _ScanPhase.results;
       });
+    }
+    if (mounted && _phase == _ScanPhase.results) {
+      _scheduleRecognitionFirstPaint();
     }
   }
 
@@ -769,6 +803,7 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() => _isRunningFullClassification = true);
     try {
       await _classifierInitialization;
+      _performanceTrace?.mark('modelReady');
       if (!mounted) return;
       if (!_classifier.isReady) {
         _showError('牌識別モデルが読み込まれていません');
@@ -778,6 +813,7 @@ class _ScanScreenState extends State<ScanScreen> {
       for (int i = 0; i < _maxPhysicalTiles; i++) {
         if (_croppedImages[i] != null) await _classifyTile(i);
       }
+      _performanceTrace?.mark('classificationCompleted');
     } finally {
       if (mounted) setState(() => _isRunningFullClassification = false);
     }
@@ -1451,6 +1487,7 @@ class _ScanScreenState extends State<ScanScreen> {
     _winConditionsComplete = true;
     if (_recognitionComplete) {
       _phase = _ScanPhase.results;
+      _scheduleRecognitionFirstPaint();
     } else {
       _winConditionStep = _WinConditionStep.waiting;
     }
