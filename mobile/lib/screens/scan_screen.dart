@@ -210,6 +210,7 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _recognitionComplete = false;
   int _doraSlotCount = 1;
   int? _selectedWinnerIndex;
+  bool _resumeWinConditionsAfterRetake = false;
 
   bool get _usesWinConditionWizard =>
       widget.onScoreConfirmed != null && widget.purpose == ScanPurpose.score;
@@ -552,13 +553,17 @@ class _ScanScreenState extends State<ScanScreen> {
       capturedOk = true;
 
       setState(() {
+        final resumeWinConditions = _resumeWinConditionsAfterRetake;
         _capturedBytes = framedBytes;
         _capturedImage = decoded;
         _phase = _ScanPhase.detecting;
-        _winConditionStep = _WinConditionStep.riichi;
-        _winConditionsComplete = false;
         _recognitionComplete = false;
-        _doraSlotCount = math.max(1, _context.doraIndicators.length);
+        if (!resumeWinConditions) {
+          _winConditionStep = _WinConditionStep.riichi;
+          _winConditionsComplete = false;
+          _doraSlotCount = math.max(1, _context.doraIndicators.length);
+        }
+        _resumeWinConditionsAfterRetake = false;
         for (int i = 0; i < _maxPhysicalTiles; i++) {
           _tiles[i] = null;
           _predictedTiles[i] = null;
@@ -1486,6 +1491,8 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void _backToCamera() {
+    final preserveWinConditions =
+        _usesWinConditionWizard && _capturedImage != null;
     setState(() {
       _phase = _ScanPhase.camera;
       _capturedBytes = null;
@@ -1506,8 +1513,11 @@ class _ScanScreenState extends State<ScanScreen> {
       _trainingDataSent = false;
       _isUndoingTraining = false;
       _sentTrainingEntryIds = [];
-      _winConditionStep = _WinConditionStep.riichi;
-      _winConditionsComplete = false;
+      _resumeWinConditionsAfterRetake = preserveWinConditions;
+      if (!preserveWinConditions) {
+        _winConditionStep = _WinConditionStep.riichi;
+        _winConditionsComplete = false;
+      }
       _recognitionComplete = false;
     });
     _startLiveDetection();
@@ -2008,6 +2018,25 @@ class _ScanScreenState extends State<ScanScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (_context.doraIndicators.isEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.amber),
+            ),
+            child: const Text(
+              '表ドラ表示牌が未入力のため、翻数と点数は未確定です',
+              style: TextStyle(
+                color: Colors.amberAccent,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         ScoreResultPanel(
           tsumoResponse: _tsumoScoreResult,
           ronResponse: _ronScoreResult,
