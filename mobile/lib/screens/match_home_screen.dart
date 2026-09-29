@@ -39,10 +39,20 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           autoClassify: true,
           purpose: ScanPurpose.score,
           initialContext: _match.current.contextFor(winner),
+          winnerOptions: TableSeat.values
+              .map(
+                (seat) => ScoreWinnerOption(
+                  label: _physicalSeatLabel(seat),
+                  context: _match.current.contextFor(seat),
+                ),
+              )
+              .toList(growable: false),
+          initialWinnerIndex: winner.index,
           historyRoundLabel: _match.current.roundLabel,
           showTrainingDataActions: widget.showTrainingDataActions,
           ruleSettings: widget.ruleSettings,
-          onScoreConfirmed: (_) => setState(() => _match.recordWin(winner)),
+          onScoreConfirmed: (winnerIndex) =>
+              setState(() => _match.recordWin(TableSeat.values[winnerIndex])),
         ),
       ),
     );
@@ -130,10 +140,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
         ? doraIndicatorFromTile(selected)
         : selected;
     setState(() {
-      _match.setDoraIndicators([
-        ..._match.current.doraIndicators,
-        indicator,
-      ]);
+      _match.setDoraIndicators([..._match.current.doraIndicators, indicator]);
     });
   }
 
@@ -202,9 +209,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: _match.canUndo
-                    ? () => setState(_match.undo)
-                    : null,
+                onPressed: _match.canUndo ? () => setState(_match.undo) : null,
                 child: const Text('1局戻す'),
               ),
             ),

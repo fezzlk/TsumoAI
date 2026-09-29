@@ -40,6 +40,13 @@ import '../services/capture_framing.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
 
+class ScoreWinnerOption {
+  const ScoreWinnerOption({required this.label, required this.context});
+
+  final String label;
+  final ContextInput context;
+}
+
 class ScanScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final bool autoClassify;
@@ -48,7 +55,9 @@ class ScanScreen extends StatefulWidget {
   final ScanPurpose purpose;
   final bool showTrainingDataActions;
   final ContextInput? initialContext;
-  final ValueChanged<bool>? onScoreConfirmed;
+  final List<ScoreWinnerOption> winnerOptions;
+  final int? initialWinnerIndex;
+  final ValueChanged<int>? onScoreConfirmed;
   final String? historyRoundLabel;
   final MahjongRuleSettings ruleSettings;
 
@@ -61,6 +70,8 @@ class ScanScreen extends StatefulWidget {
     this.purpose = ScanPurpose.score,
     this.showTrainingDataActions = false,
     this.initialContext,
+    this.winnerOptions = const [],
+    this.initialWinnerIndex,
     this.onScoreConfirmed,
     this.historyRoundLabel,
     this.ruleSettings = const MahjongRuleSettings(),
@@ -198,6 +209,7 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _winConditionsComplete = false;
   bool _recognitionComplete = false;
   int _doraSlotCount = 1;
+  int? _selectedWinnerIndex;
 
   bool get _usesWinConditionWizard =>
       widget.onScoreConfirmed != null && widget.purpose == ScanPurpose.score;
@@ -314,6 +326,7 @@ class _ScanScreenState extends State<ScanScreen> {
     _context =
         widget.initialContext ??
         ContextInput(roundWind: widget.initialRoundWind);
+    _selectedWinnerIndex = widget.initialWinnerIndex;
     _initCamera();
     _classifierInitialization = _initClassifier();
   }
@@ -1323,6 +1336,22 @@ class _ScanScreenState extends State<ScanScreen> {
     _invalidateAnalysisAndMaybeRecalculate();
   }
 
+  void _selectWinner(int index) {
+    if (index < 0 || index >= widget.winnerOptions.length) return;
+    final winnerContext = widget.winnerOptions[index].context;
+    setState(() {
+      _selectedWinnerIndex = index;
+      _updateContext(
+        _context.copyWith(
+          roundWind: winnerContext.roundWind,
+          seatWind: winnerContext.seatWind,
+          isDealer: winnerContext.isDealer,
+          honba: winnerContext.honba,
+        ),
+      );
+    });
+  }
+
   void _scheduleScoreRecalculation() {
     _scoreRecalculationTimer?.cancel();
     _scoreRecalculationTimer = Timer(const Duration(milliseconds: 300), () {
@@ -1901,7 +1930,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     width: double.infinity,
                     child: FilledButton(
                       onPressed: () {
-                        widget.onScoreConfirmed!(_context.isDealer);
+                        widget.onScoreConfirmed!(_selectedWinnerIndex ?? 0);
                         Navigator.of(dialogContext).pop();
                         Navigator.of(context).pop();
                       },
@@ -1989,12 +2018,55 @@ class _ScanScreenState extends State<ScanScreen> {
           const SizedBox(height: 12),
           FilledButton(
             onPressed: () {
-              widget.onScoreConfirmed!(_context.isDealer);
+              widget.onScoreConfirmed!(_selectedWinnerIndex ?? 0);
               Navigator.of(context).pop();
             },
             child: const Text('この結果で局終了'),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildWinnerSelector() {
+    if (widget.winnerOptions.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '和了者',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            for (
+              int index = 0;
+              index < widget.winnerOptions.length;
+              index++
+            ) ...[
+              if (index > 0) const SizedBox(width: 6),
+              Expanded(
+                child: SizedBox(
+                  height: 42,
+                  child: _selectedWinnerIndex == index
+                      ? FilledButton(
+                          onPressed: () => _selectWinner(index),
+                          child: Text(widget.winnerOptions[index].label),
+                        )
+                      : OutlinedButton(
+                          onPressed: () => _selectWinner(index),
+                          child: Text(widget.winnerOptions[index].label),
+                        ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ],
     );
   }
@@ -3099,6 +3171,11 @@ class _ScanScreenState extends State<ScanScreen> {
                   if (_allDetectedTilesReady) ...[
                     const SizedBox(height: 4),
                     _buildTileControlsRow(),
+                    const SizedBox(height: 12),
+                  ],
+
+                  if (widget.winnerOptions.isNotEmpty) ...[
+                    _buildWinnerSelector(),
                     const SizedBox(height: 12),
                   ],
 
