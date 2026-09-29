@@ -60,40 +60,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  Future<void> _confirmDelete() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('履歴を削除しますか？'),
-        content: Text(
-          AuthService.currentUser == null
-              ? 'この端末の利用履歴を削除します。'
-              : 'この端末とアカウントに紐付いた利用履歴を削除します。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('キャンセル'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('削除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    try {
-      await _service.deleteAll();
-      if (mounted) setState(() => _entries = []);
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('クラウド履歴を削除できませんでした。通信状態を確認してください。')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final entries = _filter == 'all'
@@ -134,15 +100,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     ),
             ),
-            if (_entries.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: TextButton.icon(
-                  onPressed: _confirmDelete,
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('履歴を削除'),
-                ),
-              ),
           ],
         ),
       ),
