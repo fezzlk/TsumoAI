@@ -71,6 +71,7 @@ class ScanScreen extends StatefulWidget {
 }
 
 enum _ScanPhase { camera, detecting, results }
+
 enum _WinConditionStep { riichi, dora, uraDora, waiting }
 
 class _ScanScreenState extends State<ScanScreen> {
@@ -149,6 +150,7 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isAnalyzingFrame = false;
   CameraImage? _latestFrame;
   Timer? _analysisTimer;
+  Timer? _scoreRecalculationTimer;
   TileDetectorResult? _liveDetectorResult;
   int _stableDetectionStreak = 0;
   int? _expectedTileCount;
@@ -253,7 +255,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _confirmedWinningTileId =
           'tile-${indices[nextPosition].toString().padLeft(3, '0')}';
       _winningTileManuallySet = true;
-      _invalidateAnalysis();
+      _invalidateAnalysisAndMaybeRecalculate();
     });
   }
 
@@ -276,6 +278,24 @@ class _ScanScreenState extends State<ScanScreen> {
     _tsumoScoreResult = null;
     _ronScoreResult = null;
     _isNotWinning = false;
+  }
+
+  bool get _hasScoreCalculation =>
+      _tsumoScoreResult != null ||
+      _ronScoreResult != null ||
+      _isNotWinning ||
+      _isScoring;
+
+  void _invalidateAnalysisAndMaybeRecalculate() {
+    final shouldRecalculate =
+        _phase == _ScanPhase.results &&
+        _operation == HandOperation.score &&
+        _interpretation != null &&
+        _allDetectedTilesReady &&
+        _hasScoreCalculation;
+    _invalidateAnalysis();
+    _isScoring = false;
+    if (shouldRecalculate) _scheduleScoreRecalculation();
   }
 
   void _showError(String message) {
@@ -480,6 +500,7 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void dispose() {
     _analysisTimer?.cancel();
+    _scoreRecalculationTimer?.cancel();
     _controller?.dispose();
     _classifier.dispose();
     super.dispose();
@@ -795,6 +816,8 @@ class _ScanScreenState extends State<ScanScreen> {
     final srcImage = _capturedImage;
     final imageBytes = _capturedBytes;
     if (srcImage == null || imageBytes == null) return;
+    final shouldReanalyze =
+        _operation == HandOperation.score && _hasScoreCalculation;
 
     final quad = _tileQuads[index] ?? initialDecodedQuad;
     if (quad == null) return;
@@ -837,6 +860,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _showError('牌識別モデルが読み込まれていません');
       } else {
         await _classifyTile(index);
+        if (shouldReanalyze && mounted && _allDetectedTilesReady) {
+          await _runInterpretationAndAnalyze();
+        }
       }
     }
   }
@@ -998,10 +1024,12 @@ class _ScanScreenState extends State<ScanScreen> {
       await _runInterpretation();
       if (!mounted || _interpretation == null) return;
     }
-    await _confirmAndAnalyze();
+    await _confirmAndAnalyze(
+      showResultDialog: _operation != HandOperation.score,
+    );
   }
 
-  Future<void> _confirmAndAnalyze() async {
+  Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
     if (_interpretation == null) return;
     if (_operation == HandOperation.score && _confirmedWinningTileId == null) {
       _showError('あがり牌を選択してください');
@@ -1098,7 +1126,7 @@ class _ScanScreenState extends State<ScanScreen> {
             );
           }
           if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-          _showResultDialog();
+          if (showResultDialog) _showResultDialog();
           break;
         case HandOperation.tenpai:
           final result = await _api.analyzeTenpai(
@@ -1145,7 +1173,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _showError('解析エラー: $error');
       }
     } finally {
-      if (mounted) setState(() => _isScoring = false);
+      if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+        setState(() => _isScoring = false);
+      }
     }
   }
 
@@ -1257,6 +1287,8 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void _onSlotTap(int index) async {
+    final shouldReanalyze =
+        _operation == HandOperation.score && _hasScoreCalculation;
     final selected = await TileImagePicker.show(
       context,
       currentTile: _tiles[index],
@@ -1267,6 +1299,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _candidates[index] = [TileCandidate(tile: selected, confidence: 1.0)];
         _invalidateInterpretation();
       });
+      if (shouldReanalyze && _allDetectedTilesReady) {
+        await _runInterpretationAndAnalyze();
+      }
     }
   }
 
@@ -1285,21 +1320,28 @@ class _ScanScreenState extends State<ScanScreen> {
     final roundWindChanged = _context.roundWind != c.roundWind;
     _context = c;
     if (roundWindChanged) widget.onRoundWindChanged?.call(c.roundWind);
-    _tsumoScoreResult = null;
-    _ronScoreResult = null;
-    _analysisResult = null;
-    _isNotWinning = false;
+    _invalidateAnalysisAndMaybeRecalculate();
+  }
+
+  void _scheduleScoreRecalculation() {
+    _scoreRecalculationTimer?.cancel();
+    _scoreRecalculationTimer = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted ||
+          _phase != _ScanPhase.results ||
+          _operation != HandOperation.score ||
+          _interpretation == null ||
+          !_allDetectedTilesReady) {
+        return;
+      }
+      _confirmAndAnalyze(showResultDialog: false);
+    });
   }
 
   void _selectRiichiForWinFlow(bool riichi) {
     final hasRegisteredDora = _context.doraIndicators.isNotEmpty;
     setState(() {
       _updateContext(
-        _context.copyWith(
-          riichi: riichi,
-          doubleRiichi: false,
-          ippatsu: false,
-        ),
+        _context.copyWith(riichi: riichi, doubleRiichi: false, ippatsu: false),
       );
       if (hasRegisteredDora) {
         _doraSlotCount = _context.doraIndicators.length;
@@ -1327,7 +1369,9 @@ class _ScanScreenState extends State<ScanScreen> {
       final selected = ura
           ? [..._context.uraDoraIndicators]
           : [..._context.doraIndicators];
-      final limit = ura ? math.max(1, _context.doraIndicators.length) : _doraSlotCount;
+      final limit = ura
+          ? math.max(1, _context.doraIndicators.length)
+          : _doraSlotCount;
       if (selected.length >= limit) return;
       selected.add(tile);
       _updateContext(
@@ -1498,7 +1542,7 @@ class _ScanScreenState extends State<ScanScreen> {
   void _resetMelds() {
     setState(() {
       _confirmedMelds.clear();
-      _invalidateAnalysis();
+      _invalidateAnalysisAndMaybeRecalculate();
     });
   }
 
@@ -1548,7 +1592,7 @@ class _ScanScreenState extends State<ScanScreen> {
       );
       _isSelectingMeld = false;
       _meldSelection.clear();
-      _invalidateAnalysis();
+      _invalidateAnalysisAndMaybeRecalculate();
     });
   }
 
@@ -1882,6 +1926,79 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  Widget _buildInlineScoreResult() {
+    if (_operation != HandOperation.score) return const SizedBox.shrink();
+
+    if (_isScoring) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text('点数を更新中...', style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      );
+    }
+
+    if (_isNotWinning) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.redAccent),
+        ),
+        child: const Text(
+          '上がりの形になっていません',
+          style: TextStyle(
+            color: Colors.redAccent,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    if (_tsumoScoreResult == null && _ronScoreResult == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ScoreResultPanel(
+          tsumoResponse: _tsumoScoreResult,
+          ronResponse: _ronScoreResult,
+          ruleSettings: widget.ruleSettings,
+          isOpenHand: _confirmedMelds.any((meld) => meld.open),
+        ),
+        if (widget.onScoreConfirmed != null) ...[
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () {
+              widget.onScoreConfirmed!(_context.isDealer);
+              Navigator.of(context).pop();
+            },
+            child: const Text('この結果で局終了'),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildInterpretationConfirmation() {
     final interpretation = _interpretation;
     if (interpretation == null) return const SizedBox.shrink();
@@ -2060,7 +2177,10 @@ class _ScanScreenState extends State<ScanScreen> {
                   const SizedBox(width: 7),
                   const Text('認識中', style: TextStyle(color: Colors.white70)),
                 ] else
-                  const Text('認識完了', style: TextStyle(color: Colors.greenAccent)),
+                  const Text(
+                    '認識完了',
+                    style: TextStyle(color: Colors.greenAccent),
+                  ),
                 const Spacer(),
                 IconButton(
                   onPressed: () => Navigator.maybePop(context),
@@ -2116,10 +2236,10 @@ class _ScanScreenState extends State<ScanScreen> {
   );
 
   Widget _buildDoraStep({required bool ura}) {
-    final selected = ura
-        ? _context.uraDoraIndicators
-        : _context.doraIndicators;
-    final slots = ura ? math.max(1, _context.doraIndicators.length) : _doraSlotCount;
+    final selected = ura ? _context.uraDoraIndicators : _context.doraIndicators;
+    final slots = ura
+        ? math.max(1, _context.doraIndicators.length)
+        : _doraSlotCount;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2139,7 +2259,10 @@ class _ScanScreenState extends State<ScanScreen> {
               const Spacer(),
               Text(
                 ura ? '裏ドラ表示牌' : '表ドラ表示牌',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const Spacer(),
               TextButton(
@@ -2149,8 +2272,7 @@ class _ScanScreenState extends State<ScanScreen> {
             ],
           ),
         ),
-        if (ura && _context.doraIndicators.isNotEmpty)
-          _buildReferenceDora(),
+        if (ura && _context.doraIndicators.isNotEmpty) _buildReferenceDora(),
         SizedBox(
           height: 50,
           child: Row(
@@ -2200,7 +2322,10 @@ class _ScanScreenState extends State<ScanScreen> {
     child: Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        const Text('表ドラ', style: TextStyle(color: Colors.white54, fontSize: 11)),
+        const Text(
+          '表ドラ',
+          style: TextStyle(color: Colors.white54, fontSize: 11),
+        ),
         const SizedBox(width: 6),
         for (final tile in _context.doraIndicators)
           SizedBox(width: 22, height: 30, child: TileGlyph(tileCode: tile)),
@@ -2986,6 +3111,13 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                   const SizedBox(height: 12),
 
+                  _buildInlineScoreResult(),
+                  if (_isScoring ||
+                      _isNotWinning ||
+                      _tsumoScoreResult != null ||
+                      _ronScoreResult != null)
+                    const SizedBox(height: 12),
+
                   if (_interpretation != null) ...[
                     _buildInterpretationConfirmation(),
                     const SizedBox(height: 12),
@@ -3064,58 +3196,64 @@ class _ScanScreenState extends State<ScanScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: !_allDetectedTilesReady
-                      ? OutlinedButton.icon(
-                          onPressed:
-                              _croppedImages.any((c) => c != null) &&
-                                  !_isRunningFullClassification &&
-                                  !_isClassifying.any((value) => value)
-                              ? _runClassification
-                              : null,
-                          icon: _isRunningFullClassification
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.auto_awesome, size: 18),
-                          label: Text(
-                            _isRunningFullClassification ? '識別中...' : '識別実行',
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.greenAccent,
-                            side: const BorderSide(color: Colors.greenAccent),
-                          ),
-                        )
-                      : ElevatedButton.icon(
-                          onPressed: !_isScoring && !_isInterpreting
-                              ? _runInterpretationAndAnalyze
-                              : null,
-                          icon: _isScoring || _isInterpreting
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.play_arrow, size: 20),
-                          label: const Text('実行'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green.withValues(
-                              alpha: 0.6,
+                if (!(_operation == HandOperation.score &&
+                    (_isScoring ||
+                        _isNotWinning ||
+                        _tsumoScoreResult != null ||
+                        _ronScoreResult != null))) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: !_allDetectedTilesReady
+                        ? OutlinedButton.icon(
+                            onPressed:
+                                _croppedImages.any((c) => c != null) &&
+                                    !_isRunningFullClassification &&
+                                    !_isClassifying.any((value) => value)
+                                ? _runClassification
+                                : null,
+                            icon: _isRunningFullClassification
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.auto_awesome, size: 18),
+                            label: Text(
+                              _isRunningFullClassification ? '識別中...' : '識別実行',
                             ),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.greenAccent,
+                              side: const BorderSide(color: Colors.greenAccent),
+                            ),
+                          )
+                        : ElevatedButton.icon(
+                            onPressed: !_isScoring && !_isInterpreting
+                                ? _runInterpretationAndAnalyze
+                                : null,
+                            icon: _isScoring || _isInterpreting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.play_arrow, size: 20),
+                            label: const Text('実行'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green.withValues(
+                                alpha: 0.6,
+                              ),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
                           ),
-                        ),
-                ),
+                  ),
+                ],
               ],
             ),
           ),
