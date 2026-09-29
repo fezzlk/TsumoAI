@@ -8,12 +8,14 @@ class MatchSnapshot {
     required this.handNumber,
     required this.honba,
     required this.dealerSeat,
+    this.doraIndicators = const [],
   });
 
   final String roundWind;
   final int handNumber;
   final int honba;
   final TableSeat dealerSeat;
+  final List<String> doraIndicators;
 
   String get roundLabel => '${_windLabel(roundWind)}$handNumber局 $honba本場';
 
@@ -29,6 +31,15 @@ class MatchSnapshot {
     seatWind: seatWind(seat),
     isDealer: seat == dealerSeat,
     honba: honba,
+    doraIndicators: doraIndicators,
+  );
+
+  MatchSnapshot withDoraIndicators(List<String> value) => MatchSnapshot(
+    roundWind: roundWind,
+    handNumber: handNumber,
+    honba: honba,
+    dealerSeat: dealerSeat,
+    doraIndicators: List.unmodifiable(value),
   );
 
   MatchSnapshot dealerContinues() => MatchSnapshot(
@@ -36,6 +47,7 @@ class MatchSnapshot {
     handNumber: handNumber,
     honba: honba + 1,
     dealerSeat: dealerSeat,
+    doraIndicators: const [],
   );
 
   MatchSnapshot dealerChanges() {
@@ -50,6 +62,7 @@ class MatchSnapshot {
       handNumber: nextHand,
       honba: 0,
       dealerSeat: TableSeat.values[(dealerSeat.index + 1) % 4],
+      doraIndicators: const [],
     );
   }
 
@@ -91,6 +104,10 @@ class MatchState {
 
   MatchSnapshot get current => _current;
   bool get canUndo => _history.isNotEmpty;
+
+  void setDoraIndicators(List<String> value) {
+    _current = _current.withDoraIndicators(value);
+  }
 
   void recordWin(TableSeat winner) {
     _history.add(_current);
