@@ -93,44 +93,17 @@ async function loadRetrainingHistory() {
   }
 }
 
-// ── Auth (Firebase Google sign-in; the admin APIs below require the
-// resulting ID token, verified server-side via app/auth.py) ──
+const authFetch = (url, options = {}) =>
+  window.TsumoAuth.fetch(url, options, {admin: true});
 
-firebase.initializeApp(window.TsumoFirebaseConfig);
-const auth = firebase.auth();
-
-function signIn() {
-  document.getElementById('authError').textContent = '';
-  auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())
-    .catch(e => { document.getElementById('authError').textContent = 'ログイン失敗: ' + e.message; });
-}
-
-function signOutUser() {
-  auth.signOut();
-}
-
-async function authFetch(url, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  if (auth.currentUser) {
-    headers['Authorization'] = `Bearer ${await auth.currentUser.getIdToken()}`;
-  }
-  return fetch(url, { ...options, headers });
-}
-
-auth.onAuthStateChanged(async user => {
+window.TsumoAuth.subscribe(({user, isAdmin}) => {
   const gate = document.getElementById('authGate');
   const content = document.getElementById('appContent');
   gate.hidden = false;
   content.hidden = true;
   if (!user) return;
-  try {
-    const token = await user.getIdTokenResult(true);
-    if (token.claims.admin !== true) {
-      document.getElementById('authError').textContent = 'このアカウントには管理者権限がありません。';
-      return;
-    }
-  } catch (e) {
-    document.getElementById('authError').textContent = '管理者権限を確認できませんでした。再度ログインしてください。';
+  if (!isAdmin) {
+    document.getElementById('webAuthStatus').textContent = 'このアカウントには管理者権限がありません。';
     return;
   }
   gate.hidden = true;

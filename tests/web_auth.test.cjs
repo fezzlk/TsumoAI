@@ -102,32 +102,25 @@ test('training dashboard fails closed for a signed-in non-admin user', async () 
     return elements.get(id);
   };
   let authChanged;
-  const auth = {
-    currentUser: null,
-    onAuthStateChanged(callback) { authChanged = callback; },
-    signInWithPopup: async () => {},
-    signOut: async () => {},
-  };
-  const firebaseAuth = () => auth;
-  firebaseAuth.GoogleAuthProvider = class {};
   const context = vm.createContext({
-    window: { TsumoFirebaseConfig: {} },
+    window: {
+      TsumoAuth: {
+        subscribe(callback) { authChanged = callback; },
+        fetch: async () => { throw new Error('fetch must not run'); },
+      },
+    },
     document: { getElementById: element },
-    firebase: { initializeApp() {}, auth: firebaseAuth },
     fetch: async () => { throw new Error('fetch must not run'); },
     Headers, Blob, URL, console, setTimeout, clearTimeout,
     confirm: () => false,
   });
   vm.runInContext(readStatic('training_data.js'), context);
 
-  await authChanged({
-    email: 'normal@example.test',
-    getIdTokenResult: async () => ({ claims: { admin: false } }),
-  });
+  await authChanged({user: {email: 'normal@example.test'}, isAdmin: false});
 
   assert.equal(element('authGate').hidden, false);
   assert.equal(element('appContent').hidden, true);
-  assert.match(element('authError').textContent, /管理者権限/);
+  assert.match(element('webAuthStatus').textContent, /管理者権限/);
 });
 
 test('anonymous submissions show a login prompt without sending a request', async () => {
