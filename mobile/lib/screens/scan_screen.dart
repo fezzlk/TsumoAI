@@ -71,6 +71,7 @@ class ScanScreen extends StatefulWidget {
 }
 
 enum _ScanPhase { camera, detecting, results }
+enum _WinConditionStep { riichi, dora, uraDora, waiting }
 
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
@@ -191,6 +192,13 @@ class _ScanScreenState extends State<ScanScreen> {
   int? _deleteAffordanceIndex;
 
   late ContextInput _context;
+  _WinConditionStep _winConditionStep = _WinConditionStep.riichi;
+  bool _winConditionsComplete = false;
+  bool _recognitionComplete = false;
+  int _doraSlotCount = 1;
+
+  bool get _usesWinConditionWizard =>
+      widget.onScoreConfirmed != null && widget.purpose == ScanPurpose.score;
 
   /// The rightmost identified physical tile's observation id, or null if
   /// none are identified yet — the results screen's default あがり牌 frame
@@ -282,6 +290,7 @@ class _ScanScreenState extends State<ScanScreen> {
     super.initState();
     _operation = widget.purpose.operation;
     _expectedTileCount = widget.purpose.defaultTileCount;
+    _autoCaptureEnabled = _usesWinConditionWizard;
     _context =
         widget.initialContext ??
         ContextInput(roundWind: widget.initialRoundWind);
@@ -512,6 +521,10 @@ class _ScanScreenState extends State<ScanScreen> {
         _capturedBytes = framedBytes;
         _capturedImage = decoded;
         _phase = _ScanPhase.detecting;
+        _winConditionStep = _WinConditionStep.riichi;
+        _winConditionsComplete = false;
+        _recognitionComplete = false;
+        _doraSlotCount = math.max(1, _context.doraIndicators.length);
         for (int i = 0; i < _maxPhysicalTiles; i++) {
           _tiles[i] = null;
           _predictedTiles[i] = null;
@@ -601,9 +614,17 @@ class _ScanScreenState extends State<ScanScreen> {
       _tileQuads[i] = refined.sourceQuad;
     }
 
-    setState(() => _phase = _ScanPhase.results);
+    if (!_usesWinConditionWizard) {
+      setState(() => _phase = _ScanPhase.results);
+    }
     if (widget.autoClassify && boxes.isNotEmpty) {
       await _runClassification();
+    }
+    if (_usesWinConditionWizard && mounted) {
+      setState(() {
+        _recognitionComplete = true;
+        if (_winConditionsComplete) _phase = _ScanPhase.results;
+      });
     }
   }
 
@@ -1270,6 +1291,93 @@ class _ScanScreenState extends State<ScanScreen> {
     _isNotWinning = false;
   }
 
+  void _selectRiichiForWinFlow(bool riichi) {
+    final hasRegisteredDora = _context.doraIndicators.isNotEmpty;
+    setState(() {
+      _updateContext(
+        _context.copyWith(
+          riichi: riichi,
+          doubleRiichi: false,
+          ippatsu: false,
+        ),
+      );
+      if (hasRegisteredDora) {
+        _doraSlotCount = _context.doraIndicators.length;
+      }
+      _winConditionStep = _WinConditionStep.dora;
+    });
+    if (hasRegisteredDora) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _winConditionStep != _WinConditionStep.dora) return;
+        setState(_advanceAfterDora);
+      });
+    }
+  }
+
+  void _advanceAfterDora() {
+    if (_context.riichi) {
+      _winConditionStep = _WinConditionStep.uraDora;
+    } else {
+      _completeWinConditions();
+    }
+  }
+
+  void _selectConditionTile(String tile, {required bool ura}) {
+    setState(() {
+      final selected = ura
+          ? [..._context.uraDoraIndicators]
+          : [..._context.doraIndicators];
+      final limit = ura ? math.max(1, _context.doraIndicators.length) : _doraSlotCount;
+      if (selected.length >= limit) return;
+      selected.add(tile);
+      _updateContext(
+        ura
+            ? _context.copyWith(uraDoraIndicators: selected)
+            : _context.copyWith(doraIndicators: selected),
+      );
+      if (selected.length >= limit) {
+        if (ura) {
+          _completeWinConditions();
+        } else {
+          _advanceAfterDora();
+        }
+      }
+    });
+  }
+
+  void _removeConditionTile(int index, {required bool ura}) {
+    setState(() {
+      final selected = ura
+          ? [..._context.uraDoraIndicators]
+          : [..._context.doraIndicators];
+      selected.removeAt(index);
+      _updateContext(
+        ura
+            ? _context.copyWith(uraDoraIndicators: selected)
+            : _context.copyWith(doraIndicators: selected),
+      );
+    });
+  }
+
+  void _skipDoraStep({required bool ura}) {
+    setState(() {
+      if (ura) {
+        _completeWinConditions();
+      } else {
+        _advanceAfterDora();
+      }
+    });
+  }
+
+  void _completeWinConditions() {
+    _winConditionsComplete = true;
+    if (_recognitionComplete) {
+      _phase = _ScanPhase.results;
+    } else {
+      _winConditionStep = _WinConditionStep.waiting;
+    }
+  }
+
   void _showContextDetailsSheet() {
     showModalBottomSheet(
       context: context,
@@ -1325,6 +1433,9 @@ class _ScanScreenState extends State<ScanScreen> {
       _trainingDataSent = false;
       _isUndoingTraining = false;
       _sentTrainingEntryIds = [];
+      _winConditionStep = _WinConditionStep.riichi;
+      _winConditionsComplete = false;
+      _recognitionComplete = false;
     });
     _startLiveDetection();
   }
@@ -1896,6 +2007,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // ════════════════════════════════════════
 
   Widget _buildDetectingPhase() {
+    if (_usesWinConditionWizard) return _buildWinConditionPhase();
     return SafeArea(
       child: Stack(
         fit: StackFit.expand,
@@ -1923,6 +2035,199 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
   }
+
+  Widget _buildWinConditionPhase() {
+    return SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+            child: Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _backToCamera,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('撮り直す'),
+                ),
+                const Spacer(),
+                if (!_recognitionComplete) ...[
+                  const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 7),
+                  const Text('認識中', style: TextStyle(color: Colors.white70)),
+                ] else
+                  const Text('認識完了', style: TextStyle(color: Colors.greenAccent)),
+                const Spacer(),
+                IconButton(
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.home_outlined),
+                  tooltip: '対局ホーム',
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Colors.white12),
+          Expanded(
+            child: switch (_winConditionStep) {
+              _WinConditionStep.riichi => _buildRiichiStep(),
+              _WinConditionStep.dora => _buildDoraStep(ura: false),
+              _WinConditionStep.uraDora => _buildDoraStep(ura: true),
+              _WinConditionStep.waiting => _buildRecognitionWaiting(),
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRiichiStep() => Padding(
+    padding: const EdgeInsets.all(20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '立直しましたか？',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        const Spacer(),
+        SizedBox(
+          height: 92,
+          child: FilledButton(
+            onPressed: () => _selectRiichiForWinFlow(true),
+            child: const Text('はい', style: TextStyle(fontSize: 22)),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 92,
+          child: OutlinedButton(
+            onPressed: () => _selectRiichiForWinFlow(false),
+            child: const Text('いいえ', style: TextStyle(fontSize: 22)),
+          ),
+        ),
+        const Spacer(),
+      ],
+    ),
+  );
+
+  Widget _buildDoraStep({required bool ura}) {
+    final selected = ura
+        ? _context.uraDoraIndicators
+        : _context.doraIndicators;
+    final slots = ura ? math.max(1, _context.doraIndicators.length) : _doraSlotCount;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          child: Row(
+            children: [
+              TextButton.icon(
+                onPressed: () => setState(() {
+                  _winConditionStep = ura
+                      ? _WinConditionStep.dora
+                      : _WinConditionStep.riichi;
+                }),
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('一つ前'),
+              ),
+              const Spacer(),
+              Text(
+                ura ? '裏ドラ表示牌' : '表ドラ表示牌',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: () => _skipDoraStep(ura: ura),
+                child: const Text('あとで'),
+              ),
+            ],
+          ),
+        ),
+        if (ura && _context.doraIndicators.isNotEmpty)
+          _buildReferenceDora(),
+        SizedBox(
+          height: 50,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var index = 0; index < slots; index++) ...[
+                Container(
+                  width: 34,
+                  height: 46,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    border: Border.all(color: Colors.white30),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: index < selected.length
+                      ? GestureDetector(
+                          onTap: () => _removeConditionTile(index, ura: ura),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: TileGlyph(tileCode: selected[index]),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
+              if (!ura && slots < 4)
+                IconButton(
+                  onPressed: () => setState(() => _doraSlotCount += 1),
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'ドラ表示牌を追加',
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TileImagePicker(
+            onTileSelected: (tile) => _selectConditionTile(tile, ura: ura),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReferenceDora() => Padding(
+    padding: const EdgeInsets.only(right: 16, bottom: 4),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        const Text('表ドラ', style: TextStyle(color: Colors.white54, fontSize: 11)),
+        const SizedBox(width: 6),
+        for (final tile in _context.doraIndicators)
+          SizedBox(width: 22, height: 30, child: TileGlyph(tileCode: tile)),
+      ],
+    ),
+  );
+
+  Widget _buildRecognitionWaiting() => Stack(
+    fit: StackFit.expand,
+    children: [
+      if (_capturedBytes != null)
+        Opacity(
+          opacity: 0.32,
+          child: Image.memory(_capturedBytes!, fit: BoxFit.contain),
+        ),
+      const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.greenAccent),
+            SizedBox(height: 12),
+            Text('入力完了・認識結果を待っています', style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      ),
+    ],
+  );
 
   // ════════════════════════════════════════
   // Phase 1: Camera

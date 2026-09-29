@@ -36,7 +36,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
       MaterialPageRoute(
         builder: (_) => ScanScreen(
           cameras: widget.cameras,
-          autoClassify: widget.autoClassify,
+          autoClassify: true,
           purpose: ScanPurpose.score,
           initialContext: _match.current.contextFor(winner),
           historyRoundLabel: _match.current.roundLabel,
