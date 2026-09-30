@@ -7,8 +7,6 @@ import 'package:flutter/foundation.dart' show compute, debugPrint;
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
-import 'package:url_launcher/url_launcher.dart';
-import '../config.dart';
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../services/tile_detector.dart';
@@ -2780,96 +2778,75 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: _backToCamera,
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: '撮影画面に戻る',
+                      ),
+                      const Expanded(
+                        child: Text(
+                          '認識結果を確認',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _cropAndRedetect,
+                        icon: const Icon(Icons.crop),
+                        tooltip: 'トリミング',
+                      ),
+                      if (_cropRegion != null)
+                        IconButton(
+                          onPressed: () => _redetectInRegion(null),
+                          icon: const Icon(Icons.undo),
+                          tooltip: '元の範囲に戻す',
+                        ),
+                    ],
+                  ),
                   _buildExpectedTileCountSelector(redetectOnChange: true),
-                  const SizedBox(height: 8),
-                  // Retake, above the photo as its own bar (not overlaid on
-                  // it) so it can't be mis-tapped during the photo's own
-                  // pinch-zoom/pan gestures, and not pinned to the bottom
-                  // bar either — it scrolls away with the rest of the
-                  // content like any other one-off decision made right
-                  // after reviewing the capture (see FEZ-191 follow-up: it
-                  // used to live in the bottom action bar, which hid it
-                  // entirely until every tile was identified — too late to
-                  // catch an obviously bad photo).
-                  // Retake (left) / training-data send-undo (right, opposite
-                  // side) — both one-off decisions made right after
-                  // reviewing the capture, not pinned to the bottom bar (see
-                  // FEZ-191 follow-up for why retake lives here).
-                  Container(
-                    color: Colors.black87,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        TextButton.icon(
-                          onPressed: _backToCamera,
-                          icon: const Icon(
-                            Icons.replay,
-                            size: 18,
-                            color: Colors.white70,
-                          ),
-                          label: const Text(
-                            '撮り直す',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-                        TextButton.icon(
-                          onPressed: () => launchUrl(
-                            Uri.parse(AppConfig.apiBaseUrl),
-                            mode: LaunchMode.externalApplication,
-                          ),
-                          icon: const Icon(
-                            Icons.dashboard_outlined,
-                            size: 18,
-                            color: Colors.white70,
-                          ),
-                          label: const Text(
-                            'Webダッシュボード',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-                        if (widget.showTrainingDataActions &&
-                            _trainingTilesReady)
-                          TextButton.icon(
-                            onPressed: _isSendingTraining || _isUndoingTraining
-                                ? null
-                                : _trainingDataSent
-                                ? _undoTrainingData
-                                : _sendTrainingData,
-                            icon: _isSendingTraining || _isUndoingTraining
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.orangeAccent,
-                                    ),
-                                  )
-                                : Icon(
-                                    _trainingDataSent
-                                        ? Icons.undo
-                                        : Icons.school,
-                                    size: 18,
-                                    color: Colors.orangeAccent,
-                                  ),
-                            label: Text(
-                              _isSendingTraining
-                                  ? '送信中...'
-                                  : _isUndoingTraining
-                                  ? '取り消し中...'
-                                  : _trainingDataSent
-                                  ? '取り消す'
-                                  : '学習データ送信',
-                              style: const TextStyle(
+                  if (widget.showTrainingDataActions &&
+                      _trainingTilesReady)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _isSendingTraining || _isUndoingTraining
+                            ? null
+                            : _trainingDataSent
+                            ? _undoTrainingData
+                            : _sendTrainingData,
+                        icon: _isSendingTraining || _isUndoingTraining
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.orangeAccent,
+                                ),
+                              )
+                            : Icon(
+                                _trainingDataSent ? Icons.undo : Icons.school,
+                                size: 18,
                                 color: Colors.orangeAccent,
                               ),
-                            ),
-                          ),
-                      ],
+                        label: Text(
+                          _isSendingTraining
+                              ? '送信中...'
+                              : _isUndoingTraining
+                              ? '取り消し中...'
+                              : _trainingDataSent
+                              ? '取り消す'
+                              : '学習データ送信',
+                          style: const TextStyle(color: Colors.orangeAccent),
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
 
                   // Full photo with detected-tile markers, capped to a
                   // fraction of the screen height so it doesn't dominate the
@@ -2916,52 +2893,6 @@ class _ScanScreenState extends State<ScanScreen> {
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        // FEZ-93 recovery flow: for when a reflection or
-                        // other non-tile object gets picked up by
-                        // detection, manually exclude it by re-detecting
-                        // within just the region that actually contains the
-                        // tiles. Entirely on-device. Placed beside the
-                        // photo (this app's landscape screens have spare
-                        // width there) rather than below it, so it doesn't
-                        // push the thumbnail row further down the scroll.
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            TextButton.icon(
-                              onPressed: _cropAndRedetect,
-                              icon: const Icon(
-                                Icons.crop,
-                                size: 16,
-                                color: Colors.white70,
-                              ),
-                              label: const Text(
-                                '範囲を切り抜いて\n再検出',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                            if (_cropRegion != null)
-                              TextButton.icon(
-                                onPressed: () => _redetectInRegion(null),
-                                icon: const Icon(
-                                  Icons.undo,
-                                  size: 16,
-                                  color: Colors.white70,
-                                ),
-                                label: const Text(
-                                  '元の範囲に\n戻す',
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                          ],
                         ),
                       ],
                     ),
