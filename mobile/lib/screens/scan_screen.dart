@@ -90,8 +90,6 @@ class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
   static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
   CameraController? _controller;
-  CameraDescription? _activeCamera;
-  bool _isSwitchingCamera = false;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
   final ApiClient _api = ApiClient();
@@ -367,16 +365,6 @@ class _ScanScreenState extends State<ScanScreen> {
     return candidates.first;
   }
 
-  CameraDescription? _rearCameraFor(CameraLensType lensType) {
-    for (final camera in widget.cameras) {
-      if (camera.lensDirection == CameraLensDirection.back &&
-          camera.lensType == lensType) {
-        return camera;
-      }
-    }
-    return null;
-  }
-
   Future<void> _initCamera([CameraDescription? camera]) async {
     if (widget.cameras.isEmpty) return;
     final selectedCamera = camera ?? _preferredCamera();
@@ -388,7 +376,6 @@ class _ScanScreenState extends State<ScanScreen> {
     if (mounted) {
       setState(() {
         _controller = null;
-        _activeCamera = selectedCamera;
         _liveDetectorResult = null;
       });
     }
@@ -428,17 +415,6 @@ class _ScanScreenState extends State<ScanScreen> {
       await _startLiveDetection();
     } catch (e) {
       debugPrint('Camera init error: $e');
-    }
-  }
-
-  Future<void> _switchCameraLens(CameraLensType lensType) async {
-    final camera = _rearCameraFor(lensType);
-    if (camera == null || camera == _activeCamera || _isSwitchingCamera) return;
-    setState(() => _isSwitchingCamera = true);
-    try {
-      await _initCamera(camera);
-    } finally {
-      if (mounted) setState(() => _isSwitchingCamera = false);
     }
   }
 
@@ -2522,23 +2498,6 @@ class _ScanScreenState extends State<ScanScreen> {
                     tooltip: '戻る',
                   ),
                 ),
-                Positioned(
-                  top: 12,
-                  left: 64,
-                  right: 64,
-                  child: Text(
-                    '牌を緑枠内に横一列で収めてください',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      shadows: const [
-                        Shadow(color: Colors.black, blurRadius: 6),
-                      ],
-                    ),
-                  ),
-                ),
                 Align(
                   // Matches cropToCaptureGuide(): the guide is the actual
                   // detection area, not merely a visual suggestion.
@@ -2575,18 +2534,12 @@ class _ScanScreenState extends State<ScanScreen> {
                 children: [
                   _buildExpectedTileCountSelector(),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [_buildLensSelector(), _buildAutoCaptureToggle()],
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: _buildAutoCaptureToggle(),
                   ),
                   const Spacer(),
                   _buildCaptureButton(),
-                  const SizedBox(height: 12),
-                  const Text(
-                    '0.5×は近距離向けです。牌が小さい場合は1×へ切り替えてください。',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
                 ],
               ),
             ),
@@ -2674,45 +2627,6 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildLensSelector() {
-    final ultraWide = _rearCameraFor(CameraLensType.ultraWide);
-    final wide = _rearCameraFor(CameraLensType.wide);
-    if (ultraWide == null || wide == null) return const SizedBox.shrink();
-
-    final selectedLens = _activeCamera?.lensType ?? CameraLensType.ultraWide;
-    return SegmentedButton<CameraLensType>(
-      segments: const [
-        ButtonSegment(
-          value: CameraLensType.ultraWide,
-          label: Text('0.5×'),
-          tooltip: '近い距離で横一列の牌を収める',
-        ),
-        ButtonSegment(
-          value: CameraLensType.wide,
-          label: Text('1×'),
-          tooltip: '標準カメラで撮影する',
-        ),
-      ],
-      selected: {selectedLens},
-      showSelectedIcon: false,
-      style: ButtonStyle(
-        minimumSize: const WidgetStatePropertyAll(Size(48, 44)),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 10),
-        ),
-        foregroundColor: const WidgetStatePropertyAll(Colors.white),
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          return states.contains(WidgetState.selected)
-              ? Colors.green.shade700.withValues(alpha: 0.9)
-              : Colors.black.withValues(alpha: 0.7);
-        }),
-      ),
-      onSelectionChanged: _isSwitchingCamera
-          ? null
-          : (selection) => _switchCameraLens(selection.single),
     );
   }
 
