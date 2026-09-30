@@ -88,6 +88,7 @@ class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
   static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
   CameraController? _controller;
+  String? _cameraInitError;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
   final ApiClient _api = ApiClient();
@@ -149,11 +150,9 @@ class _ScanScreenState extends State<ScanScreen> {
   // camera preview stream and captures automatically once a full 14-tile
   // detection has stayed stable for a few frames in a row, instead of
   // requiring the user to judge readiness and tap the shutter themselves.
-  // Opt-in — this is the first on-device verification of the approach
-  // (interval/streak below are unverified guesses, and detection only
-  // checks the tile count, not that the same tiles/positions held
-  // steady), so it defaults off until real-device behavior is confirmed.
-  bool _autoCaptureEnabled = false;
+  // The manual shutter remains available as the recovery path when live
+  // detection cannot reach a stable count.
+  bool _autoCaptureEnabled = true;
   bool _isLiveStreamActive = false;
   bool _isAnalyzingFrame = false;
   CameraImage? _latestFrame;
@@ -337,7 +336,12 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _initCamera([CameraDescription? camera]) async {
-    if (widget.cameras.isEmpty) return;
+    if (widget.cameras.isEmpty) {
+      if (mounted) {
+        setState(() => _cameraInitError = '利用できるカメラが見つかりませんでした');
+      }
+      return;
+    }
     final selectedCamera = camera ?? _preferredCamera();
     final previousController = _controller;
     if (previousController != null) {
@@ -348,6 +352,7 @@ class _ScanScreenState extends State<ScanScreen> {
       setState(() {
         _controller = null;
         _liveDetectorResult = null;
+        _cameraInitError = null;
       });
     }
 
@@ -386,6 +391,12 @@ class _ScanScreenState extends State<ScanScreen> {
       await _startLiveDetection();
     } catch (e) {
       debugPrint('Camera init error: $e');
+      await controller.dispose();
+      if (!mounted) return;
+      setState(() {
+        if (_controller == controller) _controller = null;
+        _cameraInitError = 'カメラを開始できませんでした。端末の設定でカメラへのアクセスを確認してください。';
+      });
     }
   }
 
@@ -2508,6 +2519,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // ════════════════════════════════════════
 
   Widget _buildCameraPhase() {
+    if (_cameraInitError != null) return _buildCameraError();
     if (_controller == null || !_controller!.value.isInitialized) {
       return const Center(
         child: Text('カメラ初期化中...', style: TextStyle(color: Colors.white)),
@@ -2616,6 +2628,68 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
   }
+
+  Widget _buildCameraError() => SafeArea(
+    child: Column(
+      children: [
+        Row(
+          children: [
+            IconButton(
+              onPressed: () => Navigator.maybePop(context),
+              icon: const Icon(Icons.arrow_back),
+              tooltip: '戻る',
+            ),
+            const Expanded(
+              child: Text(
+                'カメラを開始できません',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: () => Navigator.maybePop(context),
+              icon: const Icon(Icons.home_outlined),
+              tooltip: 'ホーム',
+            ),
+          ],
+        ),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.no_photography_outlined,
+                    color: Colors.white70,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _cameraInitError!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  if (widget.cameras.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: _initCamera,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('再試行'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildWideCameraPreview() {
     final previewSize = _controller!.value.previewSize;
