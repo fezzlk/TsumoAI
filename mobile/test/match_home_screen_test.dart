@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tsumoai_mobile/screens/match_home_screen.dart';
+import 'package:tsumoai_mobile/models/match_state.dart';
 import 'package:tsumoai_mobile/widgets/tile_glyph.dart';
 
 void main() {
@@ -46,5 +47,22 @@ void main() {
     for (final label in ['点数計算', '待ち確認', '何を切る？', '鳴き判断']) {
       expect(find.text(label), findsOneWidget);
     }
+  });
+
+  testWidgets('match home keeps an injected match state', (tester) async {
+    final match = MatchState()..recordWin(TableSeat.right);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MatchHomeScreen(
+          cameras: const [],
+          autoClassify: true,
+          showTrainingDataActions: false,
+          matchState: match,
+        ),
+      ),
+    );
+
+    expect(find.text('東2局\n0本場'), findsOneWidget);
   });
 }

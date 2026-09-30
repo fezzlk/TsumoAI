@@ -16,19 +16,23 @@ class MatchHomeScreen extends StatefulWidget {
     required this.autoClassify,
     required this.showTrainingDataActions,
     this.ruleSettings = const MahjongRuleSettings(),
+    this.matchState,
+    this.onMatchEnded,
   });
 
   final List<CameraDescription> cameras;
   final bool autoClassify;
   final bool showTrainingDataActions;
   final MahjongRuleSettings ruleSettings;
+  final MatchState? matchState;
+  final VoidCallback? onMatchEnded;
 
   @override
   State<MatchHomeScreen> createState() => _MatchHomeScreenState();
 }
 
 class _MatchHomeScreenState extends State<MatchHomeScreen> {
-  final MatchState _match = MatchState();
+  late final MatchState _match = widget.matchState ?? MatchState();
   bool _showDoraTiles = false;
 
   Future<void> _openScore(TableSeat winner) async {
@@ -165,7 +169,10 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
             SizedBox(
               height: 52,
               child: OutlinedButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () {
+                  widget.onMatchEnded?.call();
+                  Navigator.pop(context);
+                },
                 child: const Text('対局終了'),
               ),
             ),

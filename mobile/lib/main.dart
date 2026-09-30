@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
+import 'models/match_state.dart';
 import 'models/scan_purpose.dart';
 import 'models/score_request.dart';
 import 'screens/match_home_screen.dart';
@@ -79,6 +80,8 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
   bool _autoClassify = true;
   bool _showTrainingDataActions = false;
   String _roundWind = 'E';
+  MatchState _matchState = MatchState();
+  bool _matchActive = false;
   late MahjongRuleSettings _ruleSettings;
   final RuleSettingsService _ruleSettingsService = RuleSettingsService();
   final QuestionTemplateService _questionTemplateService =
@@ -129,11 +132,19 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
         roundWind: _roundWind,
         showTrainingDataActions: _showTrainingDataActions,
         ruleSettings: _ruleSettings,
+        matchState: _matchState,
+        matchActive: _matchActive,
         onAutoClassifyChanged: (value) => setState(() => _autoClassify = value),
         onRoundWindChanged: (value) => setState(() => _roundWind = value),
         onShowTrainingDataActionsChanged: _setShowTrainingDataActions,
         onRuleSettingsChanged: _setRuleSettings,
         onAuthenticationChanged: _synchronizeRuleSettings,
+        onMatchStarted: () => setState(() => _matchActive = true),
+        onMatchReturned: () => setState(() {}),
+        onMatchEnded: () => setState(() {
+          _matchActive = false;
+          _matchState = MatchState();
+        }),
       ),
     );
   }
@@ -148,11 +159,16 @@ class HomeScreen extends StatelessWidget {
     required this.roundWind,
     required this.showTrainingDataActions,
     required this.ruleSettings,
+    required this.matchState,
+    required this.matchActive,
     required this.onAutoClassifyChanged,
     required this.onRoundWindChanged,
     required this.onShowTrainingDataActionsChanged,
     required this.onRuleSettingsChanged,
     required this.onAuthenticationChanged,
+    required this.onMatchStarted,
+    required this.onMatchReturned,
+    required this.onMatchEnded,
   });
 
   final List<CameraDescription> cameras;
@@ -161,11 +177,16 @@ class HomeScreen extends StatelessWidget {
   final String roundWind;
   final bool showTrainingDataActions;
   final MahjongRuleSettings ruleSettings;
+  final MatchState matchState;
+  final bool matchActive;
   final ValueChanged<bool> onAutoClassifyChanged;
   final ValueChanged<String> onRoundWindChanged;
   final ValueChanged<bool> onShowTrainingDataActionsChanged;
   final ValueChanged<MahjongRuleSettings> onRuleSettingsChanged;
   final Future<void> Function() onAuthenticationChanged;
+  final VoidCallback onMatchStarted;
+  final VoidCallback onMatchReturned;
+  final VoidCallback onMatchEnded;
 
   @override
   Widget build(BuildContext context) {
@@ -235,22 +256,26 @@ class HomeScreen extends StatelessWidget {
               constraints: const BoxConstraints(minHeight: 94),
               child: ElevatedButton(
                 onPressed: () => _openMatch(context),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        '実際の対局進行に合わせて点数計算を行う',
+                        matchActive
+                            ? '対局を再開'
+                            : '実際の対局進行に合わせて点数計算を行う',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                      SizedBox(height: 6),
+                      const SizedBox(height: 6),
                       Text(
-                        '点数計算できる人がいない場合に、1半荘分の点数計算をサポート',
+                        matchActive
+                            ? '${matchState.current.roundLabel}から続ける'
+                            : '点数計算できる人がいない場合に、1半荘分の点数計算をサポート',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 11),
+                        style: const TextStyle(fontSize: 11),
                       ),
                     ],
                   ),
@@ -400,7 +425,8 @@ class HomeScreen extends StatelessWidget {
     final showDeveloperActions =
         showTrainingDataActions && await AuthService.isAdmin();
     if (!context.mounted) return;
-    Navigator.push(
+    onMatchStarted();
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => MatchHomeScreen(
@@ -408,9 +434,12 @@ class HomeScreen extends StatelessWidget {
           autoClassify: autoClassify,
           showTrainingDataActions: showDeveloperActions,
           ruleSettings: ruleSettings,
+          matchState: matchState,
+          onMatchEnded: onMatchEnded,
         ),
       ),
     );
+    onMatchReturned();
   }
 
   void _openSettings(BuildContext context) {
