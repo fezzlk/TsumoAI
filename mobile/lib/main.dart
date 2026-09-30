@@ -76,7 +76,7 @@ class TsumoAIApp extends StatefulWidget {
 }
 
 class _TsumoAIAppState extends State<TsumoAIApp> {
-  bool _autoClassify = false;
+  bool _autoClassify = true;
   bool _showTrainingDataActions = false;
   String _roundWind = 'E';
   late MahjongRuleSettings _ruleSettings;

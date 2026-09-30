@@ -63,7 +63,7 @@ class ScanScreen extends StatefulWidget {
   const ScanScreen({
     super.key,
     required this.cameras,
-    this.autoClassify = false,
+    this.autoClassify = true,
     this.initialRoundWind = 'E',
     this.onRoundWindChanged,
     this.purpose = ScanPurpose.score,
@@ -304,7 +304,7 @@ class _ScanScreenState extends State<ScanScreen> {
     super.initState();
     _operation = widget.purpose.operation;
     _expectedTileCount = widget.purpose.defaultTileCount;
-    _autoCaptureEnabled = _usesWinConditionWizard;
+    _autoCaptureEnabled = true;
     _context =
         widget.initialContext ??
         ContextInput(roundWind: widget.initialRoundWind);
@@ -2528,12 +2528,62 @@ class _ScanScreenState extends State<ScanScreen> {
               children: [
                 _buildCaptureAreaPreview(),
                 Positioned(
-                  left: 12,
+                  left: 8,
+                  right: 8,
                   top: 8,
-                  child: IconButton.filledTonal(
-                    onPressed: () => Navigator.maybePop(context),
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: '戻る',
+                  child: Row(
+                    children: [
+                      IconButton.filledTonal(
+                        onPressed: () => Navigator.maybePop(context),
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: '戻る',
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Container(
+                          constraints: const BoxConstraints(minHeight: 44),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.68),
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  widget.purpose.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _cameraStatusLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        onPressed: () => Navigator.maybePop(context),
+                        icon: const Icon(Icons.home_outlined),
+                        tooltip: 'ホーム',
+                      ),
+                    ],
                   ),
                 ),
                 Positioned(
@@ -2632,6 +2682,16 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       ),
     );
+  }
+
+  String get _cameraStatusLabel {
+    if (_isCapturing) return '撮影中';
+    final count = _liveDetectorResult?.tileCount ?? 0;
+    final isReady = _expectedTileCount == null
+        ? count >= 13 && count <= 18
+        : count == _expectedTileCount;
+    if (isReady) return _autoCaptureEnabled ? '安定待ち' : '撮影可能';
+    return '牌を検出中';
   }
 
   Widget _buildLiveTileCountBadge() {
