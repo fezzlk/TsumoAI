@@ -51,35 +51,14 @@ Future<TileBoxEditorResult? Function()> openEditor(WidgetTester tester) async {
 }
 
 void main() {
-  // Regression test for FEZ-193: previously there was no way to remove a
-  // wrongly-added tile box other than retaking the whole photo. The
-  // editor's delete action must ask for confirmation (destructive), and on
-  // confirming must pop a `TileBoxEditorDeleted`, not a quad.
   testWidgets(
-    'TileBoxEditorScreen: delete asks for confirmation and returns TileBoxEditorDeleted',
+    'TileBoxEditorScreen: correction does not expose box deletion',
     (tester) async {
       final result = await openEditor(tester);
 
-      await tester.tap(find.byTooltip('この枠を削除'));
-      await tester.pumpAndSettle();
-
-      // Confirmation dialog must appear rather than deleting immediately.
-      expect(find.text('この枠を削除しますか？'), findsOneWidget);
-      expect(result(), isNull);
-
-      // Cancelling the dialog must leave the editor open with no result.
-      await tester.tap(find.text('キャンセル'));
-      await tester.pumpAndSettle();
+      expect(find.byTooltip('この枠を削除'), findsNothing);
       expect(find.text('確定'), findsOneWidget);
       expect(result(), isNull);
-
-      // Deleting for real closes the editor with a delete result.
-      await tester.tap(find.byTooltip('この枠を削除'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('削除'));
-      await tester.pumpAndSettle();
-
-      expect(result(), isA<TileBoxEditorDeleted>());
     },
   );
 

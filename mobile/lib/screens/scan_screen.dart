@@ -199,11 +199,6 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isSelectingMeld = false;
   final Set<int> _meldSelection = {};
 
-  // Set by long-pressing a thumbnail (see `_handleThumbnailTap`): shows a
-  // small ✕ badge on that slot to confirm deleting it, instead of deleting
-  // immediately on long-press itself.
-  int? _deleteAffordanceIndex;
-
   late ContextInput _context;
   _WinConditionStep _winConditionStep = _WinConditionStep.riichi;
   bool _winConditionsComplete = false;
@@ -235,7 +230,6 @@ class _ScanScreenState extends State<ScanScreen> {
     _confirmedMelds.clear();
     _isSelectingMeld = false;
     _meldSelection.clear();
-    _deleteAffordanceIndex = null;
   }
 
   /// Physical-tile indices with an identified tile, ascending — the ◀/▶
@@ -270,19 +264,6 @@ class _ScanScreenState extends State<ScanScreen> {
       _winningTileManuallySet = true;
       _invalidateAnalysisAndMaybeRecalculate();
     });
-  }
-
-  /// Dispatches a normal thumbnail tap (`action`), unless a ✕ delete badge
-  /// is currently showing on some slot (`_deleteAffordanceIndex`) — in that
-  /// case the tap just dismisses the badge instead, a "tap away to cancel"
-  /// pattern so an accidental tap right after a long-press can't also
-  /// trigger the box editor or tile picker.
-  void _handleThumbnailTap(VoidCallback action) {
-    if (_deleteAffordanceIndex != null) {
-      setState(() => _deleteAffordanceIndex = null);
-      return;
-    }
-    action();
   }
 
   void _invalidateAnalysis() {
@@ -584,13 +565,9 @@ class _ScanScreenState extends State<ScanScreen> {
         }
       });
 
-      // Always proceed straight to the results phase with whatever
-      // detection found — the results
-      // screen's "枠を追加" button and per-tile box editor already cover
-      // fixing up any missing/wrong boxes, so a partial/imperfect detection
-      // no longer needs to fall back to the separate manual grid-alignment
-      // phase (that fallback used to trigger on a count outside 13/14, which
-      // was hitting often enough to be disruptive on its own).
+      // Always proceed straight to the results phase with whatever detection
+      // found. Missing or extraneous boxes are recovered by changing the
+      // expected count, cropping the source region, or returning to camera.
       final detected = await compute(segmentTilesWithHintsForExpectedCount, (
         bytes: framedBytes,
         expectedTileCount: _expectedTileCount,
@@ -849,14 +826,14 @@ class _ScanScreenState extends State<ScanScreen> {
   /// `_clearTileSlot`
   /// (see FEZ-193 — previously the only way to undo a wrongly-added box
   /// was to retake the whole photo).
-  Future<void> _openBoxEditor(int index, {TileQuad? initialDecodedQuad}) async {
+  Future<void> _openBoxEditor(int index) async {
     final srcImage = _capturedImage;
     final imageBytes = _capturedBytes;
     if (srcImage == null || imageBytes == null) return;
     final shouldReanalyze =
         _operation == HandOperation.score && _hasScoreCalculation;
 
-    final quad = _tileQuads[index] ?? initialDecodedQuad;
+    final quad = _tileQuads[index];
     if (quad == null) return;
 
     final result = await Navigator.of(context).push<TileBoxEditorResult>(
@@ -870,11 +847,6 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
     if (result == null || !mounted) return;
-
-    if (result is TileBoxEditorDeleted) {
-      setState(() => _clearTileSlot(index));
-      return;
-    }
 
     final newQuad = (result as TileBoxEditorConfirmed).quad;
     final cropped = _cropQuad(srcImage, newQuad);
@@ -902,51 +874,6 @@ class _ScanScreenState extends State<ScanScreen> {
         }
       }
     }
-  }
-
-  /// Resets tile slot [index] back to empty (no quad, crop, or
-  /// classification) — the per-tile counterpart to `_backToCamera`'s full
-  /// reset. Must be called inside `setState`.
-  void _clearTileSlot(int index) {
-    _tileQuads[index] = null;
-    _croppedImages[index] = null;
-    _croppedImageThumbnails[index] = null;
-    _tiles[index] = null;
-    _predictedTiles[index] = null;
-    _candidates[index] = [];
-    _isClassifying[index] = false;
-    _invalidateInterpretation();
-  }
-
-  /// Opens the editor for the next empty physical-tile slot, seeded with a
-  /// median-size placeholder for the user to move into place.
-  void _addMissingTileBox() {
-    final srcImage = _capturedImage;
-    if (srcImage == null) return;
-    final existing = _tileQuads
-        .whereType<TileQuad>()
-        .map((q) => q.boundingRect)
-        .toList();
-    if (existing.isEmpty) return;
-    final newIndex = _tileQuads.indexWhere((q) => q == null);
-    if (newIndex == -1) return;
-
-    final medianW = _median(existing.map((r) => r.width).toList());
-    final medianH = _median(existing.map((r) => r.height).toList());
-    final placeholder = TileQuad.fromRect(
-      Rect.fromCenter(
-        center: Offset(srcImage.width / 2, srcImage.height / 2),
-        width: medianW,
-        height: medianH,
-      ),
-    );
-
-    _openBoxEditor(newIndex, initialDecodedQuad: placeholder);
-  }
-
-  static double _median(List<double> values) {
-    final sorted = [...values]..sort();
-    return sorted[sorted.length ~/ 2];
   }
 
   /// Perspective-rectifies the quadrilateral [quad] (in `source`'s pixel
@@ -1609,7 +1536,6 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() {
       _isSelectingMeld = true;
       _meldSelection.clear();
-      _deleteAffordanceIndex = null;
     });
   }
 
@@ -2939,48 +2865,16 @@ class _ScanScreenState extends State<ScanScreen> {
                   ],
 
                   // Cropped images preview, each paired with its identified
-                  // tile's illustration directly below (or "?" until "識別実行"
-                  // has been run for it), plus a trailing add-box tile when a
-                  // slot is still undetected. Tapping the crop opens the box
-                  // editor (`_openBoxEditor`); tapping the illustration opens
-                  // the image-based picker (`_onSlotTap`) to correct it
-                  // manually — except while `_isSelectingMeld`, when every
-                  // tap instead toggles that slot's meld membership
-                  // (`_toggleMeldSelection`). Long-pressing a crop (outside
-                  // meld-selection mode) shows a ✕ badge to delete that slot
-                  // (`_deleteAffordanceIndex`/`_handleThumbnailTap`). The
-                  // あがり牌 frame and confirmed-meld-membership frame are
-                  // border overlays; あがり牌 itself moves via the ◀/▶
-                  // controls below the row, not by dragging.
+                  // tile's illustration directly below (or "?" until
+                  // classification finishes). Tapping the crop opens the box
+                  // editor; tapping the illustration opens the tile picker,
+                  // except while meld selection redirects taps to membership.
                   SizedBox(
                     height: 118,
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
-                      itemCount:
-                          _visibleSlotCount +
-                          (_tileQuads.any((q) => q == null) ? 1 : 0),
+                      itemCount: _visibleSlotCount,
                       itemBuilder: (_, i) {
-                        if (i == _visibleSlotCount) {
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: GestureDetector(
-                              onTap: _addMissingTileBox,
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.white24),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                alignment: Alignment.center,
-                                child: const Icon(
-                                  Icons.add,
-                                  color: Colors.greenAccent,
-                                ),
-                              ),
-                            ),
-                          );
-                        }
                         final thumb = _croppedImageThumbnails[i];
                         if (thumb == null) return const SizedBox(width: 40);
                         final tile = _tiles[i];
@@ -3003,13 +2897,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         final Widget cropImage = GestureDetector(
                           onTap: _isSelectingMeld
                               ? () => _toggleMeldSelection(i)
-                              : () => _handleThumbnailTap(
-                                  () => _openBoxEditor(i),
-                                ),
-                          onLongPress: _isSelectingMeld
-                              ? null
-                              : () =>
-                                    setState(() => _deleteAffordanceIndex = i),
+                              : () => _openBoxEditor(i),
                           child: Image.memory(
                             thumb,
                             width: 40,
@@ -3021,7 +2909,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         final Widget glyphCore = GestureDetector(
                           onTap: _isSelectingMeld
                               ? () => _toggleMeldSelection(i)
-                              : () => _handleThumbnailTap(() => _onSlotTap(i)),
+                              : () => _onSlotTap(i),
                           child: Container(
                             width: 40,
                             height: 40,
@@ -3120,35 +3008,10 @@ class _ScanScreenState extends State<ScanScreen> {
                           );
                         }
 
-                        // ✕ delete badge when this slot's long-press
-                        // affordance is showing.
-                        final Widget framed = Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            column,
-                            if (_deleteAffordanceIndex == i)
-                              Positioned(
-                                top: -6,
-                                right: -6,
-                                child: GestureDetector(
-                                  onTap: () => setState(() {
-                                    _clearTileSlot(i);
-                                    _deleteAffordanceIndex = null;
-                                  }),
-                                  child: const Icon(
-                                    Icons.cancel,
-                                    color: Colors.redAccent,
-                                    size: 18,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        );
-
                         return RepaintBoundary(
                           child: Padding(
                             padding: const EdgeInsets.only(right: 4),
-                            child: framed,
+                            child: column,
                           ),
                         );
                       },
