@@ -13,7 +13,7 @@ class AnalysisResultPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final shanten = _asInt(result['shanten'] ?? result['current_shanten']);
     final improvingTiles = _maps(result['improving_tiles']);
-    final discards = _maps(result['discards']);
+    final discards = _maps(result['discards']).take(3).toList(growable: false);
     final calls = _maps(result['calls']);
 
     return Container(
@@ -47,6 +47,19 @@ class AnalysisResultPanel extends StatelessWidget {
           ],
           if (discards.isNotEmpty) ...[
             const SizedBox(height: 10),
+            const Text(
+              '牌効率重視の上位3候補',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 2),
+            const Text(
+              '他家の立直・捨て牌・点数状況は考慮していません。',
+              style: TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+            const SizedBox(height: 8),
             for (var index = 0; index < discards.length; index++) ...[
               if (index > 0) const SizedBox(height: 8),
               _DiscardResult(item: discards[index], index: index),
@@ -449,9 +462,9 @@ class _DiscardResult extends StatelessWidget {
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Text(
-                '打牌',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
+              Text(
+                '${index + 1}位',
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               _TileImage(
                 tileCode: discard,

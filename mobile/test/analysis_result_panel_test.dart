@@ -63,6 +63,33 @@ void main() {
     },
   );
 
+  testWidgets('discard result shows only the tile-efficiency top three', (
+    tester,
+  ) async {
+    Map<String, Object> option(String tile, int remaining) => {
+      'discard': tile,
+      'shanten': 1,
+      'total_remaining': remaining,
+      'improving_tiles': <Object>[],
+    };
+    await tester.pumpWidget(
+      subject({
+        'shanten': 1,
+        'discards': [
+          option('1m', 12),
+          option('2m', 10),
+          option('3m', 8),
+          option('4m', 6),
+        ],
+      }),
+    );
+
+    expect(find.text('牌効率重視の上位3候補'), findsOneWidget);
+    expect(find.text('1位'), findsOneWidget);
+    expect(find.text('3位'), findsOneWidget);
+    expect(find.byKey(const ValueKey('analysis-discard-4m-3')), findsNothing);
+  });
+
   testWidgets('call result groups candidates and opens deterministic details', (
     tester,
   ) async {
