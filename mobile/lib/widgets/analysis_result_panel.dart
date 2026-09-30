@@ -374,10 +374,12 @@ class _CallDiscardDetail extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             const Text('切る'),
-            const SizedBox(width: 6),
             _TileImage(
               tileCode: discard,
               semanticPrefix: '打牌',
@@ -385,7 +387,7 @@ class _CallDiscardDetail extends StatelessWidget {
                 'analysis-call-$callIndex-discard-$discardIndex',
               ),
             ),
-            if (total > 0) ...[const SizedBox(width: 8), Text('受け入れ $total枚')],
+            if (total > 0) Text('受け入れ $total枚'),
           ],
         ),
         if (improving.isNotEmpty) ...[
@@ -442,24 +444,24 @@ class _DiscardResult extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               const Text(
                 '打牌',
                 style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
-              const SizedBox(width: 6),
               _TileImage(
                 tileCode: discard,
                 semanticPrefix: '打牌',
                 tileKey: ValueKey('analysis-discard-$discard-$index'),
               ),
-              const SizedBox(width: 8),
               Text(
                 '$shantenシャンテン',
                 style: const TextStyle(color: Colors.white),
               ),
-              const Spacer(),
               Text(
                 '有効牌 $totalRemaining枚',
                 style: const TextStyle(
