@@ -18,6 +18,7 @@ import 'services/app_preferences.dart';
 import 'services/auth_service.dart';
 import 'services/question_template_service.dart';
 import 'services/rule_settings_service.dart';
+import 'services/official_ai_chat_template_service.dart';
 
 List<CameraDescription> cameras = const [];
 
@@ -51,6 +52,7 @@ Future<void> main() async {
       await AppPreferences.showTrainingDataActions();
   final initialRuleSettings = await RuleSettingsService().synchronize();
   unawaited(QuestionTemplateService().synchronize());
+  unawaited(OfficialAIChatTemplateService().load());
   runApp(
     TsumoAIApp(
       startupError: startupError,
@@ -263,9 +265,7 @@ class HomeScreen extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        matchActive
-                            ? '対局を再開'
-                            : '実際の対局進行に合わせて点数計算を行う',
+                        matchActive ? '対局を再開' : '実際の対局進行に合わせて点数計算を行う',
                         textAlign: TextAlign.center,
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),

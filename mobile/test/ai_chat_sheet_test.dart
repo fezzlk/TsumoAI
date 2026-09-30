@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tsumoai_mobile/models/ai_chat_message.dart';
 import 'package:tsumoai_mobile/models/question_template.dart';
+import 'package:tsumoai_mobile/models/official_ai_chat_template.dart';
 import 'package:tsumoai_mobile/services/question_template_service.dart';
+import 'package:tsumoai_mobile/services/official_ai_chat_template_service.dart';
 import 'package:tsumoai_mobile/widgets/ai_chat_sheet.dart';
 
 class _MemoryTemplateService extends QuestionTemplateService {
@@ -26,6 +28,12 @@ class _MemoryTemplateService extends QuestionTemplateService {
   }
 }
 
+class _OfficialTemplates extends OfficialAIChatTemplateService {
+  @override
+  Future<OfficialAIChatTemplateConfig> load({bool refresh = true}) async =>
+      OfficialAIChatTemplateService.defaults();
+}
+
 void main() {
   testWidgets('sends a contextual question and saves the sent text', (
     tester,
@@ -42,6 +50,7 @@ void main() {
             roundContext: const {'round_wind': 'E'},
             analysis: const {'discards': []},
             templateService: templates,
+            officialTemplateService: _OfficialTemplates(),
             onMessagesChanged: (messages) => changed = messages,
             sender:
                 ({
@@ -49,8 +58,9 @@ void main() {
                   required conversation,
                   required situationTags,
                 }) async {
-                  expect(message, '何を切る？');
+                  expect(message, '親リーチの状況です。何を切る？');
                   expect(conversation, isEmpty);
+                  expect(situationTags, ['親リーチ']);
                   return '東を切るのがおすすめです。';
                 },
           ),
@@ -59,6 +69,7 @@ void main() {
     );
     await tester.pump();
 
+    await tester.tap(find.text('親リーチ'));
     await tester.tap(find.text('何を切る？'));
     await tester.tap(find.byTooltip('送信'));
     await tester.pumpAndSettle();
@@ -69,7 +80,7 @@ void main() {
     await tester.tap(find.text('テンプレートとして保存'));
     await tester.pumpAndSettle();
 
-    expect(templates.items.single.body, '何を切る？');
+    expect(templates.items.single.body, '親リーチの状況です。何を切る？');
     expect(find.text('保存済み'), findsOneWidget);
   });
 
@@ -86,6 +97,7 @@ void main() {
             roundContext: const {},
             analysis: const {'calls': []},
             templateService: _MemoryTemplateService(),
+            officialTemplateService: _OfficialTemplates(),
             onMessagesChanged: (messages) => changed = messages,
             sender:
                 ({

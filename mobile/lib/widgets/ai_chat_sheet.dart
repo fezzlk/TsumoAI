@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../models/ai_chat_message.dart';
 import '../models/question_template.dart';
+import '../models/official_ai_chat_template.dart';
 import '../services/api_client.dart';
 import '../services/question_template_service.dart';
+import '../services/official_ai_chat_template_service.dart';
 
 typedef AIChatSender =
     Future<String> Function({
@@ -23,6 +25,7 @@ class AIChatSheet extends StatefulWidget {
     this.onMessagesChanged,
     this.sender,
     this.templateService,
+    this.officialTemplateService,
   });
 
   final String purpose;
@@ -33,6 +36,7 @@ class AIChatSheet extends StatefulWidget {
   final ValueChanged<List<AIChatMessage>>? onMessagesChanged;
   final AIChatSender? sender;
   final QuestionTemplateService? templateService;
+  final OfficialAIChatTemplateService? officialTemplateService;
 
   static Future<void> show(
     BuildContext context, {
@@ -65,35 +69,44 @@ class AIChatSheet extends StatefulWidget {
 }
 
 class _AIChatSheetState extends State<AIChatSheet> {
-  static const _situationOptions = [
-    '親リーチ',
-    'オーラス',
-    'トップ目',
-    'ラス目',
-    '守備優先',
-    '打点優先',
-    '着順UP',
-  ];
-
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   late final QuestionTemplateService _templateService;
+  late final OfficialAIChatTemplateService _officialTemplateService;
   late List<AIChatMessage> _messages;
   List<QuestionTemplate> _templates = [];
+  List<OfficialAIChatTemplate> _officialTemplates =
+      OfficialAIChatTemplateService.defaults().items;
   final Set<String> _situationTags = {};
   bool _sending = false;
   String? _error;
 
-  List<String> get _starterQuestions => widget.purpose == 'call_advice'
-      ? const ['鳴くべき？', '見送るべき？', '判断が変わる条件は？']
-      : const ['何を切る？', '押す？降りる？', '理由を詳しく教えて'];
+  List<OfficialAIChatTemplate> get _situationOptions =>
+      _officialTemplates
+          .where((item) => item.enabled && item.kind == 'situation')
+          .toList()
+        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+
+  List<OfficialAIChatTemplate> get _starterQuestions =>
+      _officialTemplates
+          .where(
+            (item) =>
+                item.enabled &&
+                item.kind == 'question' &&
+                (item.purpose == 'all' || item.purpose == widget.purpose),
+          )
+          .toList()
+        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
 
   @override
   void initState() {
     super.initState();
     _templateService = widget.templateService ?? QuestionTemplateService();
+    _officialTemplateService =
+        widget.officialTemplateService ?? OfficialAIChatTemplateService();
     _messages = [...widget.initialMessages];
     _loadTemplates();
+    _loadOfficialTemplates();
   }
 
   @override
@@ -106,6 +119,21 @@ class _AIChatSheetState extends State<AIChatSheet> {
   Future<void> _loadTemplates() async {
     final templates = await _templateService.loadLocal();
     if (mounted) setState(() => _templates = templates);
+  }
+
+  Future<void> _loadOfficialTemplates() async {
+    final config = await _officialTemplateService.load(refresh: false);
+    if (mounted) setState(() => _officialTemplates = config.items);
+  }
+
+  void _applyQuestion(OfficialAIChatTemplate question) {
+    final situations = _situationTags.toList();
+    _controller.text = situations.isEmpty
+        ? question.body
+        : '${situations.join('、')}の状況です。${question.body}';
+    _controller.selection = TextSelection.collapsed(
+      offset: _controller.text.length,
+    );
   }
 
   Future<String> _sendToApi(String message, List<AIChatMessage> conversation) {
@@ -186,12 +214,17 @@ class _AIChatSheetState extends State<AIChatSheet> {
       await _templateService.saveSentMessage(body);
       await _loadTemplates();
     } on StateError {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('テンプレートは20件まで保存できます')));
-      }
+      _showTemplateMessage('テンプレートは20件まで保存できます。既存項目を削除してください。');
+    } catch (_) {
+      _showTemplateMessage('保存できませんでした。質問文は会話に残っています。');
     }
+  }
+
+  void _showTemplateMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _addTemplate() async {
@@ -228,15 +261,23 @@ class _AIChatSheetState extends State<AIChatSheet> {
       ),
     );
     if (accepted == true && body.text.trim().isNotEmpty) {
-      final saved = await _templateService.saveSentMessage(body.text);
-      if (name.text.trim().isNotEmpty) {
-        await _templateService.update(
-          id: saved.id,
-          name: name.text,
-          body: saved.body,
-        );
+      try {
+        final saved = await _templateService.saveSentMessage(body.text);
+        if (name.text.trim().isNotEmpty) {
+          await _templateService.update(
+            id: saved.id,
+            name: name.text,
+            body: saved.body,
+          );
+        }
+        await _loadTemplates();
+      } on StateError {
+        _controller.text = body.text;
+        _showTemplateMessage('テンプレートは20件までです。質問文を入力欄へ戻しました。');
+      } catch (_) {
+        _controller.text = body.text;
+        _showTemplateMessage('保存できませんでした。質問文を入力欄へ戻しました。');
       }
-      await _loadTemplates();
     }
     name.dispose();
     body.dispose();
@@ -276,12 +317,17 @@ class _AIChatSheetState extends State<AIChatSheet> {
       ),
     );
     if (accepted == true) {
-      await _templateService.update(
-        id: template.id,
-        name: name.text,
-        body: body.text,
-      );
-      await _loadTemplates();
+      try {
+        await _templateService.update(
+          id: template.id,
+          name: name.text,
+          body: body.text,
+        );
+        await _loadTemplates();
+      } catch (_) {
+        _controller.text = body.text;
+        _showTemplateMessage('変更を保存できませんでした。質問文を入力欄へ戻しました。');
+      }
     }
     name.dispose();
     body.dispose();
@@ -320,12 +366,12 @@ class _AIChatSheetState extends State<AIChatSheet> {
               children: [
                 for (final tag in _situationOptions)
                   FilterChip(
-                    label: Text(tag),
-                    selected: _situationTags.contains(tag),
+                    label: Text(tag.label),
+                    selected: _situationTags.contains(tag.body),
                     onSelected: (selected) => setState(() {
                       selected
-                          ? _situationTags.add(tag)
-                          : _situationTags.remove(tag);
+                          ? _situationTags.add(tag.body)
+                          : _situationTags.remove(tag.body);
                     }),
                   ),
               ],
@@ -337,8 +383,8 @@ class _AIChatSheetState extends State<AIChatSheet> {
               children: [
                 for (final question in _starterQuestions)
                   ActionChip(
-                    label: Text(question),
-                    onPressed: () => _controller.text = question,
+                    label: Text(question.label),
+                    onPressed: () => _applyQuestion(question),
                   ),
                 for (final template in _templates)
                   InputChip(
@@ -352,8 +398,12 @@ class _AIChatSheetState extends State<AIChatSheet> {
                     label: Text(template.name),
                     onPressed: () => _controller.text = template.body,
                     onDeleted: () async {
-                      await _templateService.delete(template.id);
-                      await _loadTemplates();
+                      try {
+                        await _templateService.delete(template.id);
+                        await _loadTemplates();
+                      } catch (_) {
+                        _showTemplateMessage('テンプレートを削除できませんでした。');
+                      }
                     },
                     deleteIcon: const Icon(Icons.close, size: 17),
                   ),

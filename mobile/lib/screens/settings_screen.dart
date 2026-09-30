@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../services/history_service.dart';
 import 'history_screen.dart';
 import 'mahjong_rules_screen.dart';
+import 'ai_chat_template_admin_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -279,10 +280,16 @@ class _DeveloperSettingsScreenState extends State<DeveloperSettingsScreen> {
                   widget.onShowTrainingDataActionsChanged(value);
                 },
               ),
-              const ListTile(
-                leading: Icon(Icons.chat_outlined),
-                title: Text('AIチャットテンプレート管理'),
-                subtitle: Text('管理画面は後続実装で接続します'),
+              ListTile(
+                leading: const Icon(Icons.chat_outlined),
+                title: const Text('AIチャットテンプレート管理'),
+                subtitle: const Text('状況と質問の型を公開'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AIChatTemplateAdminScreen(),
+                  ),
+                ),
               ),
               ListTile(
                 leading: const Icon(Icons.open_in_browser),

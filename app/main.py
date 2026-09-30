@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import resolve_gcp_project, settings
 from app.auth import get_current_user, require_admin
 from app.ai_chat import AIChatUnavailableError, answer_ai_chat
+from app.ai_chat_template_store import AIChatTemplateStore
 from app.gcs_feedback_store import GCSFeedbackStore
 from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
 from app.recognition_feedback_store import RecognitionFeedbackStore
@@ -40,6 +41,8 @@ from app.repository import InMemoryRepository
 from app.schemas import (
     AIChatRequest,
     AIChatResponse,
+    OfficialAIChatTemplateConfig,
+    OfficialAIChatTemplateUpdate,
     ContextInput,
     CallAnalysisRequest,
     CallAnalysisResponse,
@@ -105,6 +108,7 @@ from app.training_data_store import TrainingDataStore
 training_data_store = TrainingDataStore()
 _recognition_rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _ai_chat_rate_windows: dict[str, deque[float]] = defaultdict(deque)
+ai_chat_template_store = AIChatTemplateStore()
 
 
 @app.middleware("http")
@@ -359,6 +363,38 @@ async def ai_chat_endpoint(req: AIChatRequest) -> AIChatResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AI chat request failed") from exc
     return AIChatResponse(answer=answer)
+
+
+@app.get(
+    "/api/v1/ai-chat/templates",
+    response_model=OfficialAIChatTemplateConfig,
+)
+def get_official_ai_chat_templates() -> OfficialAIChatTemplateConfig:
+    try:
+        return OfficialAIChatTemplateConfig.model_validate(
+            ai_chat_template_store.get()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AI chat templates unavailable") from exc
+
+
+@app.put(
+    "/api/v1/ai-chat/templates",
+    response_model=OfficialAIChatTemplateConfig,
+)
+def update_official_ai_chat_templates(
+    payload: OfficialAIChatTemplateUpdate,
+    _admin: dict = Depends(require_admin),
+) -> OfficialAIChatTemplateConfig:
+    if len({item.id for item in payload.items}) != len(payload.items):
+        raise HTTPException(status_code=422, detail="Template ids must be unique")
+    try:
+        stored = ai_chat_template_store.upsert(
+            [item.model_dump(mode="json") for item in payload.items]
+        )
+        return OfficialAIChatTemplateConfig.model_validate(stored)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AI chat templates could not be saved") from exc
 
 
 @app.get("/api/v1/history", response_model=HistoryListResponse)

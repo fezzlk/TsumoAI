@@ -341,6 +341,29 @@ class AIChatResponse(BaseModel):
     answer: str
 
 
+class OfficialAIChatTemplate(BaseModel):
+    id: str = Field(min_length=1, max_length=60, pattern=r"^[a-zA-Z0-9_-]+$")
+    kind: Literal["situation", "question"]
+    purpose: Literal["all", "discard", "call_advice"] = "all"
+    label: str = Field(min_length=1, max_length=40)
+    body: str = Field(min_length=1, max_length=200)
+    enabled: bool = True
+    sort_order: int = Field(default=0, ge=0, le=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OfficialAIChatTemplateUpdate(BaseModel):
+    items: list[OfficialAIChatTemplate] = Field(min_length=1, max_length=50)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OfficialAIChatTemplateConfig(OfficialAIChatTemplateUpdate):
+    version: int = Field(ge=1)
+    updated_at: datetime | None = None
+
+
 class RecognizeAndScorePayload(BaseModel):
     context: ContextInput
     rules: RuleSet
