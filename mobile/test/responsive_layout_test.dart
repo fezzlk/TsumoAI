@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tsumoai_mobile/main.dart';
 import 'package:tsumoai_mobile/screens/history_screen.dart';
 import 'package:tsumoai_mobile/screens/match_home_screen.dart';
 import 'package:tsumoai_mobile/services/history_service.dart';
@@ -17,6 +18,44 @@ const _narrowPortrait = Size(320, 568);
 const _narrowPadding = EdgeInsets.only(bottom: 20);
 
 void main() {
+  testWidgets('home fits a narrow portrait screen without stale copy', (
+    tester,
+  ) async {
+    await pumpAtDeviceSize(
+      tester,
+      const TsumoAIApp(),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('待ち牌・有効牌'), findsOneWidget);
+    expect(find.text('待ち牌・残り枚数'), findsNothing);
+    expect(find.text('実際の対局進行に合わせて点数計算を行う'), findsOneWidget);
+    expectNoOverflow(tester);
+  });
+
+  testWidgets('home remains usable with enlarged text on a narrow screen', (
+    tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(
+      tester.platformDispatcher.clearTextScaleFactorTestValue,
+    );
+
+    await pumpAtDeviceSize(
+      tester,
+      const TsumoAIApp(),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('点数計算'), findsOneWidget);
+    expect(find.text('実際の対局進行に合わせて点数計算を行う'), findsOneWidget);
+    expectNoOverflow(tester);
+  });
+
   testWidgets('tile count choices stay visible on a narrow portrait screen', (
     tester,
   ) async {

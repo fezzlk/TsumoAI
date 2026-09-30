@@ -200,7 +200,7 @@ class HomeScreen extends StatelessWidget {
                     context,
                     icon: Icons.center_focus_strong,
                     title: '待ち確認',
-                    subtitle: '待ち牌・残り枚数',
+                    subtitle: '待ち牌・有効牌',
                     purpose: ScanPurpose.wait,
                   ),
                 ),
@@ -231,25 +231,29 @@ class HomeScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 24),
-            SizedBox(
-              height: 94,
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 94),
               child: ElevatedButton(
                 onPressed: () => _openMatch(context),
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '実際の対局進行に合わせて点数計算を行う',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    SizedBox(height: 6),
-                    Text(
-                      '点数計算できる人がいない場合に、1半荘分の点数計算をサポート',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ],
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '実際の対局進行に合わせて点数計算を行う',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        '点数計算できる人がいない場合に、1半荘分の点数計算をサポート',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
