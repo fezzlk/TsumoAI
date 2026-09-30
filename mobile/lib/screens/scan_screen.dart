@@ -990,7 +990,7 @@ class _ScanScreenState extends State<ScanScreen> {
       if (!mounted || _interpretation == null) return;
     }
     await _confirmAndAnalyze(
-      showResultDialog: _operation != HandOperation.score,
+      showResultDialog: false,
     );
   }
 
@@ -1103,7 +1103,7 @@ class _ScanScreenState extends State<ScanScreen> {
             setState(() => _analysisResult = result);
             await _saveAnalysisHistory(result);
             if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-            _showResultDialog();
+            if (showResultDialog) _showResultDialog();
           }
           break;
         case HandOperation.discardAnalysis:
@@ -1116,7 +1116,7 @@ class _ScanScreenState extends State<ScanScreen> {
             setState(() => _analysisResult = result);
             await _saveAnalysisHistory(result);
             if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-            _showResultDialog();
+            if (showResultDialog) _showResultDialog();
           }
           break;
         case HandOperation.callAnalysis:
@@ -1129,7 +1129,7 @@ class _ScanScreenState extends State<ScanScreen> {
             setState(() => _analysisResult = result);
             await _saveAnalysisHistory(result);
             if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-            _showResultDialog();
+            if (showResultDialog) _showResultDialog();
           }
           break;
       }
@@ -3106,6 +3106,36 @@ class _ScanScreenState extends State<ScanScreen> {
                   const SizedBox(height: 12),
 
                   _buildInlineScoreResult(),
+                  if (_operation != HandOperation.score && _isScoring)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text(
+                            '結果を更新中...',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_operation != HandOperation.score &&
+                      _analysisResult != null)
+                    AnalysisResultPanel(result: _analysisResult!),
                   if (_isScoring ||
                       _isNotWinning ||
                       _tsumoScoreResult != null ||
