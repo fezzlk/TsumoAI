@@ -2,10 +2,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/history_entry.dart';
+import '../models/ai_chat_message.dart';
 import '../services/auth_service.dart';
 import '../services/history_service.dart';
 import '../widgets/analysis_result_panel.dart';
 import '../widgets/tile_glyph.dart';
+import '../widgets/ai_chat_sheet.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key, this.service});
@@ -169,7 +171,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     isThreeLine: true,
     onTap: () => Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => HistoryDetailScreen(entry: entry),
+        builder: (_) => HistoryDetailScreen(entry: entry, service: _service),
       ),
     ),
   );
@@ -196,25 +198,72 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 }
 
-class HistoryDetailScreen extends StatelessWidget {
-  const HistoryDetailScreen({super.key, required this.entry});
+class HistoryDetailScreen extends StatefulWidget {
+  const HistoryDetailScreen({super.key, required this.entry, this.service});
 
   final HistoryEntry entry;
+  final HistoryService? service;
+
+  @override
+  State<HistoryDetailScreen> createState() => _HistoryDetailScreenState();
+}
+
+class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
+  late HistoryEntry _entry = widget.entry;
+  late final HistoryService _service = widget.service ?? HistoryService();
+  Future<void> _historyUpdateQueue = Future.value();
+
+  List<AIChatMessage> get _conversation =>
+      (_entry.details['ai_conversation'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) => AIChatMessage.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false);
+
+  Future<void> _continueChat() async {
+    final tiles = (_entry.details['tiles'] as List<dynamic>? ?? const [])
+        .map((tile) => tile.toString())
+        .toList(growable: false);
+    final analysis = _historyMap(_entry.details['result']);
+    final roundContext = _historyMap(_entry.details['context']);
+    await AIChatSheet.show(
+      context,
+      purpose: _entry.purpose,
+      tiles: tiles,
+      roundContext: roundContext,
+      analysis: analysis,
+      initialMessages: _conversation,
+      onMessagesChanged: (messages) {
+        _historyUpdateQueue = _historyUpdateQueue.then((_) async {
+          final updated = await _service.updateDetails(_entry.id, {
+            'ai_conversation': messages
+                .map((message) => message.toJson())
+                .toList(growable: false),
+          });
+          if (mounted && updated != null) setState(() => _entry = updated);
+        });
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final tiles = (entry.details['tiles'] as List<dynamic>? ?? const [])
+    final tiles = (_entry.details['tiles'] as List<dynamic>? ?? const [])
         .map((tile) => tile.toString())
         .toList(growable: false);
-    final analysis = _historyMap(entry.details['result']);
-    final contextDetails = _historyMap(entry.details['context']);
+    final analysis = _historyMap(_entry.details['result']);
+    final contextDetails = _historyMap(_entry.details['context']);
     return Scaffold(
-      appBar: AppBar(title: Text(entry.title)),
+      appBar: AppBar(title: Text(_entry.title)),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
           children: [
-            Text(entry.summary, style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              _entry.summary,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -222,12 +271,12 @@ class HistoryDetailScreen extends StatelessWidget {
               children: [
                 _HistoryMetaChip(
                   icon: Icons.schedule,
-                  label: _historyDateLabel(entry.createdAt),
+                  label: _historyDateLabel(_entry.createdAt),
                 ),
-                if (entry.roundLabel != null)
+                if (_entry.roundLabel != null)
                   _HistoryMetaChip(
                     icon: Icons.casino_outlined,
-                    label: entry.roundLabel!,
+                    label: _entry.roundLabel!,
                   ),
                 if (contextDetails['round_wind'] case final Object roundWind)
                   _HistoryMetaChip(
@@ -266,12 +315,39 @@ class HistoryDetailScreen extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 20),
-            if (entry.purpose == 'score')
-              _ScoreHistoryDetails(details: entry.details)
+            if (_entry.purpose == 'score')
+              _ScoreHistoryDetails(details: _entry.details)
             else if (analysis.isNotEmpty)
               AnalysisResultPanel(result: analysis)
             else
               const Text('詳細結果は保存されていません'),
+            if (_entry.purpose == 'discard' ||
+                _entry.purpose == 'call_advice') ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _continueChat,
+                  icon: const Icon(Icons.chat_bubble_outline),
+                  label: Text(_conversation.isEmpty ? 'AIに質問' : 'AIとの会話を続ける'),
+                ),
+              ),
+              if (_conversation.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'AIとの会話',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                for (final message in _conversation)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      '${message.role == 'user' ? 'あなた' : 'AI'}: ${message.content}',
+                    ),
+                  ),
+              ],
+            ],
           ],
         ),
       ),

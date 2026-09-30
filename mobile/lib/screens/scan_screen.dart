@@ -13,6 +13,7 @@ import '../services/tile_detector.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
 import '../models/history_entry.dart';
+import '../models/ai_chat_message.dart';
 import '../models/interpretation_request.dart';
 import '../models/scan_purpose.dart';
 import '../models/interpretation_result.dart';
@@ -25,6 +26,7 @@ import '../widgets/score_result_panel.dart';
 import '../widgets/analysis_result_panel.dart';
 import '../widgets/tile_marker_overlay.dart';
 import '../widgets/tile_count_selector.dart';
+import '../widgets/ai_chat_sheet.dart';
 import '../services/training_data_client.dart';
 import '../services/tile_segmenter.dart';
 import '../services/tile_assets.dart';
@@ -94,6 +96,7 @@ class _ScanScreenState extends State<ScanScreen> {
   final ApiClient _api = ApiClient();
   final TrainingDataClient _trainingClient = TrainingDataClient();
   final HistoryService _historyService = HistoryService();
+  Future<void> _historyUpdateQueue = Future.value();
   late final String _historyEntryId = HistoryService.createId();
   late final DateTime _historyCreatedAt = DateTime.now().toUtc();
 
@@ -188,6 +191,7 @@ class _ScanScreenState extends State<ScanScreen> {
   final List<ConfirmedMeld> _confirmedMelds = [];
   late HandOperation _operation;
   Map<String, dynamic>? _analysisResult;
+  List<AIChatMessage> _chatMessages = [];
   final RequestEpoch _requestEpoch = RequestEpoch();
 
   late ContextInput _context;
@@ -258,6 +262,7 @@ class _ScanScreenState extends State<ScanScreen> {
   void _invalidateAnalysis() {
     _requestEpoch.invalidate();
     _analysisResult = null;
+    _chatMessages = [];
     _tsumoScoreResult = null;
     _ronScoreResult = null;
     _isNotWinning = false;
@@ -444,8 +449,7 @@ class _ScanScreenState extends State<ScanScreen> {
         frame,
         const TileDetectorParams(
           scanRegionTop: captureGuideTopFactor,
-          scanRegionBottom:
-              captureGuideTopFactor + captureGuideHeightFactor,
+          scanRegionBottom: captureGuideTopFactor + captureGuideHeightFactor,
         ),
       );
       if (!mounted || _phase != _ScanPhase.camera) return;
@@ -989,9 +993,7 @@ class _ScanScreenState extends State<ScanScreen> {
       await _runInterpretation();
       if (!mounted || _interpretation == null) return;
     }
-    await _confirmAndAnalyze(
-      showResultDialog: false,
-    );
+    await _confirmAndAnalyze(showResultDialog: false);
   }
 
   Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
@@ -1223,9 +1225,42 @@ class _ScanScreenState extends State<ScanScreen> {
           'context': _context.toJson(),
           'rule_settings': widget.ruleSettings.toJson(),
           'result': result,
+          if (_chatMessages.isNotEmpty)
+            'ai_conversation': _chatMessages
+                .map((message) => message.toJson())
+                .toList(growable: false),
         },
         accountUid: AuthService.currentUser?.uid,
       ),
+    );
+  }
+
+  Future<void> _openAiChat() async {
+    final result = _analysisResult;
+    if (result == null ||
+        widget.purpose == ScanPurpose.score ||
+        widget.purpose == ScanPurpose.wait) {
+      return;
+    }
+    await AIChatSheet.show(
+      context,
+      purpose: widget.purpose == ScanPurpose.callAdvice
+          ? 'call_advice'
+          : 'discard',
+      tiles: _tiles.whereType<String>().toList(growable: false),
+      roundContext: _context.toJson(),
+      analysis: result,
+      initialMessages: _chatMessages,
+      onMessagesChanged: (messages) {
+        if (mounted) setState(() => _chatMessages = messages);
+        _historyUpdateQueue = _historyUpdateQueue.then((_) async {
+          await _historyService.updateDetails(_historyEntryId, {
+            'ai_conversation': messages
+                .map((message) => message.toJson())
+                .toList(growable: false),
+          });
+        });
+      },
     );
   }
 
@@ -1570,7 +1605,10 @@ class _ScanScreenState extends State<ScanScreen> {
 
           return AlertDialog(
             title: const Row(
-              children: [Expanded(child: Text('副露を追加')), CloseButton()],
+              children: [
+                Expanded(child: Text('副露を追加')),
+                CloseButton(),
+              ],
             ),
             content: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 360),
@@ -1760,8 +1798,7 @@ class _ScanScreenState extends State<ScanScreen> {
     final tileAsset = tile == null ? null : tileAssetPath(tile);
     final winningTileId = 'tile-${index.toString().padLeft(3, '0')}';
     final isWinningTile = _confirmedWinningTileId == winningTileId;
-    final canBeWinningTile =
-        _operation == HandOperation.score && tile != null;
+    final canBeWinningTile = _operation == HandOperation.score && tile != null;
     final showMeldFrame = _isConfirmedMeldMember(index);
     final cropHeight = cellWidth * 1.4;
 
@@ -2969,8 +3006,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     ],
                   ),
                   _buildExpectedTileCountSelector(redetectOnChange: true),
-                  if (widget.showTrainingDataActions &&
-                      _trainingTilesReady)
+                  if (widget.showTrainingDataActions && _trainingTilesReady)
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
@@ -3067,14 +3103,18 @@ class _ScanScreenState extends State<ScanScreen> {
                     builder: (context, constraints) {
                       const columns = 9;
                       const spacing = 3.0;
-                      final available = constraints.maxWidth -
-                          spacing * (columns - 1);
+                      final available =
+                          constraints.maxWidth - spacing * (columns - 1);
                       final cellWidth = math.min(40.0, available / columns);
                       return Wrap(
                         spacing: spacing,
                         runSpacing: 8,
                         children: [
-                          for (var index = 0; index < _visibleSlotCount; index++)
+                          for (
+                            var index = 0;
+                            index < _visibleSlotCount;
+                            index++
+                          )
                             _buildResultTile(index, cellWidth),
                         ],
                       );
@@ -3134,8 +3174,23 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     ),
                   if (_operation != HandOperation.score &&
-                      _analysisResult != null)
+                      _analysisResult != null) ...[
                     AnalysisResultPanel(result: _analysisResult!),
+                    if (widget.purpose == ScanPurpose.discard ||
+                        widget.purpose == ScanPurpose.callAdvice) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _openAiChat,
+                          icon: const Icon(Icons.chat_bubble_outline),
+                          label: Text(
+                            _chatMessages.isEmpty ? 'AIに質問' : 'AIとの会話を続ける',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                   if (_isScoring ||
                       _isNotWinning ||
                       _tsumoScoreResult != null ||

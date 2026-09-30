@@ -100,6 +100,23 @@ class HistoryService {
     unawaited(_uploadIfSignedIn(storedEntry));
   }
 
+  Future<HistoryEntry?> updateDetails(
+    String id,
+    Map<String, dynamic> updates,
+  ) async {
+    final entries = await _loadAll();
+    final index = entries.indexWhere((item) => item.id == id);
+    if (index == -1) return null;
+    final updated = entries[index].copyWith(
+      updatedAt: DateTime.now().toUtc(),
+      details: {...entries[index].details, ...updates},
+    );
+    entries[index] = updated;
+    await _writeLocal(entries);
+    unawaited(_uploadIfSignedIn(updated));
+    return updated;
+  }
+
   Future<List<HistoryEntry>> synchronize() async {
     final uid = _currentUidProvider();
     final allLocal = await _loadAll();

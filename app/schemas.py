@@ -312,6 +312,35 @@ class QuestionTemplateListResponse(BaseModel):
     items: list[QuestionTemplateItem] = Field(default_factory=list)
 
 
+class AIChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=1200)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AIChatContext(BaseModel):
+    purpose: Literal["discard", "call_advice"]
+    tiles: list[TileCode] = Field(min_length=1, max_length=18)
+    round_context: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Any] = Field(default_factory=dict)
+    situation_tags: list[str] = Field(default_factory=list, max_length=10)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AIChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=600)
+    conversation: list[AIChatMessage] = Field(default_factory=list, max_length=12)
+    context: AIChatContext
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AIChatResponse(BaseModel):
+    answer: str
+
+
 class RecognizeAndScorePayload(BaseModel):
     context: ContextInput
     rules: RuleSet

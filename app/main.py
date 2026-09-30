@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import resolve_gcp_project, settings
 from app.auth import get_current_user, require_admin
+from app.ai_chat import AIChatUnavailableError, answer_ai_chat
 from app.gcs_feedback_store import GCSFeedbackStore
 from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
 from app.recognition_feedback_store import RecognitionFeedbackStore
@@ -37,6 +38,8 @@ from app.interpretation.models import (
 )
 from app.repository import InMemoryRepository
 from app.schemas import (
+    AIChatRequest,
+    AIChatResponse,
     ContextInput,
     CallAnalysisRequest,
     CallAnalysisResponse,
@@ -101,6 +104,7 @@ recognition_feedback_store = RecognitionFeedbackStore()
 from app.training_data_store import TrainingDataStore
 training_data_store = TrainingDataStore()
 _recognition_rate_windows: dict[str, deque[float]] = defaultdict(deque)
+_ai_chat_rate_windows: dict[str, deque[float]] = defaultdict(deque)
 
 
 @app.middleware("http")
@@ -118,6 +122,18 @@ async def limit_anonymous_recognition(request: Request, call_next):
             window.popleft()
         if len(window) >= settings.anonymous_recognition_requests_per_minute:
             return JSONResponse(status_code=429, content={"detail": "recognition rate limit exceeded"})
+        window.append(now)
+    if request.method == "POST" and request.url.path == "/api/v1/ai-chat":
+        key = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        window = _ai_chat_rate_windows[key]
+        while window and now - window[0] >= 60:
+            window.popleft()
+        if len(window) >= settings.anonymous_ai_chat_requests_per_minute:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "AI chat rate limit exceeded"},
+            )
         window.append(now)
     return await call_next(request)
 
@@ -332,6 +348,17 @@ def analyze_calls_endpoint(req: CallAnalysisRequest) -> CallAnalysisResponse:
         return analyze_call_options(req)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/ai-chat", response_model=AIChatResponse)
+async def ai_chat_endpoint(req: AIChatRequest) -> AIChatResponse:
+    try:
+        answer = await run_in_threadpool(answer_ai_chat, req)
+    except AIChatUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AI chat request failed") from exc
+    return AIChatResponse(answer=answer)
 
 
 @app.get("/api/v1/history", response_model=HistoryListResponse)

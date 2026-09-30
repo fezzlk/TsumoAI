@@ -6,6 +6,7 @@ import '../models/interpretation_request.dart';
 import '../models/interpretation_result.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
+import '../models/ai_chat_message.dart';
 import 'auth_service.dart';
 
 class ApiClient {
@@ -150,6 +151,34 @@ class ApiClient {
       data: _analysisPayload(state, context, rules),
     );
     return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<String> askAi({
+    required String message,
+    required List<AIChatMessage> conversation,
+    required String purpose,
+    required List<String> tiles,
+    required Map<String, dynamic> roundContext,
+    required Map<String, dynamic> analysis,
+    required List<String> situationTags,
+  }) async {
+    final response = await _dio.post(
+      '$_baseUrl/api/v1/ai-chat',
+      data: {
+        'message': message,
+        'conversation': conversation
+            .map((item) => item.toJson())
+            .toList(growable: false),
+        'context': {
+          'purpose': purpose,
+          'tiles': tiles,
+          'round_context': roundContext,
+          'analysis': analysis,
+          'situation_tags': situationTags,
+        },
+      },
+    );
+    return (response.data as Map)['answer'] as String;
   }
 
   Map<String, dynamic> _analysisPayload(

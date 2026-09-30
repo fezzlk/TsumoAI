@@ -119,4 +119,30 @@ void main() {
       expect(getRequests, 1);
     },
   );
+
+  test(
+    'updateDetails preserves the entry and merges conversation data',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'history-update-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final service = HistoryService(
+        directoryProvider: () async => directory,
+        currentUidProvider: () => null,
+        tokenProvider: () async => 'token',
+      );
+      await service.save(entry('analysis'));
+
+      final updated = await service.updateDetails('analysis', {
+        'ai_conversation': [
+          {'role': 'user', 'content': '何を切る？'},
+        ],
+      });
+
+      expect(updated, isNotNull);
+      expect(updated!.details['ai_conversation'], isA<List<dynamic>>());
+      expect((await service.loadLocal()).single.details, updated.details);
+    },
+  );
 }
