@@ -2784,6 +2784,21 @@ class _ScanScreenState extends State<ScanScreen> {
                         onPressed: _backToCamera,
                         icon: const Icon(Icons.arrow_back),
                         tooltip: '撮影画面に戻る',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.maybePop(context),
+                        icon: const Icon(Icons.home_outlined),
+                        tooltip: 'ホーム',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        padding: EdgeInsets.zero,
                       ),
                       const Expanded(
                         child: Text(
@@ -2800,12 +2815,22 @@ class _ScanScreenState extends State<ScanScreen> {
                         onPressed: _cropAndRedetect,
                         icon: const Icon(Icons.crop),
                         tooltip: 'トリミング',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        padding: EdgeInsets.zero,
                       ),
                       if (_cropRegion != null)
                         IconButton(
                           onPressed: () => _redetectInRegion(null),
                           icon: const Icon(Icons.undo),
                           tooltip: '元の範囲に戻す',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          padding: EdgeInsets.zero,
                         ),
                     ],
                   ),
