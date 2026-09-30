@@ -79,6 +79,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
       OfficialAIChatTemplateService.defaults().items;
   final Set<String> _situationTags = {};
   bool _sending = false;
+  bool _syncingTemplates = false;
   String? _error;
 
   List<OfficialAIChatTemplate> get _situationOptions =>
@@ -119,6 +120,19 @@ class _AIChatSheetState extends State<AIChatSheet> {
   Future<void> _loadTemplates() async {
     final templates = await _templateService.loadLocal();
     if (mounted) setState(() => _templates = templates);
+  }
+
+  Future<void> _retryTemplateSync() async {
+    if (_syncingTemplates) return;
+    setState(() => _syncingTemplates = true);
+    try {
+      final templates = await _templateService.synchronize();
+      if (mounted) setState(() => _templates = templates);
+    } catch (_) {
+      _showTemplateMessage('同期できませんでした。端末のテンプレートはそのまま利用できます。');
+    } finally {
+      if (mounted) setState(() => _syncingTemplates = false);
+    }
   }
 
   Future<void> _loadOfficialTemplates() async {
@@ -414,6 +428,20 @@ class _AIChatSheetState extends State<AIChatSheet> {
                 ),
               ],
             ),
+            if (_templates.any((item) => item.pendingSync)) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 18),
+                  const SizedBox(width: 6),
+                  const Expanded(child: Text('未同期のテンプレートがあります')),
+                  TextButton(
+                    onPressed: _syncingTemplates ? null : _retryTemplateSync,
+                    child: Text(_syncingTemplates ? '同期中' : '再試行'),
+                  ),
+                ],
+              ),
+            ],
             const Divider(height: 24),
             if (_messages.isEmpty)
               const Padding(

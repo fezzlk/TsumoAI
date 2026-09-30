@@ -9,6 +9,7 @@ import 'package:tsumoai_mobile/widgets/ai_chat_sheet.dart';
 
 class _MemoryTemplateService extends QuestionTemplateService {
   final List<QuestionTemplate> items = [];
+  var synchronizations = 0;
 
   @override
   Future<List<QuestionTemplate>> loadLocal() async => [...items];
@@ -25,6 +26,18 @@ class _MemoryTemplateService extends QuestionTemplateService {
     );
     items.add(item);
     return item;
+  }
+
+  @override
+  Future<List<QuestionTemplate>> synchronize() async {
+    synchronizations++;
+    final synced = [
+      for (final item in items) item.copyWith(pendingSync: false),
+    ];
+    items
+      ..clear()
+      ..addAll(synced);
+    return synced;
   }
 }
 
@@ -118,5 +131,51 @@ void main() {
     expect(find.textContaining('回答を取得できませんでした'), findsOneWidget);
     expect(find.widgetWithText(TextField, '鳴くべき？'), findsOneWidget);
     expect(changed, isEmpty);
+  });
+
+  testWidgets('shows pending template sync and retries in place', (
+    tester,
+  ) async {
+    final templates = _MemoryTemplateService();
+    final now = DateTime.utc(2026, 10, 1);
+    templates.items.add(
+      QuestionTemplate(
+        id: 'pending',
+        name: '未同期',
+        body: '質問',
+        createdAt: now,
+        updatedAt: now,
+        accountUid: 'user',
+        pendingSync: true,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AIChatSheet(
+            purpose: 'discard',
+            tiles: const ['1m'],
+            roundContext: const {},
+            analysis: const {},
+            templateService: templates,
+            officialTemplateService: _OfficialTemplates(),
+            sender:
+                ({
+                  required message,
+                  required conversation,
+                  required situationTags,
+                }) async => '回答',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('未同期のテンプレートがあります'), findsOneWidget);
+    await tester.tap(find.text('再試行'));
+    await tester.pumpAndSettle();
+
+    expect(templates.synchronizations, 1);
+    expect(find.text('未同期のテンプレートがあります'), findsNothing);
   });
 }
