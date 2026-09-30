@@ -193,12 +193,6 @@ class _ScanScreenState extends State<ScanScreen> {
   Map<String, dynamic>? _analysisResult;
   final RequestEpoch _requestEpoch = RequestEpoch();
 
-  // Inline meld-selection mode (see `_buildTileControlsRow`): while active, taps
-  // on the thumbnail row pick meld members instead of their normal
-  // edit/correct behavior.
-  bool _isSelectingMeld = false;
-  final Set<int> _meldSelection = {};
-
   late ContextInput _context;
   _WinConditionStep _winConditionStep = _WinConditionStep.riichi;
   bool _winConditionsComplete = false;
@@ -228,8 +222,6 @@ class _ScanScreenState extends State<ScanScreen> {
     _confirmedWinningTileId = _defaultWinningTileId;
     _winningTileManuallySet = false;
     _confirmedMelds.clear();
-    _isSelectingMeld = false;
-    _meldSelection.clear();
   }
 
   /// Physical-tile indices with an identified tile, ascending — the ◀/▶
@@ -1532,53 +1524,140 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
-  void _startMeldSelection() {
-    setState(() {
-      _isSelectingMeld = true;
-      _meldSelection.clear();
-    });
-  }
-
-  void _cancelMeldSelection() {
-    setState(() {
-      _isSelectingMeld = false;
-      _meldSelection.clear();
-    });
-  }
-
-  void _toggleMeldSelection(int index) {
-    if (!_meldEligibleIndices.contains(index)) return;
-    setState(() {
-      if (_meldSelection.contains(index)) {
-        _meldSelection.remove(index);
-      } else if (_meldSelection.length < 4) {
-        _meldSelection.add(index);
-      }
-    });
-  }
-
-  List<String> get _meldSelectionTileCodes => _meldSelection
-      .map((index) => _tiles[index])
-      .whereType<String>()
-      .toList(growable: false);
-
-  /// Appends a `ConfirmedMeld` built from the current `_meldSelection` and
-  /// exits selection mode. [type]/[open] are the wire values to record —
-  /// callers must already know these are valid for the current selection
-  /// (pon/chi from `detectMeldType`, or the user's own 暗槓/明槓 choice for a
-  /// 4-tile kan).
-  void _confirmMeldSelection({required String type, required bool open}) {
-    final observationIds = _meldSelection
+  void _addConfirmedMeld(
+    Set<int> selection, {
+    required String type,
+    required bool open,
+  }) {
+    final observationIds = (selection.toList()..sort())
         .map((index) => 'tile-${index.toString().padLeft(3, '0')}')
         .toList(growable: false);
     setState(() {
       _confirmedMelds.add(
         ConfirmedMeld(observationIds: observationIds, type: type, open: open),
       );
-      _isSelectingMeld = false;
-      _meldSelection.clear();
       _invalidateAnalysisAndMaybeRecalculate();
     });
+  }
+
+  Future<void> _showMeldSelectionDialog() async {
+    final eligible = _meldEligibleIndices;
+    if (eligible.isEmpty) return;
+    final selection = <int>{};
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final codes = (selection.toList()..sort())
+              .map((index) => _tiles[index])
+              .whereType<String>()
+              .toList(growable: false);
+          final detection = detectMeldType(codes);
+
+          void addMeld(String type, {required bool open}) {
+            Navigator.pop(dialogContext);
+            _addConfirmedMeld(selection, type: type, open: open);
+          }
+
+          return AlertDialog(
+            title: const Row(
+              children: [Expanded(child: Text('副露を追加')), CloseButton()],
+            ),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final index in eligible)
+                          GestureDetector(
+                            key: ValueKey('meld-dialog-tile-$index'),
+                            onTap: () => setDialogState(() {
+                              if (!selection.remove(index) &&
+                                  selection.length < 4) {
+                                selection.add(index);
+                              }
+                            }),
+                            child: Container(
+                              width: 42,
+                              height: 58,
+                              padding: const EdgeInsets.all(2),
+                              decoration: BoxDecoration(
+                                color: selection.contains(index)
+                                    ? Colors.green.withValues(alpha: 0.25)
+                                    : Colors.white.withValues(alpha: 0.08),
+                                border: Border.all(
+                                  color: selection.contains(index)
+                                      ? Colors.greenAccent
+                                      : Colors.white24,
+                                  width: selection.contains(index) ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: TileGlyph(tileCode: _tiles[index]!),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (selection.length == 3) ...[
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed:
+                            detection == MeldDetection.pon ||
+                                detection == MeldDetection.chi
+                            ? () => addMeld(
+                                detection == MeldDetection.pon ? 'pon' : 'chi',
+                                open: true,
+                              )
+                            : null,
+                        child: const Text('確定'),
+                      ),
+                    ] else if (selection.length == 4 &&
+                        detection == MeldDetection.kan) ...[
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final closed = OutlinedButton(
+                            onPressed: () => addMeld('ankan', open: false),
+                            child: const Text('暗槓で追加'),
+                          );
+                          final open = FilledButton(
+                            onPressed: () => addMeld('kan', open: true),
+                            child: const Text('明槓で追加'),
+                          );
+                          if (constraints.maxWidth < 280) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                closed,
+                                const SizedBox(height: 8),
+                                open,
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(child: closed),
+                              const SizedBox(width: 8),
+                              Expanded(child: open),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   /// Compact リーチ(一発) controls for the bottom action bar —
@@ -1672,22 +1751,13 @@ class _ScanScreenState extends State<ScanScreen> {
     final tileAsset = tile == null ? null : tileAssetPath(tile);
     final winningTileId = 'tile-${index.toString().padLeft(3, '0')}';
     final isWinningTile = _confirmedWinningTileId == winningTileId;
-    final isMeldSelected = _meldSelection.contains(index);
-    final isMeldEligible = _meldEligibleIndices.contains(index);
     final canBeWinningTile =
-        _operation == HandOperation.score &&
-        tile != null &&
-        !_isSelectingMeld;
-    final showMeldFrame =
-        !_isSelectingMeld && _isConfirmedMeldMember(index);
+        _operation == HandOperation.score && tile != null;
+    final showMeldFrame = _isConfirmedMeldMember(index);
     final cropHeight = cellWidth * 1.4;
 
     final cropImage = GestureDetector(
-      onTap: thumb == null
-          ? null
-          : _isSelectingMeld
-          ? () => _toggleMeldSelection(index)
-          : () => _openBoxEditor(index),
+      onTap: thumb == null ? null : () => _openBoxEditor(index),
       child: SizedBox(
         width: cellWidth,
         height: cropHeight,
@@ -1700,11 +1770,7 @@ class _ScanScreenState extends State<ScanScreen> {
     );
 
     final glyphCore = GestureDetector(
-      onTap: thumb == null
-          ? null
-          : _isSelectingMeld
-          ? () => _toggleMeldSelection(index)
-          : () => _onSlotTap(index),
+      onTap: thumb == null ? null : () => _onSlotTap(index),
       child: Container(
         width: cellWidth,
         height: cellWidth,
@@ -1759,28 +1825,10 @@ class _ScanScreenState extends State<ScanScreen> {
       ],
     );
 
-    Widget result = Column(
+    final result = Column(
       mainAxisSize: MainAxisSize.min,
       children: [cropImage, const SizedBox(height: 4), glyph],
     );
-    if (_isSelectingMeld) {
-      result = Stack(
-        children: [
-          Opacity(opacity: isMeldEligible ? 1 : 0.35, child: result),
-          if (isMeldSelected)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.greenAccent, width: 2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      );
-    }
     return RepaintBoundary(
       key: ValueKey('result-tile-$index'),
       child: SizedBox(width: cellWidth, child: result),
@@ -1792,11 +1840,7 @@ class _ScanScreenState extends State<ScanScreen> {
   /// (right) in a single row, directly below the thumbnail row — no boxed
   /// section around it (an earlier version wrapped 副露 controls in their
   /// own always-visible `Container`, which the user found needlessly tall).
-  /// While `_isSelectingMeld`, this row is replaced entirely by
-  /// `_buildMeldSelectionStatus()`.
   Widget _buildTileControlsRow() {
-    if (_isSelectingMeld) return _buildMeldSelectionStatus();
-
     final position = _winningTilePosition;
     final lastPosition = _identifiedIndices.length - 1;
     final winningTileCode = _confirmedWinningTileId == null
@@ -1807,7 +1851,9 @@ class _ScanScreenState extends State<ScanScreen> {
       spacing: 4,
       children: [
         TextButton.icon(
-          onPressed: _meldEligibleIndices.isEmpty ? null : _startMeldSelection,
+          onPressed: _meldEligibleIndices.isEmpty
+              ? null
+              : _showMeldSelectionDialog,
           icon: const Icon(Icons.add, size: 18),
           label: const Text('副露を追加'),
         ),
@@ -1870,69 +1916,6 @@ class _ScanScreenState extends State<ScanScreen> {
         }
         return Row(children: [meldControls, const Spacer(), winningControls]);
       },
-    );
-  }
-
-  /// The inline status/confirm row shown while `_isSelectingMeld` — replaces
-  /// `MeldTilePicker`'s bottom sheet: the user taps thumbnails in the
-  /// results row directly (see `_toggleMeldSelection`) instead of picking
-  /// from a separate grid, and pon/chi/kan is inferred from what they picked
-  /// (`detectMeldType`) instead of an explicit type dropdown.
-  Widget _buildMeldSelectionStatus() {
-    final codes = _meldSelectionTileCodes;
-    final detection = detectMeldType(codes);
-    final count = _meldSelection.length;
-    final target = count == 4 ? 4 : 3;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'サムネイルをタップして3枚（チー/ポン）または4枚（槓）選択 '
-          '($count/$target)',
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            TextButton(
-              onPressed: _cancelMeldSelection,
-              child: const Text('キャンセル'),
-            ),
-            const SizedBox(width: 8),
-            if (detection == MeldDetection.kan) ...[
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () =>
-                      _confirmMeldSelection(type: 'ankan', open: false),
-                  child: const Text('暗槓（閉じ）'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () =>
-                      _confirmMeldSelection(type: 'kan', open: true),
-                  child: const Text('明槓（開き）'),
-                ),
-              ),
-            ] else
-              Expanded(
-                child: FilledButton(
-                  onPressed:
-                      detection == MeldDetection.pon ||
-                          detection == MeldDetection.chi
-                      ? () => _confirmMeldSelection(
-                          type: detection == MeldDetection.pon ? 'pon' : 'chi',
-                          open: true,
-                        )
-                      : null,
-                  child: const Text('確定'),
-                ),
-              ),
-          ],
-        ),
-      ],
     );
   }
 
