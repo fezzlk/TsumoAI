@@ -251,6 +251,9 @@ class _CallDetailDialog extends StatelessWidget {
         .toList(growable: false);
     final discards = _maps(item['discards']);
     final replacementTiles = _maps(item['replacement_tiles']);
+    final possibleYaku = (item['possible_yaku'] as List<dynamic>? ?? const [])
+        .map((value) => value.toString())
+        .toList(growable: false);
     final recommendation = _recommendationOf(item);
     final after = _asInt(item['shanten_after_call']);
     final reason = switch (recommendation) {
@@ -292,6 +295,15 @@ class _CallDetailDialog extends StatelessWidget {
               Text('向聴数: $currentShanten → $after'),
               const SizedBox(height: 6),
               Text(reason),
+              if (possibleYaku.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  '成立可能役',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(possibleYaku.join('・')),
+              ],
               if (item['call_type'] == 'chi') ...[
                 const SizedBox(height: 6),
                 const Text('上家から出た場合だけチーできます。'),

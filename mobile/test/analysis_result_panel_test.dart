@@ -76,6 +76,7 @@ void main() {
             'consumed_tiles': ['1m', '2m'],
             'shanten_after_call': 1,
             'recommendation': 'improves',
+            'possible_yaku': ['役牌 白'],
             'discards': [
               {
                 'discard': 'E',
@@ -122,6 +123,8 @@ void main() {
     expect(find.text('向聴数: 2 → 1'), findsOneWidget);
     expect(find.text('鳴いた後に切る候補'), findsOneWidget);
     expect(find.text('受け入れ 4枚'), findsOneWidget);
+    expect(find.text('成立可能役'), findsOneWidget);
+    expect(find.text('役牌 白'), findsOneWidget);
     expect(find.text('上家から出た場合だけチーできます。'), findsOneWidget);
   });
 }

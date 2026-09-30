@@ -108,6 +108,40 @@ def test_call_analysis_lists_possible_calls_without_an_opponent_selection():
     assert all(item["recommendation"] in {"improves", "keeps", "worsens"} for item in body["calls"])
 
 
+def test_call_analysis_reports_only_deterministically_scored_possible_yaku():
+    response = client.post(
+        "/api/v1/calls/analyze",
+        json={
+            "closed_tiles": [
+                "P", "P", "1m", "2m", "3m", "4m", "5m", "6m",
+                "7p", "8p", "9p", "E", "E",
+            ],
+            "context": {
+                "win_type": "ron", "is_dealer": False,
+                "round_wind": "E", "seat_wind": "S",
+                "riichi": False, "ippatsu": False,
+                "haitei": False, "houtei": False,
+                "rinshan": False, "chankan": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    pon = next(
+        item
+        for item in response.json()["calls"]
+        if item["call_type"] == "pon" and item["call_tile"] == "P"
+    )
+    assert pon["shanten_after_call"] == 0
+    assert "役牌 白" in pon["possible_yaku"]
+    assert "ドラ" not in pon["possible_yaku"]
+    assert all(
+        wait["score"] is None and wait["score_error"] is None
+        for discard in pon["discards"]
+        for wait in discard["improving_tiles"]
+    )
+
+
 def test_call_analysis_requires_thirteen_tile_shape():
     response = client.post(
         "/api/v1/calls/analyze",

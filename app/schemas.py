@@ -268,6 +268,7 @@ class CallAnalysisResult(BaseModel):
     consumed_tiles: list[TileCode]
     shanten_after_call: int
     recommendation: Literal["improves", "keeps", "worsens"]
+    possible_yaku: list[str] = Field(default_factory=list)
     discards: list[DiscardAnalysisResult] = Field(default_factory=list)
     replacement_tiles: list[WaitAnalysis] = Field(default_factory=list)
 
