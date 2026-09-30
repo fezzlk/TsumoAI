@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -52,6 +53,13 @@ class PerformanceTrace {
 
   void log() {
     if (kReleaseMode) return;
-    debugPrint('PERFORMANCE_TRACE ${jsonEncode(snapshot())}');
+    final message = 'PERFORMANCE_TRACE ${jsonEncode(snapshot())}';
+    // `debugPrint` is visible while attached through Flutter tooling, but an
+    // iOS profile build launched with `devicectl --console` does not always
+    // forward Dart's debug-print stream. stderr is captured by both paths,
+    // which keeps real-device profiling usable without affecting release
+    // builds (guarded above).
+    stderr.writeln(message);
+    if (kDebugMode) debugPrint(message);
   }
 }
