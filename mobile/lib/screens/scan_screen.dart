@@ -458,7 +458,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
     _isAnalyzingFrame = true;
     try {
-      final result = await TileDetector.detect(frame);
+      final result = await TileDetector.detect(
+        frame,
+        const TileDetectorParams(
+          scanRegionTop: captureGuideTopFactor,
+          scanRegionBottom:
+              captureGuideTopFactor + captureGuideHeightFactor,
+        ),
+      );
       if (!mounted || _phase != _ScanPhase.camera) return;
 
       final candidateCount = result.tileCount;
@@ -2484,11 +2491,14 @@ class _ScanScreenState extends State<ScanScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           AspectRatio(
-            aspectRatio: captureFrameAspectRatio,
+            aspectRatio:
+                captureFrameAspectRatio *
+                captureGuideWidthFactor /
+                captureGuideHeightFactor,
             child: Stack(
               fit: StackFit.expand,
               children: [
-                _buildWideCameraPreview(),
+                _buildCaptureAreaPreview(),
                 Positioned(
                   left: 12,
                   top: 8,
@@ -2496,26 +2506,6 @@ class _ScanScreenState extends State<ScanScreen> {
                     onPressed: () => Navigator.maybePop(context),
                     icon: const Icon(Icons.arrow_back),
                     tooltip: '戻る',
-                  ),
-                ),
-                Align(
-                  // Matches cropToCaptureGuide(): the guide is the actual
-                  // detection area, not merely a visual suggestion.
-                  alignment: const Alignment(0, 0.5),
-                  child: FractionallySizedBox(
-                    widthFactor: captureGuideWidthFactor,
-                    heightFactor: captureGuideHeightFactor,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                            color: Colors.greenAccent.withValues(alpha: 0.8),
-                            width: 2,
-                          ),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
                   ),
                 ),
                 Positioned(
@@ -2564,6 +2554,27 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
   }
+
+  /// Shows only the same sub-region persisted by [prepareCapturedFrame].
+  /// The source preview remains 16:9, while the viewport expands the guide
+  /// crop to fill the available width. This keeps off-frame reflections out
+  /// of both what the user sees and what final recognition receives.
+  Widget _buildCaptureAreaPreview() => LayoutBuilder(
+    builder: (context, constraints) {
+      final sourceWidth = constraints.maxWidth / captureGuideWidthFactor;
+      final sourceHeight = constraints.maxHeight / captureGuideHeightFactor;
+      return ClipRect(
+        child: OverflowBox(
+          alignment: const Alignment(0, 0.5),
+          minWidth: sourceWidth,
+          maxWidth: sourceWidth,
+          minHeight: sourceHeight,
+          maxHeight: sourceHeight,
+          child: _buildWideCameraPreview(),
+        ),
+      );
+    },
+  );
 
   Widget _buildCaptureButton() {
     return Semantics(
