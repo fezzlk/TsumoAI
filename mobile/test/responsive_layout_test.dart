@@ -8,6 +8,7 @@ import 'package:tsumoai_mobile/screens/match_home_screen.dart';
 import 'package:tsumoai_mobile/services/history_service.dart';
 import 'package:tsumoai_mobile/models/history_entry.dart';
 import 'package:tsumoai_mobile/widgets/analysis_result_panel.dart';
+import 'package:tsumoai_mobile/widgets/game_state_panel.dart';
 import 'package:tsumoai_mobile/widgets/score_result_panel.dart';
 import 'package:tsumoai_mobile/widgets/tile_count_selector.dart';
 import 'package:tsumoai_mobile/widgets/tile_image_picker.dart';
@@ -386,5 +387,40 @@ void main() {
 
     expect(find.byKey(const ValueKey('analysis-discard-1m-0')), findsOneWidget);
     expectNoOverflow(tester);
+  });
+
+  testWidgets('round and seat winds use one-tap dialogs on a narrow screen', (
+    tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    var value = ContextInput(roundWind: 'E', seatWind: 'S');
+
+    await pumpAtDeviceSize(
+      tester,
+      StatefulBuilder(
+        builder: (context, setState) => Scaffold(
+          body: GameStatePanel(
+            context_: value,
+            onChanged: (next) => setState(() => value = next),
+          ),
+        ),
+      ),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+    await tester.pumpAndSettle();
+    expectNoOverflow(tester);
+
+    await tester.tap(find.byKey(const ValueKey('wind-selector-場風')));
+    await tester.pumpAndSettle();
+    expect(find.text('場風を選択'), findsOneWidget);
+    expect(find.text('確定'), findsNothing);
+    expectNoOverflow(tester);
+
+    await tester.tap(find.byKey(const ValueKey('場風-W')));
+    await tester.pumpAndSettle();
+    expect(value.roundWind, 'W');
+    expect(find.text('西'), findsOneWidget);
   });
 }
