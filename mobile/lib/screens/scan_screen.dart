@@ -1666,6 +1666,127 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  Widget _buildResultTile(int index, double cellWidth) {
+    final thumb = _croppedImageThumbnails[index];
+    final tile = _tiles[index];
+    final tileAsset = tile == null ? null : tileAssetPath(tile);
+    final winningTileId = 'tile-${index.toString().padLeft(3, '0')}';
+    final isWinningTile = _confirmedWinningTileId == winningTileId;
+    final isMeldSelected = _meldSelection.contains(index);
+    final isMeldEligible = _meldEligibleIndices.contains(index);
+    final canBeWinningTile =
+        _operation == HandOperation.score &&
+        tile != null &&
+        !_isSelectingMeld;
+    final showMeldFrame =
+        !_isSelectingMeld && _isConfirmedMeldMember(index);
+    final cropHeight = cellWidth * 1.4;
+
+    final cropImage = GestureDetector(
+      onTap: thumb == null
+          ? null
+          : _isSelectingMeld
+          ? () => _toggleMeldSelection(index)
+          : () => _openBoxEditor(index),
+      child: SizedBox(
+        width: cellWidth,
+        height: cropHeight,
+        child: thumb == null
+            ? const DecoratedBox(
+                decoration: BoxDecoration(color: Colors.white10),
+              )
+            : Image.memory(thumb, fit: BoxFit.cover),
+      ),
+    );
+
+    final glyphCore = GestureDetector(
+      onTap: thumb == null
+          ? null
+          : _isSelectingMeld
+          ? () => _toggleMeldSelection(index)
+          : () => _onSlotTap(index),
+      child: Container(
+        width: cellWidth,
+        height: cellWidth,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        alignment: Alignment.center,
+        child: _isClassifying[index]
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: Colors.white54,
+                ),
+              )
+            : tileAsset != null
+            ? Image.asset(tileAsset, fit: BoxFit.contain)
+            : const Text(
+                '?',
+                style: TextStyle(color: Colors.white38, fontSize: 16),
+              ),
+      ),
+    );
+
+    final glyph = Stack(
+      children: [
+        glyphCore,
+        if (canBeWinningTile && isWinningTile)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.amber, width: 2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ),
+        if (showMeldFrame)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.lightBlueAccent, width: 2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+
+    Widget result = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [cropImage, const SizedBox(height: 4), glyph],
+    );
+    if (_isSelectingMeld) {
+      result = Stack(
+        children: [
+          Opacity(opacity: isMeldEligible ? 1 : 0.35, child: result),
+          if (isMeldSelected)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.greenAccent, width: 2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+    return RepaintBoundary(
+      key: ValueKey('result-tile-$index'),
+      child: SizedBox(width: cellWidth, child: result),
+    );
+  }
+
   /// ◀/▶ controls stepping あがり牌 through `_identifiedIndices`.
   /// Combined 副露 add/reset controls (left) and あがり牌 ◀/▶ control
   /// (right) in a single row, directly below the thumbnail row — no boxed
@@ -2869,153 +2990,22 @@ class _ScanScreenState extends State<ScanScreen> {
                   // classification finishes). Tapping the crop opens the box
                   // editor; tapping the illustration opens the tile picker,
                   // except while meld selection redirects taps to membership.
-                  SizedBox(
-                    height: 118,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _visibleSlotCount,
-                      itemBuilder: (_, i) {
-                        final thumb = _croppedImageThumbnails[i];
-                        if (thumb == null) return const SizedBox(width: 40);
-                        final tile = _tiles[i];
-                        final tileAsset = tile == null
-                            ? null
-                            : tileAssetPath(tile);
-                        final winningTileId =
-                            'tile-${i.toString().padLeft(3, '0')}';
-                        final isWinningTile =
-                            _confirmedWinningTileId == winningTileId;
-                        final isMeldSelected = _meldSelection.contains(i);
-                        final isMeldEligible = _meldEligibleIndices.contains(i);
-                        final canBeWinningTile =
-                            _operation == HandOperation.score &&
-                            tile != null &&
-                            !_isSelectingMeld;
-                        final showMeldFrame =
-                            !_isSelectingMeld && _isConfirmedMeldMember(i);
-
-                        final Widget cropImage = GestureDetector(
-                          onTap: _isSelectingMeld
-                              ? () => _toggleMeldSelection(i)
-                              : () => _openBoxEditor(i),
-                          child: Image.memory(
-                            thumb,
-                            width: 40,
-                            height: 56,
-                            fit: BoxFit.cover,
-                          ),
-                        );
-
-                        final Widget glyphCore = GestureDetector(
-                          onTap: _isSelectingMeld
-                              ? () => _toggleMeldSelection(i)
-                              : () => _onSlotTap(i),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            alignment: Alignment.center,
-                            child: _isClassifying[i]
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.5,
-                                      color: Colors.white54,
-                                    ),
-                                  )
-                                : tileAsset != null
-                                ? Image.asset(tileAsset, fit: BoxFit.contain)
-                                : const Text(
-                                    '?',
-                                    style: TextStyle(
-                                      color: Colors.white38,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                          ),
-                        );
-
-                        // あがり牌 (amber) / confirmed meld membership
-                        // (light blue) borders sit around the glyph only,
-                        // not the crop thumbnail above it.
-                        final Widget glyph = Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            glyphCore,
-                            if (canBeWinningTile && isWinningTile)
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      border: Border.all(
-                                        color: Colors.amber,
-                                        width: 2,
-                                      ),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            if (showMeldFrame)
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      border: Border.all(
-                                        color: Colors.lightBlueAccent,
-                                        width: 2,
-                                      ),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        );
-
-                        Widget column = Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            cropImage,
-                            const SizedBox(height: 4),
-                            glyph,
-                          ],
-                        );
-
-                        // Meld-selection-mode affordance: a colored border
-                        // on a selected slot, dimmed when the slot can't
-                        // join a meld (unidentified or already claimed).
-                        if (_isSelectingMeld) {
-                          column = Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              border: isMeldSelected
-                                  ? Border.all(
-                                      color: Colors.greenAccent,
-                                      width: 2,
-                                    )
-                                  : null,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Opacity(
-                              opacity: isMeldEligible ? 1.0 : 0.35,
-                              child: column,
-                            ),
-                          );
-                        }
-
-                        return RepaintBoundary(
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: column,
-                          ),
-                        );
-                      },
-                    ),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const columns = 9;
+                      const spacing = 3.0;
+                      final available = constraints.maxWidth -
+                          spacing * (columns - 1);
+                      final cellWidth = math.min(40.0, available / columns);
+                      return Wrap(
+                        spacing: spacing,
+                        runSpacing: 8,
+                        children: [
+                          for (var index = 0; index < _visibleSlotCount; index++)
+                            _buildResultTile(index, cellWidth),
+                        ],
+                      );
+                    },
                   ),
 
                   // Combined 副露 add/reset + あがり牌 ◀/▶ controls, one
