@@ -148,3 +148,41 @@ def test_call_analysis_requires_thirteen_tile_shape():
         json={"closed_tiles": ["1m", "2m", "3m"]},
     )
     assert response.status_code == 422
+
+
+def test_call_analysis_includes_kan_when_three_matching_tiles_are_concealed():
+    response = client.post(
+        "/api/v1/calls/analyze",
+        json={
+            "closed_tiles": [
+                "E", "E", "E", "1m", "2m", "3m", "4p", "5p", "6p",
+                "7s", "8s", "9s", "C",
+            ],
+            "include_score_predictions": False,
+        },
+    )
+
+    assert response.status_code == 200
+    east_kan = next(
+        item
+        for item in response.json()["calls"]
+        if item["call_type"] == "kan" and item["call_tile"] == "E"
+    )
+    assert east_kan["consumed_tiles"] == ["E", "E", "E"]
+    assert isinstance(east_kan["replacement_tiles"], list)
+
+
+def test_call_analysis_returns_empty_list_when_no_tile_can_be_called():
+    response = client.post(
+        "/api/v1/calls/analyze",
+        json={
+            "closed_tiles": [
+                "1m", "4m", "7m", "1p", "4p", "7p", "1s", "4s", "7s",
+                "E", "S", "W", "N",
+            ],
+            "include_score_predictions": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["calls"] == []
