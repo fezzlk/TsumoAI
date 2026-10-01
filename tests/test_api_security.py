@@ -114,6 +114,12 @@ def test_privacy_page_is_public():
     assert "DELETE /api/v1/me/data" in response.text
 
 
+def test_contact_redirects_to_support_url():
+    response = client.get("/contact", follow_redirects=False)
+    assert response.status_code in {302, 307}
+    assert response.headers["location"]
+
+
 def test_delete_my_data_requires_login():
     response = client.delete("/api/v1/me/data")
     assert response.status_code == 401

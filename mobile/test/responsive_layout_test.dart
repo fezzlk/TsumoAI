@@ -80,9 +80,7 @@ void main() {
     tester,
   ) async {
     tester.platformDispatcher.textScaleFactorTestValue = 1.3;
-    addTearDown(
-      tester.platformDispatcher.clearTextScaleFactorTestValue,
-    );
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
     await pumpAtDeviceSize(
       tester,
@@ -209,6 +207,12 @@ void main() {
     await tester.drag(find.byType(ListView).last, const Offset(0, -360));
     await tester.pumpAndSettle();
     expect(find.text('プライバシーポリシー'), findsOneWidget);
+    for (final label in ['利用規約', 'プライバシーポリシー', '問い合わせ']) {
+      final tile = tester.widget<ListTile>(
+        find.widgetWithText(ListTile, label),
+      );
+      expect(tile.onTap, isNotNull, reason: '$label must not be a dead end');
+    }
     expectNoOverflow(tester);
   });
 
@@ -303,9 +307,7 @@ void main() {
     expect(selected, '5sr');
   });
 
-  testWidgets('score and chip details wrap on a narrow screen', (
-    tester,
-  ) async {
+  testWidgets('score and chip details wrap on a narrow screen', (tester) async {
     tester.platformDispatcher.textScaleFactorTestValue = 1.3;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 

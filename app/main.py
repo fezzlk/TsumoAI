@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from starlette.concurrency import run_in_threadpool
@@ -289,6 +289,13 @@ API呼び出しが難しい場合は、下記のお問い合わせ窓口から�
 <h2>8. お問い合わせ</h2>
 <p>本サービスの情報の取り扱いに関するお問い合わせは、{contact}からご連絡ください。</p>
 </main></body></html>""")
+
+
+@app.get("/contact", include_in_schema=False)
+def contact() -> RedirectResponse:
+    return RedirectResponse(
+        settings.contact_form_url or "https://github.com/fezzlk/TsumoAI/issues",
+    )
 
 
 @app.get("/health")

@@ -116,20 +116,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _showHelp(context),
             ),
-            const ListTile(
-              leading: Icon(Icons.description_outlined),
-              title: Text('利用規約'),
-              trailing: Icon(Icons.chevron_right),
+            ListTile(
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('利用規約'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () => _openExternalPage('/terms'),
             ),
-            const ListTile(
-              leading: Icon(Icons.privacy_tip_outlined),
-              title: Text('プライバシーポリシー'),
-              trailing: Icon(Icons.chevron_right),
+            ListTile(
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('プライバシーポリシー'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () => _openExternalPage('/privacy'),
             ),
-            const ListTile(
-              leading: Icon(Icons.mail_outline),
-              title: Text('問い合わせ'),
-              trailing: Icon(Icons.chevron_right),
+            ListTile(
+              leading: const Icon(Icons.mail_outline),
+              title: const Text('問い合わせ'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () => _openExternalPage('/contact'),
             ),
             if (_checkingAdmin)
               const Padding(
@@ -172,6 +175,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     ),
   );
+
+  Future<void> _openExternalPage(String path) async {
+    final opened = await launchUrl(
+      Uri.parse('${AppConfig.apiBaseUrl}$path'),
+      mode: LaunchMode.externalApplication,
+    );
+    if (opened || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('ページを開けませんでした。通信状態を確認してください。')),
+    );
+  }
 
   Future<void> _confirmDeleteHistory() async {
     final signedIn = AuthService.currentUser != null;
