@@ -1195,6 +1195,7 @@ class _ScanScreenState extends State<ScanScreen> {
         roundLabel: widget.historyRoundLabel,
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
+          'recognition_model': _recognitionModelMetadata,
           'context': _context.toJson(),
           'rule_settings': widget.ruleSettings.toJson(),
           'tsumo': resultDetails(tsumoResponse),
@@ -1222,6 +1223,7 @@ class _ScanScreenState extends State<ScanScreen> {
         roundLabel: widget.historyRoundLabel,
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
+          'recognition_model': _recognitionModelMetadata,
           'context': _context.toJson(),
           'rule_settings': widget.ruleSettings.toJson(),
           'result': result,
@@ -1234,6 +1236,12 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
   }
+
+  Map<String, String> get _recognitionModelMetadata => {
+    'version': _classifier.modelVersion,
+    'source': _classifier.modelSource,
+    'preprocessing_version': _classifier.preprocessingVersion,
+  };
 
   Future<void> _openAiChat({
     Map<String, dynamic>? selectedCall,
