@@ -5,12 +5,14 @@ import 'package:tsumoai_mobile/widgets/analysis_result_panel.dart';
 Widget subject(
   Map<String, dynamic> result, {
   ValueChanged<Map<String, dynamic>>? onAskAiAboutCall,
+  ValueChanged<String>? onAskAiWithDiscardFocus,
 }) => MaterialApp(
   home: Scaffold(
     backgroundColor: Colors.black,
     body: AnalysisResultPanel(
       result: result,
       onAskAiAboutCall: onAskAiAboutCall,
+      onAskAiWithDiscardFocus: onAskAiWithDiscardFocus,
     ),
   ),
 );
@@ -95,6 +97,32 @@ void main() {
     expect(find.text('3位'), findsOneWidget);
     expect(find.byKey(const ValueKey('analysis-discard-4m-3')), findsNothing);
   });
+
+  testWidgets(
+    'discard focus opens AI consultation without relabeling results',
+    (tester) async {
+      String? selectedFocus;
+      await tester.pumpWidget(
+        subject({
+          'shanten': 1,
+          'discards': [
+            {
+              'discard': '1m',
+              'shanten': 1,
+              'total_remaining': 12,
+              'improving_tiles': <Object>[],
+            },
+          ],
+        }, onAskAiWithDiscardFocus: (focus) => selectedFocus = focus),
+      );
+
+      expect(find.text('牌効率重視の上位3候補'), findsOneWidget);
+      expect(find.text('別の判断基準でAIに相談'), findsOneWidget);
+      await tester.tap(find.text('守備考慮'));
+
+      expect(selectedFocus, '守備考慮');
+    },
+  );
 
   testWidgets('call result groups candidates and opens deterministic details', (
     tester,

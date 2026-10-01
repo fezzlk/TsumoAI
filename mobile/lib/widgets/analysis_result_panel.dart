@@ -7,11 +7,13 @@ import 'tile_glyph.dart';
 class AnalysisResultPanel extends StatelessWidget {
   final Map<String, dynamic> result;
   final ValueChanged<Map<String, dynamic>>? onAskAiAboutCall;
+  final ValueChanged<String>? onAskAiWithDiscardFocus;
 
   const AnalysisResultPanel({
     super.key,
     required this.result,
     this.onAskAiAboutCall,
+    this.onAskAiWithDiscardFocus,
   });
 
   @override
@@ -68,6 +70,25 @@ class AnalysisResultPanel extends StatelessWidget {
             for (var index = 0; index < discards.length; index++) ...[
               if (index > 0) const SizedBox(height: 8),
               _DiscardResult(item: discards[index], index: index),
+            ],
+            if (onAskAiWithDiscardFocus != null) ...[
+              const SizedBox(height: 12),
+              const Text(
+                '別の判断基準でAIに相談',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final focus in ['打点優先', '即和了優先', '守備考慮'])
+                    ActionChip(
+                      label: Text(focus),
+                      onPressed: () => onAskAiWithDiscardFocus!(focus),
+                    ),
+                ],
+              ),
             ],
           ],
           if (calls.isNotEmpty) ...[

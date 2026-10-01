@@ -29,6 +29,8 @@ class AIChatSheet extends StatefulWidget {
     this.templateService,
     this.officialTemplateService,
     this.usageLoader,
+    this.initialSituationTags = const [],
+    this.initialDraft,
   });
 
   final String purpose;
@@ -41,6 +43,8 @@ class AIChatSheet extends StatefulWidget {
   final QuestionTemplateService? templateService;
   final OfficialAIChatTemplateService? officialTemplateService;
   final AIUsageLoader? usageLoader;
+  final List<String> initialSituationTags;
+  final String? initialDraft;
 
   static Future<void> show(
     BuildContext context, {
@@ -50,6 +54,8 @@ class AIChatSheet extends StatefulWidget {
     required Map<String, dynamic> analysis,
     List<AIChatMessage> initialMessages = const [],
     ValueChanged<List<AIChatMessage>>? onMessagesChanged,
+    List<String> initialSituationTags = const [],
+    String? initialDraft,
   }) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -64,6 +70,8 @@ class AIChatSheet extends StatefulWidget {
         analysis: analysis,
         initialMessages: initialMessages,
         onMessagesChanged: onMessagesChanged,
+        initialSituationTags: initialSituationTags,
+        initialDraft: initialDraft,
       ),
     ),
   );
@@ -115,6 +123,8 @@ class _AIChatSheetState extends State<AIChatSheet> {
     _officialTemplateService =
         widget.officialTemplateService ?? OfficialAIChatTemplateService();
     _messages = [...widget.initialMessages];
+    _situationTags.addAll(widget.initialSituationTags);
+    _controller.text = widget.initialDraft ?? '';
     _loadTemplates();
     _loadOfficialTemplates();
     _loadUsage();
@@ -444,6 +454,17 @@ class _AIChatSheetState extends State<AIChatSheet> {
               spacing: 6,
               runSpacing: 2,
               children: [
+                for (final selected in _situationTags.where(
+                  (selected) => !_situationOptions.any(
+                    (option) => option.body == selected,
+                  ),
+                ))
+                  FilterChip(
+                    label: Text(selected),
+                    selected: true,
+                    onSelected: (_) =>
+                        setState(() => _situationTags.remove(selected)),
+                  ),
                 for (final tag in _situationOptions)
                   FilterChip(
                     label: Text(tag.label),

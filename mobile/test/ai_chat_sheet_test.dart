@@ -229,4 +229,36 @@ void main() {
     );
     expect(tester.widget<IconButton>(sendButton).onPressed, isNull);
   });
+
+  testWidgets('opens with a selected judgment focus and editable draft', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AIChatSheet(
+            purpose: 'discard',
+            tiles: const ['1m'],
+            roundContext: const {},
+            analysis: const {'discards': []},
+            initialSituationTags: const ['守備考慮'],
+            initialDraft: '守備考慮で何を切る？',
+            templateService: _MemoryTemplateService(),
+            officialTemplateService: _OfficialTemplates(),
+            sender:
+                ({
+                  required message,
+                  required conversation,
+                  required situationTags,
+                }) async => '回答',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('守備考慮'), findsOneWidget);
+    final input = tester.widget<TextField>(find.byType(TextField).last);
+    expect(input.controller?.text, '守備考慮で何を切る？');
+  });
 }

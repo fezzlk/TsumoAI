@@ -1235,7 +1235,10 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Future<void> _openAiChat([Map<String, dynamic>? selectedCall]) async {
+  Future<void> _openAiChat({
+    Map<String, dynamic>? selectedCall,
+    String? discardFocus,
+  }) async {
     final result = _analysisResult;
     if (result == null ||
         widget.purpose == ScanPurpose.score ||
@@ -1251,6 +1254,10 @@ class _ScanScreenState extends State<ScanScreen> {
       roundContext: _context.toJson(),
       analysis: {...result, 'selected_call': ?selectedCall},
       initialMessages: _chatMessages,
+      initialSituationTags: [?discardFocus],
+      initialDraft: discardFocus == null
+          ? null
+          : '$discardFocusで、上位3候補から何を切るべきか理由も含めて教えて',
       onMessagesChanged: (messages) {
         if (mounted) setState(() => _chatMessages = messages);
         _historyUpdateQueue = _historyUpdateQueue.then((_) async {
@@ -2054,7 +2061,12 @@ class _ScanScreenState extends State<ScanScreen> {
                         result: _analysisResult!,
                         onAskAiAboutCall:
                             widget.purpose == ScanPurpose.callAdvice
-                            ? (candidate) => _openAiChat(candidate)
+                            ? (candidate) =>
+                                  _openAiChat(selectedCall: candidate)
+                            : null,
+                        onAskAiWithDiscardFocus:
+                            widget.purpose == ScanPurpose.discard
+                            ? (focus) => _openAiChat(discardFocus: focus)
                             : null,
                       ),
                     ),
@@ -3184,7 +3196,11 @@ class _ScanScreenState extends State<ScanScreen> {
                     AnalysisResultPanel(
                       result: _analysisResult!,
                       onAskAiAboutCall: widget.purpose == ScanPurpose.callAdvice
-                          ? (candidate) => _openAiChat(candidate)
+                          ? (candidate) => _openAiChat(selectedCall: candidate)
+                          : null,
+                      onAskAiWithDiscardFocus:
+                          widget.purpose == ScanPurpose.discard
+                          ? (focus) => _openAiChat(discardFocus: focus)
                           : null,
                     ),
                     if (widget.purpose == ScanPurpose.discard ||
