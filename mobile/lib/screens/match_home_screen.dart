@@ -111,6 +111,30 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
     }
   }
 
+  Future<void> _confirmEndMatch() async {
+    final shouldEnd = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            const Expanded(child: Text('対局を終了しますか？')),
+            CloseButton(onPressed: () => Navigator.pop(dialogContext, false)),
+          ],
+        ),
+        content: Text('${_match.current.roundLabel}で対局を終了します。局の進行状況はリセットされます。'),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('対局を終了'),
+          ),
+        ],
+      ),
+    );
+    if (shouldEnd != true || !mounted) return;
+    widget.onMatchEnded?.call();
+    Navigator.pop(context);
+  }
+
   Future<void> _addDora() async {
     if (_match.current.doraIndicators.length >= 4) return;
     final selected = await showDialog<String>(
@@ -169,10 +193,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
             SizedBox(
               height: 52,
               child: OutlinedButton(
-                onPressed: () {
-                  widget.onMatchEnded?.call();
-                  Navigator.pop(context);
-                },
+                onPressed: _confirmEndMatch,
                 child: const Text('対局終了'),
               ),
             ),

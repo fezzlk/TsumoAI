@@ -65,4 +65,38 @@ void main() {
 
     expect(find.text('東2局\n0本場'), findsOneWidget);
   });
+
+  testWidgets('match state is cleared only after end confirmation', (
+    tester,
+  ) async {
+    var ended = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MatchHomeScreen(
+          cameras: const [],
+          autoClassify: false,
+          showTrainingDataActions: false,
+          onMatchEnded: () => ended = true,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('対局終了'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('対局を終了しますか？'), findsOneWidget);
+    expect(find.textContaining('局の進行状況はリセットされます'), findsOneWidget);
+    expect(ended, isFalse);
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    expect(ended, isFalse);
+
+    await tester.tap(find.text('対局終了'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('対局を終了'));
+    await tester.pumpAndSettle();
+
+    expect(ended, isTrue);
+  });
 }
