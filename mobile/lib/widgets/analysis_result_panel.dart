@@ -6,8 +6,13 @@ import 'tile_glyph.dart';
 /// numeric parts of the result easy to scan.
 class AnalysisResultPanel extends StatelessWidget {
   final Map<String, dynamic> result;
+  final ValueChanged<Map<String, dynamic>>? onAskAiAboutCall;
 
-  const AnalysisResultPanel({super.key, required this.result});
+  const AnalysisResultPanel({
+    super.key,
+    required this.result,
+    this.onAskAiAboutCall,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +72,11 @@ class AnalysisResultPanel extends StatelessWidget {
           ],
           if (calls.isNotEmpty) ...[
             const SizedBox(height: 10),
-            _CallResults(calls: calls, currentShanten: shanten),
+            _CallResults(
+              calls: calls,
+              currentShanten: shanten,
+              onAskAi: onAskAiAboutCall,
+            ),
             const SizedBox(height: 8),
             const Text(
               'チーは上家から出た場合だけ可能です。役・守備・点数状況は含まない牌効率上の候補です。',
@@ -86,10 +95,15 @@ class AnalysisResultPanel extends StatelessWidget {
 enum _CallRecommendation { recommended, conditional, skip }
 
 class _CallResults extends StatelessWidget {
-  const _CallResults({required this.calls, required this.currentShanten});
+  const _CallResults({
+    required this.calls,
+    required this.currentShanten,
+    this.onAskAi,
+  });
 
   final List<Map<String, dynamic>> calls;
   final int currentShanten;
+  final ValueChanged<Map<String, dynamic>>? onAskAi;
 
   @override
   Widget build(BuildContext context) {
@@ -115,6 +129,7 @@ class _CallResults extends StatelessWidget {
               recommendation: recommendation,
               entries: grouped[recommendation]!,
               currentShanten: currentShanten,
+              onAskAi: onAskAi,
             ),
           ],
       ],
@@ -127,11 +142,13 @@ class _CallRecommendationGroup extends StatelessWidget {
     required this.recommendation,
     required this.entries,
     required this.currentShanten,
+    this.onAskAi,
   });
 
   final _CallRecommendation recommendation;
   final List<({Map<String, dynamic> item, int index})> entries;
   final int currentShanten;
+  final ValueChanged<Map<String, dynamic>>? onAskAi;
 
   @override
   Widget build(BuildContext context) {
@@ -165,6 +182,7 @@ class _CallRecommendationGroup extends StatelessWidget {
                   index: entry.index,
                   currentShanten: currentShanten,
                   accent: color,
+                  onAskAi: onAskAi,
                 ),
             ],
           ),
@@ -180,12 +198,14 @@ class _CallCandidateButton extends StatelessWidget {
     required this.index,
     required this.currentShanten,
     required this.accent,
+    this.onAskAi,
   });
 
   final Map<String, dynamic> item;
   final int index;
   final int currentShanten;
   final Color accent;
+  final ValueChanged<Map<String, dynamic>>? onAskAi;
 
   @override
   Widget build(BuildContext context) {
@@ -204,6 +224,7 @@ class _CallCandidateButton extends StatelessWidget {
             item: item,
             index: index,
             currentShanten: currentShanten,
+            onAskAi: onAskAi,
           ),
         ),
         child: Container(
@@ -249,11 +270,13 @@ class _CallDetailDialog extends StatelessWidget {
     required this.item,
     required this.index,
     required this.currentShanten,
+    this.onAskAi,
   });
 
   final Map<String, dynamic> item;
   final int index;
   final int currentShanten;
+  final ValueChanged<Map<String, dynamic>>? onAskAi;
 
   @override
   Widget build(BuildContext context) {
@@ -359,6 +382,15 @@ class _CallDetailDialog extends StatelessWidget {
         ),
       ),
       actions: [
+        if (onAskAi != null)
+          TextButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              onAskAi!(item);
+            },
+            icon: const Icon(Icons.chat_bubble_outline),
+            label: const Text('この候補をAIに質問'),
+          ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('閉じる'),

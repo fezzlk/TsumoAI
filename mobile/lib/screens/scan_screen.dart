@@ -1235,7 +1235,7 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Future<void> _openAiChat() async {
+  Future<void> _openAiChat([Map<String, dynamic>? selectedCall]) async {
     final result = _analysisResult;
     if (result == null ||
         widget.purpose == ScanPurpose.score ||
@@ -1249,7 +1249,7 @@ class _ScanScreenState extends State<ScanScreen> {
           : 'discard',
       tiles: _tiles.whereType<String>().toList(growable: false),
       roundContext: _context.toJson(),
-      analysis: result,
+      analysis: {...result, 'selected_call': ?selectedCall},
       initialMessages: _chatMessages,
       onMessagesChanged: (messages) {
         if (mounted) setState(() => _chatMessages = messages);
@@ -2050,7 +2050,13 @@ class _ScanScreenState extends State<ScanScreen> {
                       maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.65,
                     ),
                     child: SingleChildScrollView(
-                      child: AnalysisResultPanel(result: _analysisResult!),
+                      child: AnalysisResultPanel(
+                        result: _analysisResult!,
+                        onAskAiAboutCall:
+                            widget.purpose == ScanPurpose.callAdvice
+                            ? (candidate) => _openAiChat(candidate)
+                            : null,
+                      ),
                     ),
                   ),
               ],
@@ -3175,14 +3181,19 @@ class _ScanScreenState extends State<ScanScreen> {
                     ),
                   if (_operation != HandOperation.score &&
                       _analysisResult != null) ...[
-                    AnalysisResultPanel(result: _analysisResult!),
+                    AnalysisResultPanel(
+                      result: _analysisResult!,
+                      onAskAiAboutCall: widget.purpose == ScanPurpose.callAdvice
+                          ? (candidate) => _openAiChat(candidate)
+                          : null,
+                    ),
                     if (widget.purpose == ScanPurpose.discard ||
                         widget.purpose == ScanPurpose.callAdvice) ...[
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: _openAiChat,
+                          onPressed: () => _openAiChat(),
                           icon: const Icon(Icons.chat_bubble_outline),
                           label: Text(
                             _chatMessages.isEmpty ? 'AIに質問' : 'AIとの会話を続ける',

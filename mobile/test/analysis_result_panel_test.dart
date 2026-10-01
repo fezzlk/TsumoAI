@@ -2,10 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tsumoai_mobile/widgets/analysis_result_panel.dart';
 
-Widget subject(Map<String, dynamic> result) => MaterialApp(
+Widget subject(
+  Map<String, dynamic> result, {
+  ValueChanged<Map<String, dynamic>>? onAskAiAboutCall,
+}) => MaterialApp(
   home: Scaffold(
     backgroundColor: Colors.black,
-    body: AnalysisResultPanel(result: result),
+    body: AnalysisResultPanel(
+      result: result,
+      onAskAiAboutCall: onAskAiAboutCall,
+    ),
   ),
 );
 
@@ -93,6 +99,7 @@ void main() {
   testWidgets('call result groups candidates and opens deterministic details', (
     tester,
   ) async {
+    Map<String, dynamic>? selectedForAi;
     await tester.pumpWidget(
       subject({
         'current_shanten': 2,
@@ -129,7 +136,7 @@ void main() {
             'recommendation': 'worsens',
           },
         ],
-      }),
+      }, onAskAiAboutCall: (candidate) => selectedForAi = candidate),
     );
 
     expect(find.text('シャンテン数: 2'), findsOneWidget);
@@ -153,5 +160,12 @@ void main() {
     expect(find.text('成立可能役'), findsOneWidget);
     expect(find.text('役牌 白'), findsOneWidget);
     expect(find.text('上家から出た場合だけチーできます。'), findsOneWidget);
+    expect(find.text('この候補をAIに質問'), findsOneWidget);
+
+    await tester.tap(find.text('この候補をAIに質問'));
+    await tester.pumpAndSettle();
+
+    expect(selectedForAi?['call_tile'], '3m');
+    expect(find.text('チーの詳細'), findsNothing);
   });
 }
