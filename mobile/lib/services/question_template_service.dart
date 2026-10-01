@@ -11,31 +11,43 @@ import 'auth_service.dart';
 import 'history_service.dart';
 
 class QuestionTemplateService {
-  QuestionTemplateService({Dio? dio}) : _dio = dio ?? Dio();
+  QuestionTemplateService({
+    Dio? dio,
+    Future<Directory> Function()? directoryProvider,
+  }) : _dio = dio ?? Dio(),
+       _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
 
   static const _fileName = 'question_templates.json';
   final Dio _dio;
+  final Future<Directory> Function() _directoryProvider;
+  bool _lastLoadFailed = false;
+
+  bool get lastLoadFailed => _lastLoadFailed;
 
   Future<File> _file() async {
-    final directory = await getApplicationSupportDirectory();
+    final directory = await _directoryProvider();
     return File('${directory.path}/$_fileName');
   }
 
   Future<List<QuestionTemplate>> _loadAll() async {
+    _lastLoadFailed = false;
     try {
       final file = await _file();
       if (!await file.exists()) return [];
       final decoded = jsonDecode(await file.readAsString());
-      if (decoded is! List) return [];
+      if (decoded is! List) {
+        _lastLoadFailed = true;
+        return [];
+      }
       return decoded
           .whereType<Map>()
           .map(
-            (item) => QuestionTemplate.fromJson(
-              Map<String, dynamic>.from(item),
-            ),
+            (item) =>
+                QuestionTemplate.fromJson(Map<String, dynamic>.from(item)),
           )
           .toList();
     } catch (_) {
+      _lastLoadFailed = true;
       return [];
     }
   }
@@ -61,9 +73,7 @@ class QuestionTemplateService {
   Future<QuestionTemplate> saveSentMessage(String message) async {
     final all = await _loadAll();
     final uid = AuthService.currentUser?.uid;
-    final visible = all.where(
-      (item) => _isVisible(item, uid),
-    );
+    final visible = all.where((item) => _isVisible(item, uid));
     final before = visible.toList();
     final now = DateTime.now().toUtc();
     final after = QuestionTemplateCollection.saveMessage(
@@ -74,13 +84,12 @@ class QuestionTemplateService {
       accountUid: uid,
     );
     if (identical(before, after)) {
-      return before.firstWhere((item) => !item.deleted && item.body == message.trim());
+      return before.firstWhere(
+        (item) => !item.deleted && item.body == message.trim(),
+      );
     }
     final saved = after.first;
-    await _writeAll([
-      saved,
-      ...all.where((item) => item.id != saved.id),
-    ]);
+    await _writeAll([saved, ...all.where((item) => item.id != saved.id)]);
     if (uid != null) unawaited(_upload(saved));
     return saved;
   }
@@ -222,10 +231,7 @@ class QuestionTemplateService {
     );
     return QuestionTemplate.fromJson(
       Map<String, dynamic>.from(response.data as Map),
-    ).copyWith(
-      accountUid: AuthService.currentUser?.uid,
-      pendingSync: false,
-    );
+    ).copyWith(accountUid: AuthService.currentUser?.uid, pendingSync: false);
   }
 
   Future<void> _deleteRemote(QuestionTemplate item) async {

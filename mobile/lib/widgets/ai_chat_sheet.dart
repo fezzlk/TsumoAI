@@ -80,6 +80,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
   final Set<String> _situationTags = {};
   bool _sending = false;
   bool _syncingTemplates = false;
+  bool _templateLoadFailed = false;
   String? _error;
 
   List<OfficialAIChatTemplate> get _situationOptions =>
@@ -119,7 +120,12 @@ class _AIChatSheetState extends State<AIChatSheet> {
 
   Future<void> _loadTemplates() async {
     final templates = await _templateService.loadLocal();
-    if (mounted) setState(() => _templates = templates);
+    if (mounted) {
+      setState(() {
+        _templates = templates;
+        _templateLoadFailed = _templateService.lastLoadFailed;
+      });
+    }
   }
 
   Future<void> _retryTemplateSync() async {
@@ -438,6 +444,22 @@ class _AIChatSheetState extends State<AIChatSheet> {
                   TextButton(
                     onPressed: _syncingTemplates ? null : _retryTemplateSync,
                     child: Text(_syncingTemplates ? '同期中' : '再試行'),
+                  ),
+                ],
+              ),
+            ],
+            if (_templateLoadFailed) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, size: 18),
+                  const SizedBox(width: 6),
+                  const Expanded(
+                    child: Text('個人テンプレートを読み込めませんでした。自由入力は利用できます。'),
+                  ),
+                  TextButton(
+                    onPressed: _loadTemplates,
+                    child: const Text('再試行'),
                   ),
                 ],
               ),
