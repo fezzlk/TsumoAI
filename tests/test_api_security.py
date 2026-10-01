@@ -112,6 +112,9 @@ def test_privacy_page_is_public():
     assert response.status_code == 200
     assert "プライバシーポリシー" in response.text
     assert "DELETE /api/v1/me/data" in response.text
+    assert "Cloud Firestore" in response.text
+    assert "撮影した元画像は" in response.text
+    assert "利用履歴を削除" in response.text
 
 
 def test_contact_redirects_to_support_url():
