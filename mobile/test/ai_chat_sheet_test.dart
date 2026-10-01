@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tsumoai_mobile/models/ai_chat_message.dart';
+import 'package:tsumoai_mobile/models/ai_usage_status.dart';
 import 'package:tsumoai_mobile/models/question_template.dart';
 import 'package:tsumoai_mobile/models/official_ai_chat_template.dart';
 import 'package:tsumoai_mobile/services/question_template_service.dart';
@@ -177,5 +178,55 @@ void main() {
 
     expect(templates.synchronizations, 1);
     expect(find.text('未同期のテンプレートがあります'), findsNothing);
+  });
+
+  testWidgets('keeps conversation visible and disables input at the limit', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AIChatSheet(
+            purpose: 'discard',
+            tiles: const ['1m'],
+            roundContext: const {},
+            analysis: const {},
+            initialMessages: const [
+              AIChatMessage(role: 'assistant', content: '前回の回答'),
+            ],
+            templateService: _MemoryTemplateService(),
+            officialTemplateService: _OfficialTemplates(),
+            usageLoader: () async => AIUsageStatus(
+              period: '2026-10',
+              plan: 'free',
+              includedLimit: 3,
+              includedUsed: 3,
+              bonusRemaining: 0,
+              remaining: 0,
+              resetsAt: DateTime(2026, 11, 1),
+            ),
+            sender:
+                ({
+                  required message,
+                  required conversation,
+                  required situationTags,
+                }) async => throw StateError('must not send'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('前回の回答'), findsOneWidget);
+    expect(find.textContaining('今月のAI相談枠を使い切りました'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).enabled,
+      isFalse,
+    );
+    final sendButton = find.ancestor(
+      of: find.byIcon(Icons.send),
+      matching: find.byType(IconButton),
+    );
+    expect(tester.widget<IconButton>(sendButton).onPressed, isNull);
   });
 }

@@ -13,6 +13,7 @@ void main() {
         InterceptorsWrapper(
           onRequest: (options, handler) {
             body = Map<String, dynamic>.from(options.data as Map);
+            expect(options.headers['X-TsumoAI-Install-ID'], 'install-12345678');
             handler.resolve(
               Response(
                 requestOptions: options,
@@ -23,7 +24,12 @@ void main() {
           },
         ),
       );
-      final client = ApiClient(dio: dio, baseUrl: 'https://example.test');
+      final client = ApiClient(
+        dio: dio,
+        baseUrl: 'https://example.test',
+        installationIdProvider: () async => 'install-12345678',
+        authTokenProvider: () async => null,
+      );
 
       final answer = await client.askAi(
         message: '何を切る？',
@@ -41,4 +47,38 @@ void main() {
       expect((body!['conversation'] as List).single['content'], '前の回答');
     },
   );
+
+  test('fetchAiUsage parses the monthly allowance', () async {
+    final dio = Dio();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) => handler.resolve(
+          Response(
+            requestOptions: options,
+            statusCode: 200,
+            data: {
+              'period': '2026-10',
+              'plan': 'free',
+              'included_limit': 3,
+              'included_used': 1,
+              'bonus_remaining': 0,
+              'remaining': 2,
+              'resets_at': '2026-11-01T00:00:00Z',
+            },
+          ),
+        ),
+      ),
+    );
+    final client = ApiClient(
+      dio: dio,
+      baseUrl: 'https://example.test',
+      installationIdProvider: () async => 'install-12345678',
+      authTokenProvider: () async => 'firebase-token',
+    );
+
+    final usage = await client.fetchAiUsage();
+
+    expect(usage.remaining, 2);
+    expect(usage.includedUsed, 1);
+  });
 }

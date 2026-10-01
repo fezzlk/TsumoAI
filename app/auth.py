@@ -11,11 +11,9 @@ from app.config import settings
 bearer = HTTPBearer(auto_error=False)
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+def _verify_credentials(
+    credentials: HTTPAuthorizationCredentials,
 ) -> dict[str, Any]:
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Firebase ID token is required")
     try:
         from firebase_admin import auth, get_app, initialize_app
 
@@ -28,6 +26,22 @@ def get_current_user(
         raise
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token") from exc
+
+
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+) -> dict[str, Any] | None:
+    if credentials is None:
+        return None
+    return _verify_credentials(credentials)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+) -> dict[str, Any]:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Firebase ID token is required")
+    return _verify_credentials(credentials)
 
 
 def require_admin(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:

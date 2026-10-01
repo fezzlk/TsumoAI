@@ -8,6 +8,7 @@ import '../services/history_service.dart';
 import 'history_screen.dart';
 import 'mahjong_rules_screen.dart';
 import 'ai_chat_template_admin_screen.dart';
+import 'ai_usage_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -105,10 +106,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               onTap: _confirmDeleteHistory,
             ),
-            const ListTile(
-              leading: Icon(Icons.auto_awesome_outlined),
-              title: Text('AI利用状況・残り枠'),
-              subtitle: Text('利用状況画面は後続バッチで接続します'),
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_outlined),
+              title: const Text('AI利用状況・残り枠'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const AIUsageScreen()),
+              ),
             ),
             ListTile(
               leading: const Icon(Icons.help_outline),

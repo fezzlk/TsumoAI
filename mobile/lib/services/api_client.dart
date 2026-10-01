@@ -7,24 +7,51 @@ import '../models/interpretation_result.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
 import '../models/ai_chat_message.dart';
+import '../models/ai_usage_status.dart';
+import 'app_preferences.dart';
 import 'auth_service.dart';
 
 class ApiClient {
   final Dio _dio;
   final String? _baseUrlOverride;
+  final Future<String> Function() _installationIdProvider;
+  final Future<String?> Function() _authTokenProvider;
 
-  ApiClient({Dio? dio, String? baseUrl})
-    : _dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              connectTimeout: const Duration(seconds: 10),
-              receiveTimeout: const Duration(seconds: 60),
-            ),
-          ),
-      _baseUrlOverride = baseUrl;
+  ApiClient({
+    Dio? dio,
+    String? baseUrl,
+    Future<String> Function()? installationIdProvider,
+    Future<String?> Function()? authTokenProvider,
+  }) : _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               connectTimeout: const Duration(seconds: 10),
+               receiveTimeout: const Duration(seconds: 60),
+             ),
+           ),
+       _baseUrlOverride = baseUrl,
+       _installationIdProvider =
+           installationIdProvider ?? AppPreferences.installationId,
+       _authTokenProvider = authTokenProvider ?? _currentAuthToken;
 
   String get _baseUrl => _baseUrlOverride ?? AppConfig.apiBaseUrl;
+
+  static Future<String?> _currentAuthToken() async {
+    if (AuthService.currentUser == null) return null;
+    return AuthService.idToken();
+  }
+
+  Future<Map<String, String>> _aiHeaders() async {
+    final headers = <String, String>{
+      'X-TsumoAI-Install-ID': await _installationIdProvider(),
+    };
+    final token = await _authTokenProvider();
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    return headers;
+  }
 
   /// Upload image and recognize tiles (synchronous call, no polling needed)
   Future<RecognizeResponse> recognize(File imageFile) async {
@@ -162,23 +189,49 @@ class ApiClient {
     required Map<String, dynamic> analysis,
     required List<String> situationTags,
   }) async {
-    final response = await _dio.post(
-      '$_baseUrl/api/v1/ai-chat',
-      data: {
-        'message': message,
-        'conversation': conversation
-            .map((item) => item.toJson())
-            .toList(growable: false),
-        'context': {
-          'purpose': purpose,
-          'tiles': tiles,
-          'round_context': roundContext,
-          'analysis': analysis,
-          'situation_tags': situationTags,
+    try {
+      final response = await _dio.post(
+        '$_baseUrl/api/v1/ai-chat',
+        options: Options(headers: await _aiHeaders()),
+        data: {
+          'message': message,
+          'conversation': conversation
+              .map((item) => item.toJson())
+              .toList(growable: false),
+          'context': {
+            'purpose': purpose,
+            'tiles': tiles,
+            'round_context': roundContext,
+            'analysis': analysis,
+            'situation_tags': situationTags,
+          },
         },
-      },
+      );
+      return (response.data as Map)['answer'] as String;
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      if (error.response?.statusCode == 429 && data is Map) {
+        final detail = data['detail'];
+        if (detail is Map && detail['code'] == 'monthly_ai_limit_reached') {
+          throw AIQuotaExceededException(
+            AIUsageStatus.fromJson(
+              Map<String, dynamic>.from(detail['usage'] as Map),
+            ),
+          );
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<AIUsageStatus> fetchAiUsage() async {
+    final response = await _dio.get(
+      '$_baseUrl/api/v1/ai-chat/usage',
+      options: Options(headers: await _aiHeaders()),
     );
-    return (response.data as Map)['answer'] as String;
+    return AIUsageStatus.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
   }
 
   Map<String, dynamic> _analysisPayload(
@@ -239,6 +292,12 @@ class ApiClient {
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }
+}
+
+class AIQuotaExceededException implements Exception {
+  const AIQuotaExceededException(this.usage);
+
+  final AIUsageStatus usage;
 }
 
 class InterpretationApiException implements Exception {

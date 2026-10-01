@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/ai_chat_message.dart';
+import '../models/ai_usage_status.dart';
 import '../models/question_template.dart';
 import '../models/official_ai_chat_template.dart';
 import '../services/api_client.dart';
@@ -13,6 +14,7 @@ typedef AIChatSender =
       required List<AIChatMessage> conversation,
       required List<String> situationTags,
     });
+typedef AIUsageLoader = Future<AIUsageStatus> Function();
 
 class AIChatSheet extends StatefulWidget {
   const AIChatSheet({
@@ -26,6 +28,7 @@ class AIChatSheet extends StatefulWidget {
     this.sender,
     this.templateService,
     this.officialTemplateService,
+    this.usageLoader,
   });
 
   final String purpose;
@@ -37,6 +40,7 @@ class AIChatSheet extends StatefulWidget {
   final AIChatSender? sender;
   final QuestionTemplateService? templateService;
   final OfficialAIChatTemplateService? officialTemplateService;
+  final AIUsageLoader? usageLoader;
 
   static Future<void> show(
     BuildContext context, {
@@ -82,6 +86,10 @@ class _AIChatSheetState extends State<AIChatSheet> {
   bool _syncingTemplates = false;
   bool _templateLoadFailed = false;
   String? _error;
+  AIUsageStatus? _usage;
+  bool _loadingUsage = false;
+
+  bool get _quotaExhausted => _usage?.exhausted ?? false;
 
   List<OfficialAIChatTemplate> get _situationOptions =>
       _officialTemplates
@@ -109,6 +117,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
     _messages = [...widget.initialMessages];
     _loadTemplates();
     _loadOfficialTemplates();
+    _loadUsage();
   }
 
   @override
@@ -146,6 +155,21 @@ class _AIChatSheetState extends State<AIChatSheet> {
     if (mounted) setState(() => _officialTemplates = config.items);
   }
 
+  Future<void> _loadUsage() async {
+    if (widget.sender != null && widget.usageLoader == null) return;
+    if (mounted) setState(() => _loadingUsage = true);
+    try {
+      final usage =
+          await (widget.usageLoader?.call() ?? ApiClient().fetchAiUsage());
+      if (mounted) setState(() => _usage = usage);
+    } catch (_) {
+      // The send endpoint still enforces the limit. A temporary status failure
+      // must not hide existing conversations or deterministic analysis.
+    } finally {
+      if (mounted) setState(() => _loadingUsage = false);
+    }
+  }
+
   void _applyQuestion(OfficialAIChatTemplate question) {
     final situations = _situationTags.toList();
     _controller.text = situations.isEmpty
@@ -177,7 +201,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
 
   Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || _sending) return;
+    if (text.isEmpty || _sending || _quotaExhausted) return;
     final previous = [..._messages];
     setState(() {
       _messages.add(AIChatMessage(role: 'user', content: text));
@@ -196,6 +220,21 @@ class _AIChatSheetState extends State<AIChatSheet> {
       });
       _notifyChanged();
       _scrollToEnd();
+      await _loadUsage();
+    } on AIQuotaExceededException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        if (_messages.isNotEmpty &&
+            _messages.last.role == 'user' &&
+            _messages.last.content == text) {
+          _messages.removeLast();
+        }
+        _sending = false;
+        _usage = error.usage;
+        _error = '今月のAI相談枠を使い切りました。基本の計算結果は引き続き利用できます。';
+        _controller.text = text;
+      });
+      _notifyChanged();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -378,6 +417,27 @@ class _AIChatSheetState extends State<AIChatSheet> {
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
           children: [
+            if (_loadingUsage) const LinearProgressIndicator(),
+            if (_usage case final usage?) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: usage.exhausted
+                      ? Theme.of(context).colorScheme.errorContainer
+                      : Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  usage.exhausted
+                      ? '今月のAI相談枠を使い切りました。${usage.resetsAt.month}月1日に更新されます。'
+                      : 'AI相談は今月あと${usage.remaining}回利用できます',
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             const Text('状況', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
             Wrap(
@@ -516,6 +576,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
               Expanded(
                 child: TextField(
                   controller: _controller,
+                  enabled: !_quotaExhausted,
                   maxLines: 4,
                   minLines: 1,
                   textInputAction: TextInputAction.newline,
@@ -524,7 +585,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
               ),
               const SizedBox(width: 8),
               IconButton.filled(
-                onPressed: _sending ? null : _send,
+                onPressed: _sending || _quotaExhausted ? null : _send,
                 tooltip: '送信',
                 icon: const Icon(Icons.send),
               ),

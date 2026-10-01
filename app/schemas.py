@@ -337,8 +337,19 @@ class AIChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AIUsageStatus(BaseModel):
+    period: str
+    plan: Literal["free", "subscription"]
+    included_limit: int = Field(ge=0)
+    included_used: int = Field(ge=0)
+    bonus_remaining: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+    resets_at: datetime
+
+
 class AIChatResponse(BaseModel):
     answer: str
+    usage: AIUsageStatus
 
 
 class OfficialAIChatTemplate(BaseModel):

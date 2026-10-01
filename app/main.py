@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections import defaultdict, deque
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -15,8 +16,9 @@ from PIL import Image, ImageOps
 from starlette.concurrency import run_in_threadpool
 
 from app.config import resolve_gcp_project, settings
-from app.auth import get_current_user, require_admin
+from app.auth import get_current_user, get_optional_user, require_admin
 from app.ai_chat import AIChatUnavailableError, answer_ai_chat
+from app.ai_usage_store import AIUsageLimitReached, AIUsageStore
 from app.ai_chat_template_store import AIChatTemplateStore
 from app.gcs_feedback_store import GCSFeedbackStore
 from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
@@ -41,6 +43,7 @@ from app.repository import InMemoryRepository
 from app.schemas import (
     AIChatRequest,
     AIChatResponse,
+    AIUsageStatus,
     OfficialAIChatTemplateConfig,
     OfficialAIChatTemplateUpdate,
     ContextInput,
@@ -110,6 +113,8 @@ training_data_store = TrainingDataStore()
 _recognition_rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _ai_chat_rate_windows: dict[str, deque[float]] = defaultdict(deque)
 ai_chat_template_store = AIChatTemplateStore()
+ai_usage_store = AIUsageStore()
+_INSTALL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
 @app.middleware("http")
@@ -479,15 +484,70 @@ def analyze_calls_endpoint(req: CallAnalysisRequest) -> CallAnalysisResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _ai_usage_subject(user: dict | None, install_id: str | None) -> str:
+    if user and user.get("uid"):
+        return f"user:{user['uid']}"
+    value = (install_id or "").strip()
+    if not _INSTALL_ID_PATTERN.fullmatch(value):
+        raise HTTPException(
+            status_code=400,
+            detail="X-TsumoAI-Install-ID is required for anonymous AI usage",
+        )
+    return f"install:{value}"
+
+
+def _ai_usage_status(subject: str) -> AIUsageStatus:
+    try:
+        return AIUsageStatus.model_validate(ai_usage_store.get_status(subject))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AI usage status unavailable") from exc
+
+
+@app.get("/api/v1/ai-chat/usage", response_model=AIUsageStatus)
+def get_ai_chat_usage(
+    user: dict | None = Depends(get_optional_user),
+    install_id: str | None = Header(default=None, alias="X-TsumoAI-Install-ID"),
+) -> AIUsageStatus:
+    return _ai_usage_status(_ai_usage_subject(user, install_id))
+
+
 @app.post("/api/v1/ai-chat", response_model=AIChatResponse)
-async def ai_chat_endpoint(req: AIChatRequest) -> AIChatResponse:
+async def ai_chat_endpoint(
+    req: AIChatRequest,
+    user: dict | None = Depends(get_optional_user),
+    install_id: str | None = Header(default=None, alias="X-TsumoAI-Install-ID"),
+) -> AIChatResponse:
+    subject = _ai_usage_subject(user, install_id)
+    try:
+        reservation = ai_usage_store.consume(subject)
+    except AIUsageLimitReached as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "monthly_ai_limit_reached",
+                "usage": AIUsageStatus.model_validate(exc.status).model_dump(mode="json"),
+            },
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AI usage status unavailable") from exc
     try:
         answer = await run_in_threadpool(answer_ai_chat, req)
     except AIChatUnavailableError as exc:
+        try:
+            ai_usage_store.refund(subject, reservation.source)
+        except Exception:
+            pass
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
+        try:
+            ai_usage_store.refund(subject, reservation.source)
+        except Exception:
+            pass
         raise HTTPException(status_code=502, detail="AI chat request failed") from exc
-    return AIChatResponse(answer=answer)
+    return AIChatResponse(
+        answer=answer,
+        usage=AIUsageStatus.model_validate(reservation.status),
+    )
 
 
 @app.get(
