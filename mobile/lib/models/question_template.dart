@@ -34,15 +34,15 @@ class QuestionTemplate {
       );
 
   Map<String, dynamic> toJson({bool includeLocalState = true}) => {
-        'id': id,
-        'name': name,
-        'body': body,
-        'created_at': createdAt.toUtc().toIso8601String(),
-        'updated_at': updatedAt.toUtc().toIso8601String(),
-        if (includeLocalState) 'account_uid': accountUid,
-        if (includeLocalState) 'pending_sync': pendingSync,
-        if (includeLocalState) 'deleted': deleted,
-      };
+    'id': id,
+    'name': name,
+    'body': body,
+    'created_at': createdAt.toUtc().toIso8601String(),
+    'updated_at': updatedAt.toUtc().toIso8601String(),
+    if (includeLocalState) 'account_uid': accountUid,
+    if (includeLocalState) 'pending_sync': pendingSync,
+    if (includeLocalState) 'deleted': deleted,
+  };
 
   QuestionTemplate copyWith({
     String? name,
@@ -51,22 +51,38 @@ class QuestionTemplate {
     String? accountUid,
     bool? pendingSync,
     bool? deleted,
-  }) =>
-      QuestionTemplate(
-        id: id,
-        name: name ?? this.name,
-        body: body ?? this.body,
-        createdAt: createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-        accountUid: accountUid ?? this.accountUid,
-        pendingSync: pendingSync ?? this.pendingSync,
-        deleted: deleted ?? this.deleted,
-      );
+  }) => QuestionTemplate(
+    id: id,
+    name: name ?? this.name,
+    body: body ?? this.body,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    accountUid: accountUid ?? this.accountUid,
+    pendingSync: pendingSync ?? this.pendingSync,
+    deleted: deleted ?? this.deleted,
+  );
+
+  /// Server-side limits (`QuestionTemplateUpsert`), counted in code points.
+  static const maxNameLength = 30;
+  static const maxBodyLength = 300;
 
   static String automaticName(String message) {
     final normalized = message.trim().replaceAll(RegExp(r'\s+'), ' ');
-    return String.fromCharCodes(normalized.runes.take(30));
+    return String.fromCharCodes(normalized.runes.take(maxNameLength));
   }
+
+  /// Rejects values the server would refuse, so they never sit in the
+  /// pending-sync queue failing on every synchronization.
+  static void validateLengths({String? name, required String body}) {
+    if ((name != null && name.runes.length > maxNameLength) ||
+        body.runes.length > maxBodyLength) {
+      throw const QuestionTemplateTooLongException();
+    }
+  }
+}
+
+class QuestionTemplateTooLongException implements Exception {
+  const QuestionTemplateTooLongException();
 }
 
 class QuestionTemplateCollection {
@@ -81,6 +97,7 @@ class QuestionTemplateCollection {
   }) {
     final body = message.trim();
     if (body.isEmpty) throw ArgumentError('Message must not be empty');
+    QuestionTemplate.validateLengths(body: body);
     if (items.any((item) => !item.deleted && item.body == body)) return items;
     if (items.where((item) => !item.deleted).length >= maxItems) {
       throw StateError('Question template limit reached');

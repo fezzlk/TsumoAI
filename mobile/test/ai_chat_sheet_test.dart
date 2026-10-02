@@ -4,6 +4,7 @@ import 'package:tsumoai_mobile/models/ai_chat_message.dart';
 import 'package:tsumoai_mobile/models/ai_usage_status.dart';
 import 'package:tsumoai_mobile/models/question_template.dart';
 import 'package:tsumoai_mobile/models/official_ai_chat_template.dart';
+import 'package:tsumoai_mobile/services/api_client.dart';
 import 'package:tsumoai_mobile/services/question_template_service.dart';
 import 'package:tsumoai_mobile/services/official_ai_chat_template_service.dart';
 import 'package:tsumoai_mobile/widgets/ai_chat_sheet.dart';
@@ -65,6 +66,7 @@ void main() {
             analysis: const {'discards': []},
             templateService: templates,
             officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => true,
             onMessagesChanged: (messages) => changed = messages,
             sender:
                 ({
@@ -112,6 +114,7 @@ void main() {
             analysis: const {'calls': []},
             templateService: _MemoryTemplateService(),
             officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => true,
             onMessagesChanged: (messages) => changed = messages,
             sender:
                 ({
@@ -160,6 +163,7 @@ void main() {
             analysis: const {},
             templateService: templates,
             officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => true,
             sender:
                 ({
                   required message,
@@ -196,6 +200,7 @@ void main() {
             ],
             templateService: _MemoryTemplateService(),
             officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => true,
             usageLoader: () async => AIUsageStatus(
               period: '2026-10',
               plan: 'free',
@@ -245,6 +250,7 @@ void main() {
             initialDraft: '守備考慮で何を切る？',
             templateService: _MemoryTemplateService(),
             officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => true,
             sender:
                 ({
                   required message,
@@ -260,5 +266,91 @@ void main() {
     expect(find.text('守備考慮'), findsOneWidget);
     final input = tester.widget<TextField>(find.byType(TextField).last);
     expect(input.controller?.text, '守備考慮で何を切る？');
+  });
+
+  testWidgets('signed-out users are asked to log in before sending', (
+    tester,
+  ) async {
+    var signIns = 0;
+    var sends = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AIChatSheet(
+            purpose: 'discard',
+            tiles: const ['1m'],
+            roundContext: const {},
+            analysis: const {},
+            initialMessages: const [
+              AIChatMessage(role: 'assistant', content: '前回の回答'),
+            ],
+            templateService: _MemoryTemplateService(),
+            officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => false,
+            signIn: () async => signIns++,
+            sender:
+                ({
+                  required message,
+                  required conversation,
+                  required situationTags,
+                }) async {
+                  sends++;
+                  return '回答';
+                },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('前回の回答'), findsOneWidget);
+    expect(find.textContaining('AI相談はログインすると利用できます'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).enabled,
+      isFalse,
+    );
+
+    await tester.tap(find.text('Googleでログイン'));
+    await tester.pumpAndSettle();
+
+    expect(signIns, 1);
+    expect(find.textContaining('AI相談はログインすると利用できます'), findsNothing);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).enabled,
+      isTrue,
+    );
+    expect(sends, 0);
+  });
+
+  testWidgets('limits the question to the length the server accepts', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AIChatSheet(
+            purpose: 'discard',
+            tiles: const ['1m'],
+            roundContext: const {},
+            analysis: const {},
+            templateService: _MemoryTemplateService(),
+            officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => true,
+            sender:
+                ({
+                  required message,
+                  required conversation,
+                  required situationTags,
+                }) async => '回答',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(find.byType(TextField).last).maxLength,
+      ApiClient.aiMessageMaxLength,
+    );
   });
 }

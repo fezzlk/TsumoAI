@@ -33,6 +33,17 @@ class _AIUsageScreenState extends State<AIUsageScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           final status = snapshot.data;
+          if (snapshot.error is AILoginRequiredException) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'AI相談はログインすると利用できます。ログイン後に利用状況を確認できます。',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
           if (status == null) {
             return Center(
               child: Padding(

@@ -57,4 +57,35 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('bodies the server would reject are refused before saving', () {
+    final now = DateTime.utc(2026, 9, 29);
+    final atLimit = '牌' * QuestionTemplate.maxBodyLength;
+
+    expect(
+      QuestionTemplateCollection.saveMessage(
+        items: const [],
+        id: 'at-limit',
+        message: atLimit,
+        now: now,
+      ).single.body,
+      atLimit,
+    );
+    expect(
+      () => QuestionTemplateCollection.saveMessage(
+        items: const [],
+        id: 'too-long',
+        message: '$atLimit牌',
+        now: now,
+      ),
+      throwsA(isA<QuestionTemplateTooLongException>()),
+    );
+    expect(
+      () => QuestionTemplate.validateLengths(
+        name: '名' * (QuestionTemplate.maxNameLength + 1),
+        body: '質問',
+      ),
+      throwsA(isA<QuestionTemplateTooLongException>()),
+    );
+  });
 }

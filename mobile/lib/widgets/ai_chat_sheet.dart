@@ -5,6 +5,7 @@ import '../models/ai_usage_status.dart';
 import '../models/question_template.dart';
 import '../models/official_ai_chat_template.dart';
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
 import '../services/question_template_service.dart';
 import '../services/official_ai_chat_template_service.dart';
 
@@ -15,6 +16,7 @@ typedef AIChatSender =
       required List<String> situationTags,
     });
 typedef AIUsageLoader = Future<AIUsageStatus> Function();
+typedef AISignIn = Future<void> Function();
 
 class AIChatSheet extends StatefulWidget {
   const AIChatSheet({
@@ -29,6 +31,8 @@ class AIChatSheet extends StatefulWidget {
     this.templateService,
     this.officialTemplateService,
     this.usageLoader,
+    this.isSignedIn,
+    this.signIn,
     this.initialSituationTags = const [],
     this.initialDraft,
   });
@@ -43,6 +47,10 @@ class AIChatSheet extends StatefulWidget {
   final QuestionTemplateService? templateService;
   final OfficialAIChatTemplateService? officialTemplateService;
   final AIUsageLoader? usageLoader;
+
+  /// Defaults to the Firebase session; AI chat is login-only.
+  final bool Function()? isSignedIn;
+  final AISignIn? signIn;
   final List<String> initialSituationTags;
   final String? initialDraft;
 
@@ -96,8 +104,11 @@ class _AIChatSheetState extends State<AIChatSheet> {
   String? _error;
   AIUsageStatus? _usage;
   bool _loadingUsage = false;
+  bool _signedIn = false;
+  bool _signingIn = false;
 
   bool get _quotaExhausted => _usage?.exhausted ?? false;
+  bool get _canSend => _signedIn && !_quotaExhausted;
 
   List<OfficialAIChatTemplate> get _situationOptions =>
       _officialTemplates
@@ -125,6 +136,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
     _messages = [...widget.initialMessages];
     _situationTags.addAll(widget.initialSituationTags);
     _controller.text = widget.initialDraft ?? '';
+    _signedIn = widget.isSignedIn?.call() ?? AuthService.currentUser != null;
     _loadTemplates();
     _loadOfficialTemplates();
     _loadUsage();
@@ -166,17 +178,38 @@ class _AIChatSheetState extends State<AIChatSheet> {
   }
 
   Future<void> _loadUsage() async {
+    if (!_signedIn) return;
     if (widget.sender != null && widget.usageLoader == null) return;
     if (mounted) setState(() => _loadingUsage = true);
     try {
       final usage =
           await (widget.usageLoader?.call() ?? ApiClient().fetchAiUsage());
       if (mounted) setState(() => _usage = usage);
+    } on AILoginRequiredException {
+      if (mounted) setState(() => _signedIn = false);
     } catch (_) {
       // The send endpoint still enforces the limit. A temporary status failure
       // must not hide existing conversations or deterministic analysis.
     } finally {
       if (mounted) setState(() => _loadingUsage = false);
+    }
+  }
+
+  Future<void> _signIn() async {
+    if (_signingIn) return;
+    setState(() {
+      _signingIn = true;
+      _error = null;
+    });
+    try {
+      await (widget.signIn?.call() ?? AuthService.ensureSignedIn());
+      if (!mounted) return;
+      setState(() => _signedIn = true);
+      await _loadUsage();
+    } catch (_) {
+      if (mounted) setState(() => _error = 'ログインできませんでした。もう一度お試しください。');
+    } finally {
+      if (mounted) setState(() => _signingIn = false);
     }
   }
 
@@ -211,7 +244,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
 
   Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || _sending || _quotaExhausted) return;
+    if (text.isEmpty || _sending || !_canSend) return;
     final previous = [..._messages];
     setState(() {
       _messages.add(AIChatMessage(role: 'user', content: text));
@@ -242,6 +275,19 @@ class _AIChatSheetState extends State<AIChatSheet> {
         _sending = false;
         _usage = error.usage;
         _error = '今月のAI相談枠を使い切りました。基本の計算結果は引き続き利用できます。';
+        _controller.text = text;
+      });
+      _notifyChanged();
+    } on AILoginRequiredException {
+      if (!mounted) return;
+      setState(() {
+        if (_messages.isNotEmpty &&
+            _messages.last.role == 'user' &&
+            _messages.last.content == text) {
+          _messages.removeLast();
+        }
+        _sending = false;
+        _signedIn = false;
         _controller.text = text;
       });
       _notifyChanged();
@@ -282,6 +328,10 @@ class _AIChatSheetState extends State<AIChatSheet> {
     try {
       await _templateService.saveSentMessage(body);
       await _loadTemplates();
+    } on QuestionTemplateTooLongException {
+      _showTemplateMessage(
+        'テンプレートの質問文は${QuestionTemplate.maxBodyLength}文字までです。',
+      );
     } on StateError {
       _showTemplateMessage('テンプレートは20件まで保存できます。既存項目を削除してください。');
     } catch (_) {
@@ -308,10 +358,12 @@ class _AIChatSheetState extends State<AIChatSheet> {
           children: [
             TextField(
               controller: name,
+              maxLength: QuestionTemplate.maxNameLength,
               decoration: const InputDecoration(labelText: '名前'),
             ),
             TextField(
               controller: body,
+              maxLength: QuestionTemplate.maxBodyLength,
               decoration: const InputDecoration(labelText: '質問文'),
               maxLines: 3,
             ),
@@ -340,6 +392,11 @@ class _AIChatSheetState extends State<AIChatSheet> {
           );
         }
         await _loadTemplates();
+      } on QuestionTemplateTooLongException {
+        _controller.text = body.text;
+        _showTemplateMessage(
+          '名前は${QuestionTemplate.maxNameLength}文字、質問文は${QuestionTemplate.maxBodyLength}文字までです。質問文を入力欄へ戻しました。',
+        );
       } on StateError {
         _controller.text = body.text;
         _showTemplateMessage('テンプレートは20件までです。質問文を入力欄へ戻しました。');
@@ -364,10 +421,12 @@ class _AIChatSheetState extends State<AIChatSheet> {
           children: [
             TextField(
               controller: name,
+              maxLength: QuestionTemplate.maxNameLength,
               decoration: const InputDecoration(labelText: '名前'),
             ),
             TextField(
               controller: body,
+              maxLength: QuestionTemplate.maxBodyLength,
               maxLines: 3,
               decoration: const InputDecoration(labelText: '質問文'),
             ),
@@ -393,6 +452,11 @@ class _AIChatSheetState extends State<AIChatSheet> {
           body: body.text,
         );
         await _loadTemplates();
+      } on QuestionTemplateTooLongException {
+        _controller.text = body.text;
+        _showTemplateMessage(
+          '名前は${QuestionTemplate.maxNameLength}文字、質問文は${QuestionTemplate.maxBodyLength}文字までです。質問文を入力欄へ戻しました。',
+        );
       } catch (_) {
         _controller.text = body.text;
         _showTemplateMessage('変更を保存できませんでした。質問文を入力欄へ戻しました。');
@@ -427,6 +491,10 @@ class _AIChatSheetState extends State<AIChatSheet> {
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
           children: [
+            if (!_signedIn) ...[
+              _LoginRequiredNotice(signingIn: _signingIn, onSignIn: _signIn),
+              const SizedBox(height: 12),
+            ],
             if (_loadingUsage) const LinearProgressIndicator(),
             if (_usage case final usage?) ...[
               Container(
@@ -597,7 +665,8 @@ class _AIChatSheetState extends State<AIChatSheet> {
               Expanded(
                 child: TextField(
                   controller: _controller,
-                  enabled: !_quotaExhausted,
+                  enabled: _canSend,
+                  maxLength: ApiClient.aiMessageMaxLength,
                   maxLines: 4,
                   minLines: 1,
                   textInputAction: TextInputAction.newline,
@@ -606,7 +675,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
               ),
               const SizedBox(width: 8),
               IconButton.filled(
-                onPressed: _sending || _quotaExhausted ? null : _send,
+                onPressed: _sending || !_canSend ? null : _send,
                 tooltip: '送信',
                 icon: const Icon(Icons.send),
               ),
@@ -615,6 +684,34 @@ class _AIChatSheetState extends State<AIChatSheet> {
         ),
       ),
     ],
+  );
+}
+
+class _LoginRequiredNotice extends StatelessWidget {
+  const _LoginRequiredNotice({required this.signingIn, required this.onSignIn});
+
+  final bool signingIn;
+  final VoidCallback onSignIn;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.secondaryContainer,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('AI相談はログインすると利用できます。基本の計算結果はログインなしで利用できます。'),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          onPressed: signingIn ? null : onSignIn,
+          icon: const Icon(Icons.login),
+          label: Text(signingIn ? 'ログイン中' : 'Googleでログイン'),
+        ),
+      ],
+    ),
   );
 }
 
