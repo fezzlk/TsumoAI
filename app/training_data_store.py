@@ -70,7 +70,9 @@ class TrainingDataStore:
         # scans meta/* and would otherwise pick up the file we're about to
         # write below, duplicating it once we append(meta) further down.
         try:
-            index: list[dict] | None = self._load_index()
+            # force=True: appending to a cached copy (up to _CACHE_TTL old)
+            # would write back entries another instance has since deleted.
+            index: list[dict] | None = self._load_index(force=True)
         except Exception as exc:
             logger.warning("Failed to load index before upload: %s", exc)
             index = None
@@ -303,29 +305,34 @@ class TrainingDataStore:
             return False
 
     def delete_by_uid(self, uid: str) -> int:
-        """Delete every entry uploaded by this uid, or raise on GCS failure."""
-        index = self._load_index(force=True)
-        matching = [entry for entry in index if entry.get("uid") == uid]
+        """Delete every entry uploaded by this uid, or raise on GCS failure.
+
+        The per-entry meta files are the source of truth, not index.json: an
+        upload whose index update failed is still written to meta/, and a
+        user's deletion request must cover it too.
+        """
         bucket = self._bucket()
-        for entry in matching:
-            image_path = str(entry.get("image_path", ""))
+        matching: list[dict] = []
+        for blob in bucket.list_blobs(prefix=f"{self.prefix}/meta/"):
+            if not blob.name.endswith(".json"):
+                continue
+            try:
+                meta = json.loads(blob.download_as_text())
+            except ValueError:
+                continue
+            if meta.get("uid") != uid:
+                continue
+            image_path = str(meta.get("image_path", ""))
             if image_path:
                 image_blob = bucket.blob(image_path)
                 if image_blob.exists():
                     image_blob.delete()
-                if image_path.startswith(f"{self.prefix}/images/"):
-                    meta_path = image_path.replace(
-                        f"{self.prefix}/images/", f"{self.prefix}/meta/", 1
-                    )
-                    meta_path = str(Path(meta_path).with_suffix(".json"))
-                    meta_blob = bucket.blob(meta_path)
-                    if meta_blob.exists():
-                        meta_blob.delete()
-        if matching:
-            matching_ids = {entry.get("id") for entry in matching}
-            self._save_index(
-                [entry for entry in index if entry.get("id") not in matching_ids]
-            )
+            blob.delete()
+            matching.append(meta)
+        index = self._load_index(force=True)
+        remaining = [entry for entry in index if entry.get("uid") != uid]
+        if len(remaining) != len(index):
+            self._save_index(remaining)
         return len(matching)
 
     # ── Stats ──
