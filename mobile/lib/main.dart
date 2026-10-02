@@ -22,6 +22,8 @@ import 'services/official_ai_chat_template_service.dart';
 
 List<CameraDescription> cameras = const [];
 
+const _startupSyncBudget = Duration(seconds: 2);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -50,7 +52,13 @@ Future<void> main() async {
 
   final showTrainingDataActions =
       await AppPreferences.showTrainingDataActions();
-  final initialRuleSettings = await RuleSettingsService().synchronize();
+  // Startup must not wait on the network: on a slow connection, start with
+  // the device copy and let the synchronization finish in the background.
+  final ruleSettingsService = RuleSettingsService();
+  final initialRuleSettings = await ruleSettingsService.synchronize().timeout(
+    _startupSyncBudget,
+    onTimeout: ruleSettingsService.loadLocal,
+  );
   unawaited(QuestionTemplateService().synchronize());
   unawaited(OfficialAIChatTemplateService().load());
   runApp(

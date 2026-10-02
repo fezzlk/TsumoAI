@@ -10,7 +10,16 @@ import '../models/score_request.dart';
 import 'auth_service.dart';
 
 class RuleSettingsService {
-  RuleSettingsService({Dio? dio}) : _dio = dio ?? Dio();
+  RuleSettingsService({Dio? dio})
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 5),
+              sendTimeout: const Duration(seconds: 10),
+              receiveTimeout: const Duration(seconds: 10),
+            ),
+          );
 
   static const _fileName = 'mahjong_rule_settings.json';
   final Dio _dio;
@@ -92,8 +101,7 @@ class RuleSettingsService {
             accountUid: user.uid,
             pendingSync: true,
           ),
-        ))
-            .settings;
+        )).settings;
       } catch (_) {
         return local.settings;
       }
@@ -138,27 +146,28 @@ class _StoredRuleSettings {
   final bool pendingSync;
 
   factory _StoredRuleSettings.defaults() => _StoredRuleSettings(
-        settings: const MahjongRuleSettings(),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-        accountUid: null,
-        pendingSync: false,
-      );
+    settings: const MahjongRuleSettings(),
+    updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    accountUid: null,
+    pendingSync: false,
+  );
 
   factory _StoredRuleSettings.fromJson(Map<String, dynamic> json) =>
       _StoredRuleSettings(
         settings: MahjongRuleSettings.fromJson(
           Map<String, dynamic>.from(json['settings'] as Map? ?? const {}),
         ),
-        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '') ??
+        updatedAt:
+            DateTime.tryParse(json['updated_at'] as String? ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         accountUid: json['account_uid'] as String?,
         pendingSync: json['pending_sync'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
-        'settings': settings.toJson(),
-        'updated_at': updatedAt.toUtc().toIso8601String(),
-        'account_uid': accountUid,
-        'pending_sync': pendingSync,
-      };
+    'settings': settings.toJson(),
+    'updated_at': updatedAt.toUtc().toIso8601String(),
+    'account_uid': accountUid,
+    'pending_sync': pendingSync,
+  };
 }
