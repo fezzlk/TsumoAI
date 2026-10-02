@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -9,7 +8,6 @@ class AppPreferences {
 
   static const _fileName = 'app_preferences.json';
   static const _showTrainingDataKey = 'show_training_data_actions';
-  static const _installationIdKey = 'installation_id';
 
   static Future<File> _file() async {
     final directory = await getApplicationSupportDirectory();
@@ -38,21 +36,5 @@ class AppPreferences {
     final file = await _file();
     await file.parent.create(recursive: true);
     await file.writeAsString(jsonEncode(values), flush: true);
-  }
-
-  static Future<String> installationId() async {
-    final values = await _read();
-    final existing = values[_installationIdKey];
-    if (existing is String && existing.length >= 16) return existing;
-    final random = Random.secure();
-    final generated = List.generate(
-      16,
-      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-    ).join();
-    values[_installationIdKey] = generated;
-    final file = await _file();
-    await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(values), flush: true);
-    return generated;
   }
 }

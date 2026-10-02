@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from collections import defaultdict, deque
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +15,7 @@ from PIL import Image, ImageOps
 from starlette.concurrency import run_in_threadpool
 
 from app.config import resolve_gcp_project, settings
-from app.auth import get_current_user, get_optional_user, require_admin
+from app.auth import get_current_user, require_admin
 from app.ai_chat import AIChatUnavailableError, answer_ai_chat
 from app.ai_usage_store import AIUsageLimitReached, AIUsageStore
 from app.ai_chat_template_store import AIChatTemplateStore
@@ -114,7 +113,6 @@ _recognition_rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _ai_chat_rate_windows: dict[str, deque[float]] = defaultdict(deque)
 ai_chat_template_store = AIChatTemplateStore()
 ai_usage_store = AIUsageStore()
-_INSTALL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
 @app.middleware("http")
@@ -133,19 +131,20 @@ async def limit_anonymous_recognition(request: Request, call_next):
         if len(window) >= settings.anonymous_recognition_requests_per_minute:
             return JSONResponse(status_code=429, content={"detail": "recognition rate limit exceeded"})
         window.append(now)
-    if request.method == "POST" and request.url.path == "/api/v1/ai-chat":
-        key = request.client.host if request.client else "unknown"
-        now = time.monotonic()
-        window = _ai_chat_rate_windows[key]
-        while window and now - window[0] >= 60:
-            window.popleft()
-        if len(window) >= settings.anonymous_ai_chat_requests_per_minute:
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "AI chat rate limit exceeded"},
-            )
-        window.append(now)
     return await call_next(request)
+
+
+def _enforce_ai_chat_rate(subject: str) -> None:
+    # Keyed by verified user rather than client IP: behind Cloud Run's proxy
+    # every request can share one peer address, which would make the limit
+    # global across all users.
+    now = time.monotonic()
+    window = _ai_chat_rate_windows[subject]
+    while window and now - window[0] >= 60:
+        window.popleft()
+    if len(window) >= settings.ai_chat_requests_per_minute:
+        raise HTTPException(status_code=429, detail="AI chat rate limit exceeded")
+    window.append(now)
 
 
 @app.get("/")
@@ -489,16 +488,10 @@ def analyze_calls_endpoint(req: CallAnalysisRequest) -> CallAnalysisResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _ai_usage_subject(user: dict | None, install_id: str | None) -> str:
-    if user and user.get("uid"):
-        return f"user:{user['uid']}"
-    value = (install_id or "").strip()
-    if not _INSTALL_ID_PATTERN.fullmatch(value):
-        raise HTTPException(
-            status_code=400,
-            detail="X-TsumoAI-Install-ID is required for anonymous AI usage",
-        )
-    return f"install:{value}"
+def _ai_usage_subject(user: dict) -> str:
+    # AI chat is login-only: an anonymous identifier would be chosen by the
+    # client, so rotating it could reset the monthly allowance indefinitely.
+    return f"user:{user['uid']}"
 
 
 def _ai_usage_status(subject: str) -> AIUsageStatus:
@@ -510,19 +503,18 @@ def _ai_usage_status(subject: str) -> AIUsageStatus:
 
 @app.get("/api/v1/ai-chat/usage", response_model=AIUsageStatus)
 def get_ai_chat_usage(
-    user: dict | None = Depends(get_optional_user),
-    install_id: str | None = Header(default=None, alias="X-TsumoAI-Install-ID"),
+    user: dict = Depends(get_current_user),
 ) -> AIUsageStatus:
-    return _ai_usage_status(_ai_usage_subject(user, install_id))
+    return _ai_usage_status(_ai_usage_subject(user))
 
 
 @app.post("/api/v1/ai-chat", response_model=AIChatResponse)
 async def ai_chat_endpoint(
     req: AIChatRequest,
-    user: dict | None = Depends(get_optional_user),
-    install_id: str | None = Header(default=None, alias="X-TsumoAI-Install-ID"),
+    user: dict = Depends(get_current_user),
 ) -> AIChatResponse:
-    subject = _ai_usage_subject(user, install_id)
+    subject = _ai_usage_subject(user)
+    _enforce_ai_chat_rate(subject)
     try:
         reservation = ai_usage_store.consume(subject)
     except AIUsageLimitReached as exc:

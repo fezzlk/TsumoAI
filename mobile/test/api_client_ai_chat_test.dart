@@ -13,7 +13,11 @@ void main() {
         InterceptorsWrapper(
           onRequest: (options, handler) {
             body = Map<String, dynamic>.from(options.data as Map);
-            expect(options.headers['X-TsumoAI-Install-ID'], 'install-12345678');
+            expect(options.headers['Authorization'], 'Bearer firebase-token');
+            expect(
+              options.headers.containsKey('X-TsumoAI-Install-ID'),
+              isFalse,
+            );
             handler.resolve(
               Response(
                 requestOptions: options,
@@ -27,8 +31,7 @@ void main() {
       final client = ApiClient(
         dio: dio,
         baseUrl: 'https://example.test',
-        installationIdProvider: () async => 'install-12345678',
-        authTokenProvider: () async => null,
+        authTokenProvider: () async => 'firebase-token',
       );
 
       final answer = await client.askAi(
@@ -72,7 +75,6 @@ void main() {
     final client = ApiClient(
       dio: dio,
       baseUrl: 'https://example.test',
-      installationIdProvider: () async => 'install-12345678',
       authTokenProvider: () async => 'firebase-token',
     );
 
@@ -80,5 +82,86 @@ void main() {
 
     expect(usage.remaining, 2);
     expect(usage.includedUsed, 1);
+  });
+
+  test('askAi requires login before sending anything', () async {
+    final dio = Dio();
+    var requests = 0;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          requests += 1;
+          handler.reject(DioException(requestOptions: options));
+        },
+      ),
+    );
+    final client = ApiClient(
+      dio: dio,
+      baseUrl: 'https://example.test',
+      authTokenProvider: () async => null,
+    );
+
+    await expectLater(
+      client.askAi(
+        message: '何を切る？',
+        conversation: const [],
+        purpose: 'discard',
+        tiles: const ['1m'],
+        roundContext: const {},
+        analysis: const {},
+        situationTags: const [],
+      ),
+      throwsA(isA<AILoginRequiredException>()),
+    );
+    await expectLater(
+      client.fetchAiUsage(),
+      throwsA(isA<AILoginRequiredException>()),
+    );
+    expect(requests, 0);
+  });
+
+  test('askAi sends only the most recent turns the server accepts', () async {
+    final dio = Dio();
+    Map<String, dynamic>? body;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          body = Map<String, dynamic>.from(options.data as Map);
+          handler.resolve(
+            Response(
+              requestOptions: options,
+              statusCode: 200,
+              data: {'answer': '回答'},
+            ),
+          );
+        },
+      ),
+    );
+    final client = ApiClient(
+      dio: dio,
+      baseUrl: 'https://example.test',
+      authTokenProvider: () async => 'firebase-token',
+    );
+
+    await client.askAi(
+      message: '次は？',
+      conversation: [
+        for (var index = 0; index < 20; index++)
+          AIChatMessage(
+            role: index.isEven ? 'user' : 'assistant',
+            content: 'message-$index',
+          ),
+      ],
+      purpose: 'discard',
+      tiles: const ['1m'],
+      roundContext: const {},
+      analysis: const {},
+      situationTags: const [],
+    );
+
+    final sent = body!['conversation'] as List;
+    expect(sent, hasLength(ApiClient.aiConversationLimit));
+    expect(sent.first['content'], 'message-8');
+    expect(sent.last['content'], 'message-19');
   });
 }

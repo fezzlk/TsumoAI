@@ -129,6 +129,23 @@ def test_delete_by_uid_removes_only_the_owners_training_data(store):
     assert [entry["id"] for entry in index] == [second["id"]]
 
 
+def test_delete_by_uid_removes_entries_missing_from_index(store, monkeypatch):
+    # Simulate an upload whose index update failed: blobs exist, index does not list it.
+    monkeypatch.setattr(
+        store,
+        "_save_index",
+        lambda entries: (_ for _ in ()).throw(RuntimeError("index write failed")),
+    )
+    orphan = store.upload(b"orphan", tile_code="3m", uid="user-1")
+    monkeypatch.undo()
+    orphan_meta_path = orphan["image_path"].replace("images/", "meta/").replace(".jpg", ".json")
+    assert orphan_meta_path in store._gcs.objects
+
+    assert store.delete_by_uid("user-1") == 1
+    assert orphan["image_path"] not in store._gcs.objects
+    assert orphan_meta_path not in store._gcs.objects
+
+
 def test_delete_by_uid_propagates_index_read_failure(store, monkeypatch):
     monkeypatch.setattr(
         store,

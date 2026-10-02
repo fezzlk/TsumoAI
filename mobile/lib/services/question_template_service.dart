@@ -110,6 +110,10 @@ class QuestionTemplateService {
     if (normalizedName.isEmpty || normalizedBody.isEmpty) {
       throw ArgumentError('Name and body must not be empty');
     }
+    QuestionTemplate.validateLengths(
+      name: normalizedName,
+      body: normalizedBody,
+    );
     if (all.any(
       (item) =>
           item.id != id &&
@@ -248,6 +252,8 @@ class QuestionTemplateService {
     return result;
   }
 
+  /// Signed-out users see only unclaimed device templates, never those of
+  /// the account that was signed in before (same rule as HistoryService).
   bool _isVisible(QuestionTemplate item, String? uid) =>
-      uid == null || item.accountUid == null || item.accountUid == uid;
+      item.accountUid == null || item.accountUid == uid;
 }

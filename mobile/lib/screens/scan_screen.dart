@@ -559,7 +559,12 @@ class _ScanScreenState extends State<ScanScreen> {
     // takePicture(), or the capture can fail/stall.
     await Future.delayed(const Duration(milliseconds: 300));
     if (!mounted || _controller == null || !_controller!.value.isInitialized) {
-      if (mounted) setState(() => _isCapturing = false);
+      if (identical(_performanceTrace, trace)) _performanceTrace = null;
+      if (!mounted) return;
+      setState(() => _isCapturing = false);
+      // The stream was stopped above; resume it if the controller has
+      // recovered (a no-op otherwise, and _initCamera restarts it itself).
+      if (_phase == _ScanPhase.camera) await _startLiveDetection();
       return;
     }
 
@@ -1310,12 +1315,18 @@ class _ScanScreenState extends State<ScanScreen> {
           : '$discardFocusで、上位3候補から何を切るべきか理由も含めて教えて',
       onMessagesChanged: (messages) {
         if (mounted) setState(() => _chatMessages = messages);
+        // Each write is isolated: one failed save must not leave the queue
+        // in an error state that silently skips every later conversation.
         _historyUpdateQueue = _historyUpdateQueue.then((_) async {
-          await _historyService.updateDetails(_historyEntryId, {
-            'ai_conversation': messages
-                .map((message) => message.toJson())
-                .toList(growable: false),
-          });
+          try {
+            await _historyService.updateDetails(_historyEntryId, {
+              'ai_conversation': messages
+                  .map((message) => message.toJson())
+                  .toList(growable: false),
+            });
+          } catch (error) {
+            debugPrint('ScanScreen: failed to save AI conversation: $error');
+          }
         });
       },
     );
