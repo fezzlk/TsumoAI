@@ -23,8 +23,18 @@ abstract final class AppTheme {
   static const _seed = Color(0xFF1B7F4B);
   static const _background = Color(0xFFF5F7F5);
 
+  // Built once: screens wrap themselves in these on every rebuild (camera
+  // frames, handle drags), and ColorScheme.fromSeed is not free.
+  static final ThemeData _light = _buildLight();
+  static final ThemeData _camera = _buildCamera();
+
   /// The app theme: light, with green for primary actions.
-  static ThemeData light() {
+  static ThemeData light() => _light;
+
+  /// Dark theme for camera and photo-editing screens only.
+  static ThemeData camera() => _camera;
+
+  static ThemeData _buildLight() {
     final scheme = ColorScheme.fromSeed(seedColor: _seed).copyWith(
       primary: _seed,
       onPrimary: Colors.white,
@@ -40,8 +50,7 @@ abstract final class AppTheme {
     return _build(scheme, background: _background);
   }
 
-  /// Dark theme for camera and photo-editing screens only.
-  static ThemeData camera() {
+  static ThemeData _buildCamera() {
     final scheme = ColorScheme.fromSeed(
       seedColor: _seed,
       brightness: Brightness.dark,
