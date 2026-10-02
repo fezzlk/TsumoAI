@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     max_image_bytes: int = 10 * 1024 * 1024
     anonymous_recognition_requests_per_minute: int = 20
-    anonymous_ai_chat_requests_per_minute: int = 5
+    ai_chat_requests_per_minute: int = 5
     free_ai_chat_requests_per_month: int = 3
     subscription_ai_chat_requests_per_month: int = 30
     service_provider_name: str = "fezzlk"

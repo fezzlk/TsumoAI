@@ -5,11 +5,10 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.ai_usage_store import AIUsageLimitReached, AIUsageReservation
-from app.auth import get_optional_user
+from app.auth import get_current_user
 
 
 client = TestClient(main_module.app)
-INSTALL_HEADERS = {"X-TsumoAI-Install-ID": "test-install-0001"}
 
 
 class FakeUsageStore:
@@ -51,6 +50,9 @@ def fake_usage_store(monkeypatch):
     store = FakeUsageStore()
     monkeypatch.setattr(main_module, "ai_usage_store", store)
     main_module._ai_chat_rate_windows.clear()
+    main_module.app.dependency_overrides[get_current_user] = lambda: {
+        "uid": "member-1"
+    }
     yield store
     main_module.app.dependency_overrides.clear()
 
@@ -80,7 +82,7 @@ def test_ai_chat_returns_coaching_answer(monkeypatch):
     )
 
     response = client.post(
-        "/api/v1/ai-chat", json=_payload(), headers=INSTALL_HEADERS
+        "/api/v1/ai-chat", json=_payload()
     )
 
     assert response.status_code == 200
@@ -93,7 +95,7 @@ def test_ai_chat_rejects_invalid_context():
     payload["context"]["purpose"] = "score"
 
     response = client.post(
-        "/api/v1/ai-chat", json=payload, headers=INSTALL_HEADERS
+        "/api/v1/ai-chat", json=payload
     )
 
     assert response.status_code == 422
@@ -106,7 +108,7 @@ def test_ai_chat_reports_unavailable_model(monkeypatch):
     monkeypatch.setattr(main_module, "answer_ai_chat", unavailable)
 
     response = client.post(
-        "/api/v1/ai-chat", json=_payload(), headers=INSTALL_HEADERS
+        "/api/v1/ai-chat", json=_payload()
     )
 
     assert response.status_code == 503
@@ -120,12 +122,12 @@ def test_ai_chat_refunds_usage_when_model_fails(monkeypatch, fake_usage_store):
     )
 
     response = client.post(
-        "/api/v1/ai-chat", json=_payload(), headers=INSTALL_HEADERS
+        "/api/v1/ai-chat", json=_payload()
     )
 
     assert response.status_code == 502
     assert fake_usage_store.used == 0
-    assert fake_usage_store.refunds == [("install:test-install-0001", "included")]
+    assert fake_usage_store.refunds == [("user:member-1", "included")]
 
 
 def test_ai_chat_rejects_when_monthly_allowance_is_empty(
@@ -135,7 +137,7 @@ def test_ai_chat_rejects_when_monthly_allowance_is_empty(
     monkeypatch.setattr(main_module, "answer_ai_chat", lambda request: "unused")
 
     response = client.post(
-        "/api/v1/ai-chat", json=_payload(), headers=INSTALL_HEADERS
+        "/api/v1/ai-chat", json=_payload()
     )
 
     assert response.status_code == 429
@@ -144,25 +146,57 @@ def test_ai_chat_rejects_when_monthly_allowance_is_empty(
 
 
 def test_ai_usage_status_is_available_before_opening_chat():
-    response = client.get("/api/v1/ai-chat/usage", headers=INSTALL_HEADERS)
+    response = client.get("/api/v1/ai-chat/usage")
 
     assert response.status_code == 200
     assert response.json()["included_limit"] == 3
     assert response.json()["remaining"] == 3
 
 
-def test_anonymous_ai_usage_requires_install_id():
-    response = client.get("/api/v1/ai-chat/usage")
+def test_ai_chat_requires_login(monkeypatch, fake_usage_store):
+    main_module.app.dependency_overrides.pop(get_current_user)
+    monkeypatch.setattr(main_module, "answer_ai_chat", lambda request: "unused")
 
-    assert response.status_code == 400
+    chat = client.post("/api/v1/ai-chat", json=_payload())
+    usage = client.get("/api/v1/ai-chat/usage")
+
+    assert chat.status_code == 401
+    assert usage.status_code == 401
+    assert fake_usage_store.subjects == []
 
 
-def test_logged_in_usage_uses_verified_uid_without_install_id(fake_usage_store):
-    main_module.app.dependency_overrides[get_optional_user] = lambda: {
-        "uid": "member-1"
-    }
+def test_ai_chat_ignores_client_supplied_install_id(monkeypatch, fake_usage_store):
+    main_module.app.dependency_overrides.pop(get_current_user)
+    monkeypatch.setattr(main_module, "answer_ai_chat", lambda request: "unused")
 
+    response = client.post(
+        "/api/v1/ai-chat",
+        json=_payload(),
+        headers={"X-TsumoAI-Install-ID": "rotated-install-0001"},
+    )
+
+    assert response.status_code == 401
+    assert fake_usage_store.used == 0
+
+
+def test_usage_is_counted_per_verified_uid(fake_usage_store):
     response = client.get("/api/v1/ai-chat/usage")
 
     assert response.status_code == 200
     assert fake_usage_store.subjects == ["user:member-1"]
+
+
+def test_ai_chat_rate_limit_is_per_user(monkeypatch):
+    monkeypatch.setattr(main_module.settings, "ai_chat_requests_per_minute", 1)
+    monkeypatch.setattr(main_module, "answer_ai_chat", lambda request: "ok")
+
+    first = client.post("/api/v1/ai-chat", json=_payload())
+    second = client.post("/api/v1/ai-chat", json=_payload())
+    main_module.app.dependency_overrides[get_current_user] = lambda: {
+        "uid": "member-2"
+    }
+    other_user = client.post("/api/v1/ai-chat", json=_payload())
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert other_user.status_code == 200

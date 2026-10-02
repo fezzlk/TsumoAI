@@ -23,9 +23,8 @@ class AIUsageReservation:
 class AIUsageStore:
     """Firestore-backed monthly AI allowance.
 
-    Subjects are hashed before becoming document IDs. A subject is either a
-    verified Firebase uid or an app-install identifier supplied by the mobile
-    client. Consumption is transactional so concurrent sends cannot exceed the
+    Subjects are hashed before becoming document IDs. A subject is always a
+    verified Firebase uid; AI chat is not available anonymously. Consumption is transactional so concurrent sends cannot exceed the
     allowance. Failed model calls are refunded by the API layer.
     """
 
