@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../theme/app_theme.dart';
+import 'toggle_chip.dart';
 import '../models/score_request.dart';
 
 /// The rare situational win-time flags — 海底・河底・嶺上・槍槓・地和・天和.
@@ -24,8 +27,9 @@ class ContextInputPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(8),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
       ),
       child: Wrap(
         spacing: 6,
@@ -66,29 +70,6 @@ class ContextInputPanel extends StatelessWidget {
     );
   }
 
-  Widget _chip(String label, bool value, ValueChanged<bool> onChanged) {
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: value
-              ? Colors.green.withValues(alpha: 0.4)
-              : Colors.white.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: value
-              ? Border.all(color: Colors.greenAccent, width: 1)
-              : null,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: value ? Colors.greenAccent : Colors.white54,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _chip(String label, bool value, ValueChanged<bool> onChanged) =>
+      ToggleChip(label: label, selected: value, onTap: () => onChanged(!value));
 }

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+
 import '../models/scan_purpose.dart';
 import '../services/purpose_switch.dart';
 import 'tile_glyph.dart';
@@ -34,10 +37,7 @@ Future<ScanPurpose?> showPurposeSwitchDialog(
                   children: [
                     Text(
                       purpose.label,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: Theme.of(dialogContext).textTheme.titleMedium,
                     ),
                     Text(switch (purposeSwitchAdjustment(current, purpose)) {
                       PurposeSwitchAdjustment.none => '同じ牌で確認します',
@@ -88,7 +88,7 @@ Future<int?> showTileRemovalDialog(
                   InkWell(
                     key: ValueKey('remove-tile-$index'),
                     onTap: () => Navigator.pop(dialogContext, index),
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(AppRadius.small),
                     child: Container(
                       width: 40,
                       height: 52,
@@ -96,11 +96,11 @@ Future<int?> showTileRemovalDialog(
                       decoration: BoxDecoration(
                         border: Border.all(
                           color: index == highlightedIndex
-                              ? Colors.amber
+                              ? dialogContext.appColors.winningTile
                               : Colors.transparent,
                           width: 2,
                         ),
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.circular(AppRadius.small),
                       ),
                       child: TileGlyph(tileCode: tile),
                     ),

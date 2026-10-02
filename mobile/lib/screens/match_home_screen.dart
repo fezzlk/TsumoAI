@@ -1,6 +1,8 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 import '../models/match_state.dart';
 import '../models/scan_purpose.dart';
 import '../models/score_request.dart';
@@ -124,6 +126,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
         content: Text('${_match.current.roundLabel}で対局を終了します。局の進行状況はリセットされます。'),
         actions: [
           FilledButton(
+            style: destructiveButtonStyle(dialogContext),
             onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('対局を終了'),
           ),
@@ -140,7 +143,6 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
     final selected = await showDialog<String>(
       context: context,
       builder: (dialogContext) => Dialog(
-        backgroundColor: Colors.grey[900],
         child: SizedBox(
           width: 520,
           height: 330,
@@ -181,10 +183,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(12, 16, 12, 28),
           children: [
-            const Text(
-              '和了者を選択',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-            ),
+            Text('和了者を選択', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 12),
             _tableLayout(state),
             const SizedBox(height: 16),
@@ -193,6 +192,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
             SizedBox(
               height: 52,
               child: OutlinedButton(
+                style: destructiveOutlinedButtonStyle(context),
                 onPressed: _confirmEndMatch,
                 child: const Text('対局終了'),
               ),
@@ -281,7 +281,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
               onTap: () => setState(() => _showDoraTiles = !_showDoraTiles),
               child: Text(
                 _showDoraTiles ? '表ドラ牌' : '表ドラ表示牌',
-                style: const TextStyle(fontSize: 10),
+                style: Theme.of(context).textTheme.labelSmall,
               ),
             ),
             const SizedBox(height: 3),
@@ -332,7 +332,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
               child: Text(
                 purpose.label,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11),
+                style: Theme.of(context).textTheme.labelMedium,
               ),
             ),
           ),
@@ -355,7 +355,9 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
             ),
             child: Text(
               _physicalSeatLabel(seat),
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSecondaryContainer,
+              ),
             ),
           ),
         ),
@@ -393,13 +395,12 @@ class _SeatBadge extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.primary,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppRadius.medium),
     ),
     child: Text(
       label,
-      style: TextStyle(
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
         color: Theme.of(context).colorScheme.onPrimary,
-        fontSize: 9,
         fontWeight: FontWeight.bold,
       ),
     ),

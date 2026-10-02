@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+
+import '../theme/app_theme.dart';
 import '../services/tile_assets.dart';
 
 /// Image-based tile selection, shown as a BottomSheet — same grid-by-suit
@@ -32,10 +34,6 @@ class TileImagePicker extends StatelessWidget {
   }) {
     return showModalBottomSheet<String>(
       context: context,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
       constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.95),
       builder: (_) => TileImagePicker(
         currentTile: currentTile,
@@ -79,8 +77,8 @@ class TileImagePicker extends StatelessWidget {
               Container(
                 width: 40, height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(AppRadius.small),
                 ),
               ),
               const SizedBox(height: 8),
@@ -88,16 +86,16 @@ class TileImagePicker extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: 8),
-              _buildRow('萬', _manRow, cellWidth, cellHeight),
+              _buildRow(context, '萬', _manRow, cellWidth, cellHeight),
               const SizedBox(height: rowSpacing),
-              _buildRow('筒', _pinRow, cellWidth, cellHeight),
+              _buildRow(context, '筒', _pinRow, cellWidth, cellHeight),
               const SizedBox(height: rowSpacing),
-              _buildRow('索', _souRow, cellWidth, cellHeight),
+              _buildRow(context, '索', _souRow, cellWidth, cellHeight),
               const SizedBox(height: rowSpacing),
-              _buildRow('字', _honorRow, cellWidth, cellHeight),
+              _buildRow(context, '字', _honorRow, cellWidth, cellHeight),
             ],
           );
         },
@@ -105,14 +103,21 @@ class TileImagePicker extends StatelessWidget {
     );
   }
 
-  Widget _buildRow(String label, List<String> tiles, double cellWidth, double cellHeight) {
+  Widget _buildRow(
+    BuildContext context,
+    String label,
+    List<String> tiles,
+    double cellWidth,
+    double cellHeight,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         if (showSuitLabels)
           SizedBox(
             width: 20,
-            child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
           ),
         ...tiles.map((tile) => GestureDetector(
           key: ValueKey('tile_picker_cell_$tile'),
@@ -124,11 +129,11 @@ class TileImagePicker extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 2),
             decoration: BoxDecoration(
               color: tile == currentTile
-                  ? Colors.green.withValues(alpha: 0.4)
-                  : Colors.white.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
+                  ? scheme.primaryContainer
+                  : scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(AppRadius.small),
               border: tile == currentTile
-                  ? Border.all(color: Colors.greenAccent, width: 1.5)
+                  ? Border.all(color: scheme.primary, width: 1.5)
                   : null,
             ),
             alignment: Alignment.center,
