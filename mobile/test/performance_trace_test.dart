@@ -12,13 +12,14 @@ void main() {
 
     now += 250000;
     trace.mark('pictureTaken');
+    trace.annotate('final_detected_tile_count', 14);
     now += 125000;
     trace.mark('classificationCompleted');
 
     expect(trace.durationMicros('flowStarted', 'pictureTaken'), 250000);
     expect(trace.snapshot(), {
       'name': 'recognition',
-      'metadata': {'tile_count': 14},
+      'metadata': {'tile_count': 14, 'final_detected_tile_count': 14},
       'marks_ms': {
         'flowStarted': 0.0,
         'pictureTaken': 250.0,

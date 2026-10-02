@@ -167,6 +167,7 @@ class _ScanScreenState extends State<ScanScreen> {
   int? _expectedTileCount;
   int? _autoDetectedTileCount;
   int? _stableCandidateCount;
+  TileDetectorResult? _stableCandidateGeometry;
   static const int _requiredStableFrames = 2;
   static const Duration _analysisInterval = Duration(seconds: 1);
 
@@ -464,12 +465,18 @@ class _ScanScreenState extends State<ScanScreen> {
         if (_expectedTileCount == null && isSupportedCount) {
           _autoDetectedTileCount = candidateCount;
         }
-        if (isFullDetection && _stableCandidateCount == candidateCount) {
+        final geometryStable =
+            _stableCandidateGeometry != null &&
+            detectionsAreStable(_stableCandidateGeometry!, result);
+        if (isFullDetection &&
+            _stableCandidateCount == candidateCount &&
+            geometryStable) {
           _stableDetectionStreak += 1;
         } else {
           _stableCandidateCount = isFullDetection ? candidateCount : null;
           _stableDetectionStreak = isFullDetection ? 1 : 0;
         }
+        _stableCandidateGeometry = isFullDetection ? result : null;
       });
 
       if (_autoCaptureEnabled &&
@@ -489,6 +496,7 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() {
       _autoCaptureEnabled = !_autoCaptureEnabled;
       _stableDetectionStreak = 0;
+      _stableCandidateGeometry = null;
     });
   }
 
@@ -513,7 +521,11 @@ class _ScanScreenState extends State<ScanScreen> {
       name: 'tileRecognition',
       metadata: {
         'purpose': widget.purpose.name,
-        'expected_tile_count': _expectedTileCount,
+        'tile_count_mode': _expectedTileCount == null ? 'automatic' : 'manual',
+        'requested_tile_count': _expectedTileCount,
+        'auto_inferred_tile_count': _expectedTileCount == null
+            ? _autoDetectedTileCount
+            : null,
         'capture_mode': _autoCaptureEnabled ? 'automatic' : 'manual',
       },
     );
@@ -578,6 +590,7 @@ class _ScanScreenState extends State<ScanScreen> {
         expectedTileCount: _expectedTileCount,
         allowExtendedAuto: _expectedTileCount == null,
       ));
+      trace.annotate('final_detected_tile_count', detected.boxes.length);
       trace.mark('segmentationCompleted');
       if (!mounted) return;
       await _classifyBoxesAndFinish(
@@ -2875,6 +2888,7 @@ class _ScanScreenState extends State<ScanScreen> {
           _expectedTileCount = selected;
           _stableDetectionStreak = 0;
           _stableCandidateCount = null;
+          _stableCandidateGeometry = null;
         });
         if (redetectOnChange && _capturedImage != null) {
           await _redetectInRegion(_cropRegion);

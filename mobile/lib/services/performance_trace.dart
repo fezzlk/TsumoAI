@@ -8,7 +8,7 @@ class PerformanceTrace {
     required this.name,
     Map<String, Object?> metadata = const {},
     int Function()? nowMicros,
-  }) : metadata = Map.unmodifiable(metadata),
+  }) : metadata = Map.of(metadata),
        _nowMicros = nowMicros ?? _stopwatchMicros {
     _originMicros = _nowMicros();
     mark('flowStarted');
@@ -19,6 +19,10 @@ class PerformanceTrace {
   final int Function() _nowMicros;
   late final int _originMicros;
   final Map<String, int> _marks = {};
+
+  void annotate(String key, Object? value) {
+    metadata[key] = value;
+  }
 
   static final Stopwatch _clock = Stopwatch()..start();
   static int _stopwatchMicros() => _clock.elapsedMicroseconds;
