@@ -5,6 +5,7 @@ import '../config.dart';
 import '../models/score_request.dart';
 import '../services/auth_service.dart';
 import '../services/history_service.dart';
+import '../widgets/help_dialog.dart';
 import 'history_screen.dart';
 import 'mahjong_rules_screen.dart';
 import 'ai_chat_template_admin_screen.dart';
@@ -118,7 +119,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: const Icon(Icons.help_outline),
               title: const Text('使い方・ヘルプ'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () => _showHelp(context),
+              onTap: () => showHelpDialog(context),
             ),
             ListTile(
               leading: const Icon(Icons.description_outlined),
@@ -168,17 +169,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
-  Future<void> _showHelp(BuildContext context) => showDialog<void>(
-    context: context,
-    builder: (context) => const AlertDialog(
-      title: Text('使い方'),
-      content: Text(
-        'ホームで目的を選び、牌をカメラに収めます。認識結果では牌・枚数・条件を訂正でき、結果へすぐ反映されます。\n\n'
-        '「実際の対局進行に合わせて点数計算を行う」では、1台の端末で局・親・本場を管理できます。',
-      ),
-    ),
-  );
 
   Future<void> _openExternalPage(String path) async {
     final opened = await launchUrl(

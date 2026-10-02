@@ -97,6 +97,36 @@ void main() {
     expectNoOverflow(tester);
   });
 
+  testWidgets('home header keeps help, login and settings on screen', (
+    tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await pumpAtDeviceSize(
+      tester,
+      const TsumoAIApp(),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+    await tester.pumpAndSettle();
+
+    for (final finder in [
+      find.byTooltip('使い方'),
+      find.text('ログイン'),
+      find.byTooltip('設定'),
+    ]) {
+      expect(finder, findsOneWidget);
+      expect(tester.getRect(finder).right, lessThanOrEqualTo(320));
+    }
+    expectNoOverflow(tester);
+
+    await tester.tap(find.byTooltip('使い方'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(AlertDialog, '使い方'), findsOneWidget);
+  });
+
   testWidgets('tile count choices stay visible on a narrow portrait screen', (
     tester,
   ) async {

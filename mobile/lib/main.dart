@@ -19,6 +19,7 @@ import 'services/auth_service.dart';
 import 'services/question_template_service.dart';
 import 'services/rule_settings_service.dart';
 import 'services/official_ai_chat_template_service.dart';
+import 'widgets/help_dialog.dart';
 
 List<CameraDescription> cameras = const [];
 
@@ -326,6 +327,11 @@ class HomeScreen extends StatelessWidget {
                 fontWeight: FontWeight.bold,
               ),
             ),
+          ),
+          IconButton(
+            onPressed: () => showHelpDialog(context),
+            icon: const Icon(Icons.help_outline),
+            tooltip: '使い方',
           ),
           if (user == null)
             TextButton(
