@@ -2417,6 +2417,10 @@ class _ScanScreenState extends State<ScanScreen> {
       _phase == _ScanPhase.camera ||
       (_phase == _ScanPhase.detecting && !_usesWinConditionWizard);
 
+  // These read this State's context, which sits above the local camera
+  // Theme applied in build(): they always return the light app theme. In the
+  // camera and detecting phases, pass an explicit camera color (`_colors`
+  // camera tokens) rather than relying on a `_scheme`/`_text` default.
   ColorScheme get _scheme => Theme.of(context).colorScheme;
   TextTheme get _text => Theme.of(context).textTheme;
   AppColors get _colors => context.appColors;
