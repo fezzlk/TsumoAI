@@ -35,6 +35,14 @@
       if (initialized) listener({ user, isAdmin });
       return () => listeners.delete(listener);
     },
+    async signIn() {
+      if (!auth) throw new Error("ログイン機能を読み込めません。");
+      return auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    },
+    async signOut() {
+      if (!auth) return;
+      return auth.signOut();
+    },
     async fetch(url, options = {}, { admin = false } = {}) {
       await ready;
       const currentUser = auth?.currentUser;
@@ -107,7 +115,7 @@
   login.addEventListener("click", async () => {
     login.disabled = true;
     try {
-      await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      await window.TsumoAuth.signIn();
     } catch (error) {
       status.textContent = `ログイン失敗: ${error.message}`;
     } finally {
@@ -116,7 +124,7 @@
   });
   logout.addEventListener("click", async () => {
     try {
-      await auth.signOut();
+      await window.TsumoAuth.signOut();
     } catch (error) {
       status.textContent = `ログアウト失敗: ${error.message}`;
     }

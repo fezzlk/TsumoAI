@@ -6,24 +6,47 @@ import '../models/interpretation_request.dart';
 import '../models/interpretation_result.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
+import '../models/ai_chat_message.dart';
+import '../models/ai_usage_status.dart';
 import 'auth_service.dart';
 
 class ApiClient {
   final Dio _dio;
   final String? _baseUrlOverride;
+  final Future<String?> Function() _authTokenProvider;
 
-  ApiClient({Dio? dio, String? baseUrl})
-    : _dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              connectTimeout: const Duration(seconds: 10),
-              receiveTimeout: const Duration(seconds: 60),
-            ),
-          ),
-      _baseUrlOverride = baseUrl;
+  /// Server-side limits of `POST /api/v1/ai-chat` (`AIChatRequest`).
+  static const aiConversationLimit = 12;
+  static const aiMessageMaxLength = 600;
+
+  ApiClient({
+    Dio? dio,
+    String? baseUrl,
+    Future<String?> Function()? authTokenProvider,
+  }) : _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               connectTimeout: const Duration(seconds: 10),
+               receiveTimeout: const Duration(seconds: 60),
+             ),
+           ),
+       _baseUrlOverride = baseUrl,
+       _authTokenProvider = authTokenProvider ?? _currentAuthToken;
 
   String get _baseUrl => _baseUrlOverride ?? AppConfig.apiBaseUrl;
+
+  static Future<String?> _currentAuthToken() async {
+    if (AuthService.currentUser == null) return null;
+    return AuthService.idToken();
+  }
+
+  /// AI chat is login-only, so a missing token fails before any request.
+  Future<Map<String, String>> _aiHeaders() async {
+    final token = await _authTokenProvider();
+    if (token == null || token.isEmpty) throw const AILoginRequiredException();
+    return {'Authorization': 'Bearer $token'};
+  }
 
   /// Upload image and recognize tiles (synchronous call, no polling needed)
   Future<RecognizeResponse> recognize(File imageFile) async {
@@ -152,6 +175,78 @@ class ApiClient {
     return Map<String, dynamic>.from(response.data as Map);
   }
 
+  Future<String> askAi({
+    required String message,
+    required List<AIChatMessage> conversation,
+    required String purpose,
+    required List<String> tiles,
+    required Map<String, dynamic> roundContext,
+    required Map<String, dynamic> analysis,
+    required List<String> situationTags,
+  }) async {
+    try {
+      final response = await _dio.post(
+        '$_baseUrl/api/v1/ai-chat',
+        options: Options(headers: await _aiHeaders()),
+        data: {
+          'message': message,
+          // The server accepts only the most recent turns; older ones are
+          // still kept in the local history.
+          'conversation': conversation
+              .skip(
+                conversation.length > aiConversationLimit
+                    ? conversation.length - aiConversationLimit
+                    : 0,
+              )
+              .map((item) => item.toJson())
+              .toList(growable: false),
+          'context': {
+            'purpose': purpose,
+            'tiles': tiles,
+            'round_context': roundContext,
+            'analysis': analysis,
+            'situation_tags': situationTags,
+          },
+        },
+      );
+      return (response.data as Map)['answer'] as String;
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      if (error.response?.statusCode == 401) {
+        throw const AILoginRequiredException();
+      }
+      if (error.response?.statusCode == 429 && data is Map) {
+        final detail = data['detail'];
+        if (detail is Map && detail['code'] == 'monthly_ai_limit_reached') {
+          throw AIQuotaExceededException(
+            AIUsageStatus.fromJson(
+              Map<String, dynamic>.from(detail['usage'] as Map),
+            ),
+          );
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<AIUsageStatus> fetchAiUsage() async {
+    final Response<dynamic> response;
+    try {
+      response = await _dio.get(
+        '$_baseUrl/api/v1/ai-chat/usage',
+        options: Options(headers: await _aiHeaders()),
+      );
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const AILoginRequiredException();
+      }
+      rethrow;
+    }
+    return AIUsageStatus.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
+
   Map<String, dynamic> _analysisPayload(
     ConfirmedHandStateV1 state,
     ContextInput context,
@@ -210,6 +305,17 @@ class ApiClient {
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }
+}
+
+class AIQuotaExceededException implements Exception {
+  const AIQuotaExceededException(this.usage);
+
+  final AIUsageStatus usage;
+}
+
+/// AI chat requires a signed-in account (the monthly allowance is per user).
+class AILoginRequiredException implements Exception {
+  const AILoginRequiredException();
 }
 
 class InterpretationApiException implements Exception {

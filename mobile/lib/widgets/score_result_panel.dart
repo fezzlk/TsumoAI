@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/score_result.dart';
+import '../models/score_request.dart';
 
 /// Displays the same confirmed hand as both a tsumo and ron result.
 class ScoreResultPanel extends StatelessWidget {
@@ -8,10 +9,14 @@ class ScoreResultPanel extends StatelessWidget {
     super.key,
     required this.tsumoResponse,
     required this.ronResponse,
+    this.ruleSettings = const MahjongRuleSettings(),
+    this.isOpenHand = false,
   });
 
   final ScoreResponse? tsumoResponse;
   final ScoreResponse? ronResponse;
+  final MahjongRuleSettings ruleSettings;
+  final bool isOpenHand;
 
   @override
   Widget build(BuildContext context) {
@@ -26,15 +31,19 @@ class ScoreResultPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _resultSection('ツモの場合', tsumoResponse?.result),
+          _resultSection('ツモの場合', tsumoResponse?.result, isTsumo: true),
           const Divider(color: Colors.white24, height: 24),
-          _resultSection('ロンの場合', ronResponse?.result),
+          _resultSection('ロンの場合', ronResponse?.result, isTsumo: false),
         ],
       ),
     );
   }
 
-  Widget _resultSection(String label, ScoreResult? result) {
+  Widget _resultSection(
+    String label,
+    ScoreResult? result, {
+    required bool isTsumo,
+  }) {
     if (result == null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -83,6 +92,10 @@ class ScoreResultPanel extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         _buildPoints(result),
+        if (ruleSettings.chipsEnabled) ...[
+          const SizedBox(height: 6),
+          _buildChips(result, isTsumo: isTsumo),
+        ],
         const SizedBox(height: 8),
         Wrap(
           spacing: 4,
@@ -114,6 +127,28 @@ class ScoreResultPanel extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildChips(ScoreResult result, {required bool isTsumo}) {
+    if (isOpenHand && !ruleSettings.openHandChipsEnabled) {
+      return const Text(
+        'チップ: なし（副露あり）',
+        style: TextStyle(color: Colors.white70, fontSize: 13),
+      );
+    }
+    final red = result.dora.akaDora;
+    final ura = result.dora.uraDora;
+    final ippatsu = result.yaku.any((item) => item.name == '一発') ? 1 : 0;
+    final allStar = red >= 3 ? 2 : 0;
+    final chips = red + ura + ippatsu + allStar;
+    final equivalent = chips * 1000;
+    final payment = isTsumo
+        ? '各$chips枚・合計${chips * 3}枚'
+        : '$chips枚';
+    return Text(
+      'チップ: $payment（$chipsチップ点 / 素点$equivalent点相当）',
+      style: const TextStyle(color: Colors.lightGreenAccent, fontSize: 13),
     );
   }
 

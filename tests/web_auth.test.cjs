@@ -87,6 +87,42 @@ test('embedded page scripts remain valid JavaScript', () => {
   }
 });
 
+test('training dashboard external script remains valid JavaScript', () => {
+  assert.doesNotThrow(
+    () => new vm.Script(readStatic('training_data.js'), { filename: 'training_data.js' }),
+  );
+});
+
+test('training dashboard fails closed for a signed-in non-admin user', async () => {
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) {
+      elements.set(id, { hidden: false, textContent: '', style: {} });
+    }
+    return elements.get(id);
+  };
+  let authChanged;
+  const context = vm.createContext({
+    window: {
+      TsumoAuth: {
+        subscribe(callback) { authChanged = callback; },
+        fetch: async () => { throw new Error('fetch must not run'); },
+      },
+    },
+    document: { getElementById: element },
+    fetch: async () => { throw new Error('fetch must not run'); },
+    Headers, Blob, URL, console, setTimeout, clearTimeout,
+    confirm: () => false,
+  });
+  vm.runInContext(readStatic('training_data.js'), context);
+
+  await authChanged({user: {email: 'normal@example.test'}, isAdmin: false});
+
+  assert.equal(element('authGate').hidden, false);
+  assert.equal(element('appContent').hidden, true);
+  assert.match(element('webAuthStatus').textContent, /管理者権限/);
+});
+
 test('anonymous submissions show a login prompt without sending a request', async () => {
   const h = createHarness();
   await h.signOut();

@@ -58,7 +58,12 @@ class TileRect {
   final double top;
   final double width;
   final double height;
-  const TileRect({required this.left, required this.top, required this.width, required this.height});
+  const TileRect({
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
+  });
 }
 
 /// Result of tile detection including position data for overlay.
@@ -80,6 +85,7 @@ class TileDetectorResult {
   /// Band bounding box in image coordinates (covers all detected tiles).
   final int bandLeft;
   final int bandTop;
+
   /// Full span from first to last detected tile pixel.
   final int bandSpanWidth;
   final int bandSpanHeight;
@@ -105,6 +111,85 @@ class TileDetectorResult {
     this.imageHeight = 0,
     this.tileRects = const [],
   });
+}
+
+/// Whether two consecutive detections describe the same stable tile row.
+///
+/// Count alone is insufficient for auto capture because a reflected table
+/// edge can briefly produce the requested number of moving components.
+bool detectionsAreStable(
+  TileDetectorResult previous,
+  TileDetectorResult current, {
+  double positionTolerance = 0.04,
+  double sizeTolerance = 0.08,
+}) {
+  if (previous.tileCount != current.tileCount ||
+      previous.axis != current.axis ||
+      previous.imageWidth <= 0 ||
+      previous.imageHeight <= 0 ||
+      current.imageWidth <= 0 ||
+      current.imageHeight <= 0) {
+    return false;
+  }
+
+  double difference(num a, num aExtent, num b, num bExtent) =>
+      (a / aExtent - b / bExtent).abs();
+
+  if (difference(
+            previous.bandLeft,
+            previous.imageWidth,
+            current.bandLeft,
+            current.imageWidth,
+          ) >
+          positionTolerance ||
+      difference(
+            previous.bandTop,
+            previous.imageHeight,
+            current.bandTop,
+            current.imageHeight,
+          ) >
+          positionTolerance ||
+      difference(
+            previous.bandSpanWidth,
+            previous.imageWidth,
+            current.bandSpanWidth,
+            current.imageWidth,
+          ) >
+          sizeTolerance ||
+      difference(
+            previous.bandSpanHeight,
+            previous.imageHeight,
+            current.bandSpanHeight,
+            current.imageHeight,
+          ) >
+          sizeTolerance) {
+    return false;
+  }
+
+  if (previous.tileRects.length != current.tileRects.length ||
+      previous.tileRects.isEmpty) {
+    return previous.tileRects.isEmpty && current.tileRects.isEmpty;
+  }
+  for (var index = 0; index < previous.tileRects.length; index++) {
+    final a = previous.tileRects[index];
+    final b = current.tileRects[index];
+    if (difference(a.left, previous.imageWidth, b.left, current.imageWidth) >
+            positionTolerance ||
+        difference(a.top, previous.imageHeight, b.top, current.imageHeight) >
+            positionTolerance ||
+        difference(a.width, previous.imageWidth, b.width, current.imageWidth) >
+            sizeTolerance ||
+        difference(
+              a.height,
+              previous.imageHeight,
+              b.height,
+              current.imageHeight,
+            ) >
+            sizeTolerance) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /// On-device tile detector using connected-component analysis.
@@ -141,14 +226,20 @@ class TileDetector {
 
   /// Returns both axis results for debug display.
   /// With component-based detection, h/v/best are all the same result.
-  static Future<({TileDetectorResult h, TileDetectorResult v, TileDetectorResult best})> detectBoth(
+  static Future<
+    ({TileDetectorResult h, TileDetectorResult v, TileDetectorResult best})
+  >
+  detectBoth(
     CameraImage image, [
     TileDetectorParams params = const TileDetectorParams(),
   ]) {
     return compute(_analyzeBothIsolate, _buildInput(image, params));
   }
 
-  static _AnalysisInput _buildInput(CameraImage image, TileDetectorParams params) {
+  static _AnalysisInput _buildInput(
+    CameraImage image,
+    TileDetectorParams params,
+  ) {
     final yPlane = image.planes[0];
 
     Uint8List? uvBytes;
@@ -179,7 +270,8 @@ class TileDetector {
     );
   }
 
-  static ({TileDetectorResult h, TileDetectorResult v, TileDetectorResult best}) _analyzeBothIsolate(_AnalysisInput input) {
+  static ({TileDetectorResult h, TileDetectorResult v, TileDetectorResult best})
+  _analyzeBothIsolate(_AnalysisInput input) {
     final result = _detectByComponents(input);
     return (h: result, v: result, best: result);
   }
@@ -195,9 +287,13 @@ class TileDetector {
     final imgH = input.height;
 
     final empty = TileDetectorResult(
-      tileCount: 0, bandLength: 0, bandThickness: 0,
-      estimatedTileWidth: 0, axis: ScanAxis.horizontal,
-      imageWidth: imgW, imageHeight: imgH,
+      tileCount: 0,
+      bandLength: 0,
+      bandThickness: 0,
+      estimatedTileWidth: 0,
+      axis: ScanAxis.horizontal,
+      imageWidth: imgW,
+      imageHeight: imgH,
     );
 
     // Scan region
@@ -273,7 +369,8 @@ class TileDetector {
 
     // Filter components by absolute size and max size
     // Min: reject noise. Max: reject huge surfaces (table, towel)
-    final maxComponentArea = (mH * mW * 0.05).toInt(); // 5% of image = too large for tiles
+    final maxComponentArea = (mH * mW * 0.05)
+        .toInt(); // 5% of image = too large for tiles
 
     final filtered = <List<int>>[];
     for (final c in components) {
@@ -302,18 +399,36 @@ class TileDetector {
       if (bw >= bh) {
         // Wider or square: possibly side-by-side tiles
         final expectedTileW = bh * tileAspect;
-        final nSub = expectedTileW > 0 ? (bw / expectedTileW).round().clamp(1, 20) : 1;
+        final nSub = expectedTileW > 0
+            ? (bw / expectedTileW).round().clamp(1, 20)
+            : 1;
         final subW = bw / nSub;
         for (int i = 0; i < nSub; i++) {
-          tileRects.add(TileRect(left: ox + i * subW, top: oy, width: subW, height: bh.toDouble()));
+          tileRects.add(
+            TileRect(
+              left: ox + i * subW,
+              top: oy,
+              width: subW,
+              height: bh.toDouble(),
+            ),
+          );
         }
       } else {
         // Taller: possibly stacked tiles
         final expectedTileH = bw / tileAspect;
-        final nSub = expectedTileH > 0 ? (bh / expectedTileH).round().clamp(1, 20) : 1;
+        final nSub = expectedTileH > 0
+            ? (bh / expectedTileH).round().clamp(1, 20)
+            : 1;
         final subH = bh / nSub;
         for (int i = 0; i < nSub; i++) {
-          tileRects.add(TileRect(left: ox, top: oy + i * subH, width: bw.toDouble(), height: subH));
+          tileRects.add(
+            TileRect(
+              left: ox,
+              top: oy + i * subH,
+              width: bw.toDouble(),
+              height: subH,
+            ),
+          );
         }
       }
     }

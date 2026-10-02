@@ -7,14 +7,13 @@ import 'package:flutter/foundation.dart' show compute, debugPrint;
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
-import 'package:url_launcher/url_launcher.dart';
-import '../config.dart';
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
 import '../services/tile_detector.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
 import '../models/history_entry.dart';
+import '../models/ai_chat_message.dart';
 import '../models/interpretation_request.dart';
 import '../models/scan_purpose.dart';
 import '../models/interpretation_result.dart';
@@ -27,6 +26,7 @@ import '../widgets/score_result_panel.dart';
 import '../widgets/analysis_result_panel.dart';
 import '../widgets/tile_marker_overlay.dart';
 import '../widgets/tile_count_selector.dart';
+import '../widgets/ai_chat_sheet.dart';
 import '../services/training_data_client.dart';
 import '../services/tile_segmenter.dart';
 import '../services/tile_assets.dart';
@@ -37,8 +37,16 @@ import '../services/request_epoch.dart';
 import '../services/history_service.dart';
 import '../services/auth_service.dart';
 import '../services/capture_framing.dart';
+import '../services/performance_trace.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
+
+class ScoreWinnerOption {
+  const ScoreWinnerOption({required this.label, required this.context});
+
+  final String label;
+  final ContextInput context;
+}
 
 class ScanScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -48,20 +56,26 @@ class ScanScreen extends StatefulWidget {
   final ScanPurpose purpose;
   final bool showTrainingDataActions;
   final ContextInput? initialContext;
-  final ValueChanged<bool>? onScoreConfirmed;
+  final List<ScoreWinnerOption> winnerOptions;
+  final int? initialWinnerIndex;
+  final ValueChanged<int>? onScoreConfirmed;
   final String? historyRoundLabel;
+  final MahjongRuleSettings ruleSettings;
 
   const ScanScreen({
     super.key,
     required this.cameras,
-    this.autoClassify = false,
+    this.autoClassify = true,
     this.initialRoundWind = 'E',
     this.onRoundWindChanged,
     this.purpose = ScanPurpose.score,
     this.showTrainingDataActions = false,
     this.initialContext,
+    this.winnerOptions = const [],
+    this.initialWinnerIndex,
     this.onScoreConfirmed,
     this.historyRoundLabel,
+    this.ruleSettings = const MahjongRuleSettings(),
   });
 
   @override
@@ -70,17 +84,19 @@ class ScanScreen extends StatefulWidget {
 
 enum _ScanPhase { camera, detecting, results }
 
+enum _WinConditionStep { riichi, dora, uraDora, waiting }
+
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
   static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
   CameraController? _controller;
-  CameraDescription? _activeCamera;
-  bool _isSwitchingCamera = false;
+  String? _cameraInitError;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
   final ApiClient _api = ApiClient();
   final TrainingDataClient _trainingClient = TrainingDataClient();
   final HistoryService _historyService = HistoryService();
+  Future<void> _historyUpdateQueue = Future.value();
   late final String _historyEntryId = HistoryService.createId();
   late final DateTime _historyCreatedAt = DateTime.now().toUtc();
 
@@ -137,20 +153,21 @@ class _ScanScreenState extends State<ScanScreen> {
   // camera preview stream and captures automatically once a full 14-tile
   // detection has stayed stable for a few frames in a row, instead of
   // requiring the user to judge readiness and tap the shutter themselves.
-  // Opt-in — this is the first on-device verification of the approach
-  // (interval/streak below are unverified guesses, and detection only
-  // checks the tile count, not that the same tiles/positions held
-  // steady), so it defaults off until real-device behavior is confirmed.
-  bool _autoCaptureEnabled = false;
+  // The manual shutter remains available as the recovery path when live
+  // detection cannot reach a stable count.
+  bool _autoCaptureEnabled = true;
   bool _isLiveStreamActive = false;
   bool _isAnalyzingFrame = false;
   CameraImage? _latestFrame;
   Timer? _analysisTimer;
+  Timer? _scoreRecalculationTimer;
+  PerformanceTrace? _performanceTrace;
   TileDetectorResult? _liveDetectorResult;
   int _stableDetectionStreak = 0;
   int? _expectedTileCount;
   int? _autoDetectedTileCount;
   int? _stableCandidateCount;
+  TileDetectorResult? _stableCandidateGeometry;
   static const int _requiredStableFrames = 2;
   static const Duration _analysisInterval = Duration(seconds: 1);
 
@@ -175,20 +192,19 @@ class _ScanScreenState extends State<ScanScreen> {
   final List<ConfirmedMeld> _confirmedMelds = [];
   late HandOperation _operation;
   Map<String, dynamic>? _analysisResult;
+  List<AIChatMessage> _chatMessages = [];
   final RequestEpoch _requestEpoch = RequestEpoch();
 
-  // Inline meld-selection mode (see `_buildTileControlsRow`): while active, taps
-  // on the thumbnail row pick meld members instead of their normal
-  // edit/correct behavior.
-  bool _isSelectingMeld = false;
-  final Set<int> _meldSelection = {};
-
-  // Set by long-pressing a thumbnail (see `_handleThumbnailTap`): shows a
-  // small ✕ badge on that slot to confirm deleting it, instead of deleting
-  // immediately on long-press itself.
-  int? _deleteAffordanceIndex;
-
   late ContextInput _context;
+  _WinConditionStep _winConditionStep = _WinConditionStep.riichi;
+  bool _winConditionsComplete = false;
+  bool _recognitionComplete = false;
+  int _doraSlotCount = 1;
+  int? _selectedWinnerIndex;
+  bool _resumeWinConditionsAfterRetake = false;
+
+  bool get _usesWinConditionWizard =>
+      widget.onScoreConfirmed != null && widget.purpose == ScanPurpose.score;
 
   /// The rightmost identified physical tile's observation id, or null if
   /// none are identified yet — the results screen's default あがり牌 frame
@@ -208,9 +224,6 @@ class _ScanScreenState extends State<ScanScreen> {
     _confirmedWinningTileId = _defaultWinningTileId;
     _winningTileManuallySet = false;
     _confirmedMelds.clear();
-    _isSelectingMeld = false;
-    _meldSelection.clear();
-    _deleteAffordanceIndex = null;
   }
 
   /// Physical-tile indices with an identified tile, ascending — the ◀/▶
@@ -243,29 +256,35 @@ class _ScanScreenState extends State<ScanScreen> {
       _confirmedWinningTileId =
           'tile-${indices[nextPosition].toString().padLeft(3, '0')}';
       _winningTileManuallySet = true;
-      _invalidateAnalysis();
+      _invalidateAnalysisAndMaybeRecalculate();
     });
-  }
-
-  /// Dispatches a normal thumbnail tap (`action`), unless a ✕ delete badge
-  /// is currently showing on some slot (`_deleteAffordanceIndex`) — in that
-  /// case the tap just dismisses the badge instead, a "tap away to cancel"
-  /// pattern so an accidental tap right after a long-press can't also
-  /// trigger the box editor or tile picker.
-  void _handleThumbnailTap(VoidCallback action) {
-    if (_deleteAffordanceIndex != null) {
-      setState(() => _deleteAffordanceIndex = null);
-      return;
-    }
-    action();
   }
 
   void _invalidateAnalysis() {
     _requestEpoch.invalidate();
     _analysisResult = null;
+    _chatMessages = [];
     _tsumoScoreResult = null;
     _ronScoreResult = null;
     _isNotWinning = false;
+  }
+
+  bool get _hasScoreCalculation =>
+      _tsumoScoreResult != null ||
+      _ronScoreResult != null ||
+      _isNotWinning ||
+      _isScoring;
+
+  void _invalidateAnalysisAndMaybeRecalculate() {
+    final shouldRecalculate =
+        _phase == _ScanPhase.results &&
+        _operation == HandOperation.score &&
+        _interpretation != null &&
+        _allDetectedTilesReady &&
+        _hasScoreCalculation;
+    _invalidateAnalysis();
+    _isScoring = false;
+    if (shouldRecalculate) _scheduleScoreRecalculation();
   }
 
   void _showError(String message) {
@@ -275,14 +294,26 @@ class _ScanScreenState extends State<ScanScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _scheduleRecognitionFirstPaint() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final trace = _performanceTrace;
+      if (trace == null || !mounted || _phase != _ScanPhase.results) return;
+      trace.mark('recognitionFirstPaint');
+      trace.log();
+      if (identical(_performanceTrace, trace)) _performanceTrace = null;
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _operation = widget.purpose.operation;
     _expectedTileCount = widget.purpose.defaultTileCount;
+    _autoCaptureEnabled = true;
     _context =
         widget.initialContext ??
         ContextInput(roundWind: widget.initialRoundWind);
+    _selectedWinnerIndex = widget.initialWinnerIndex;
     _initCamera();
     _classifierInitialization = _initClassifier();
   }
@@ -310,18 +341,13 @@ class _ScanScreenState extends State<ScanScreen> {
     return candidates.first;
   }
 
-  CameraDescription? _rearCameraFor(CameraLensType lensType) {
-    for (final camera in widget.cameras) {
-      if (camera.lensDirection == CameraLensDirection.back &&
-          camera.lensType == lensType) {
-        return camera;
-      }
-    }
-    return null;
-  }
-
   Future<void> _initCamera([CameraDescription? camera]) async {
-    if (widget.cameras.isEmpty) return;
+    if (widget.cameras.isEmpty) {
+      if (mounted) {
+        setState(() => _cameraInitError = '利用できるカメラが見つかりませんでした');
+      }
+      return;
+    }
     final selectedCamera = camera ?? _preferredCamera();
     final previousController = _controller;
     if (previousController != null) {
@@ -331,8 +357,8 @@ class _ScanScreenState extends State<ScanScreen> {
     if (mounted) {
       setState(() {
         _controller = null;
-        _activeCamera = selectedCamera;
         _liveDetectorResult = null;
+        _cameraInitError = null;
       });
     }
 
@@ -371,17 +397,12 @@ class _ScanScreenState extends State<ScanScreen> {
       await _startLiveDetection();
     } catch (e) {
       debugPrint('Camera init error: $e');
-    }
-  }
-
-  Future<void> _switchCameraLens(CameraLensType lensType) async {
-    final camera = _rearCameraFor(lensType);
-    if (camera == null || camera == _activeCamera || _isSwitchingCamera) return;
-    setState(() => _isSwitchingCamera = true);
-    try {
-      await _initCamera(camera);
-    } finally {
-      if (mounted) setState(() => _isSwitchingCamera = false);
+      await controller.dispose();
+      if (!mounted) return;
+      setState(() {
+        if (_controller == controller) _controller = null;
+        _cameraInitError = 'カメラを開始できませんでした。端末の設定でカメラへのアクセスを確認してください。';
+      });
     }
   }
 
@@ -425,7 +446,13 @@ class _ScanScreenState extends State<ScanScreen> {
 
     _isAnalyzingFrame = true;
     try {
-      final result = await TileDetector.detect(frame);
+      final result = await TileDetector.detect(
+        frame,
+        const TileDetectorParams(
+          scanRegionTop: captureGuideTopFactor,
+          scanRegionBottom: captureGuideTopFactor + captureGuideHeightFactor,
+        ),
+      );
       if (!mounted || _phase != _ScanPhase.camera) return;
 
       final candidateCount = result.tileCount;
@@ -438,12 +465,18 @@ class _ScanScreenState extends State<ScanScreen> {
         if (_expectedTileCount == null && isSupportedCount) {
           _autoDetectedTileCount = candidateCount;
         }
-        if (isFullDetection && _stableCandidateCount == candidateCount) {
+        final geometryStable =
+            _stableCandidateGeometry != null &&
+            detectionsAreStable(_stableCandidateGeometry!, result);
+        if (isFullDetection &&
+            _stableCandidateCount == candidateCount &&
+            geometryStable) {
           _stableDetectionStreak += 1;
         } else {
           _stableCandidateCount = isFullDetection ? candidateCount : null;
           _stableDetectionStreak = isFullDetection ? 1 : 0;
         }
+        _stableCandidateGeometry = isFullDetection ? result : null;
       });
 
       if (_autoCaptureEnabled &&
@@ -463,12 +496,14 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() {
       _autoCaptureEnabled = !_autoCaptureEnabled;
       _stableDetectionStreak = 0;
+      _stableCandidateGeometry = null;
     });
   }
 
   @override
   void dispose() {
     _analysisTimer?.cancel();
+    _scoreRecalculationTimer?.cancel();
     _controller?.dispose();
     _classifier.dispose();
     super.dispose();
@@ -482,21 +517,43 @@ class _ScanScreenState extends State<ScanScreen> {
         _isCapturing) {
       return;
     }
+    final trace = PerformanceTrace(
+      name: 'tileRecognition',
+      metadata: {
+        'purpose': widget.purpose.name,
+        'tile_count_mode': _expectedTileCount == null ? 'automatic' : 'manual',
+        'requested_tile_count': _expectedTileCount,
+        'auto_inferred_tile_count': _expectedTileCount == null
+            ? _autoDetectedTileCount
+            : null,
+        'capture_mode': _autoCaptureEnabled ? 'automatic' : 'manual',
+      },
+    );
+    _performanceTrace = trace;
+    trace.mark('captureRequested');
     setState(() => _isCapturing = true);
     await _stopLiveDetection();
+    trace.mark('imageStreamStopped');
     // Mirrors CameraScreen's original auto-detect prototype: the native
     // camera needs a moment to fully release the image stream before
     // takePicture(), or the capture can fail/stall.
     await Future.delayed(const Duration(milliseconds: 300));
     if (!mounted || _controller == null || !_controller!.value.isInitialized) {
-      if (mounted) setState(() => _isCapturing = false);
+      if (identical(_performanceTrace, trace)) _performanceTrace = null;
+      if (!mounted) return;
+      setState(() => _isCapturing = false);
+      // The stream was stopped above; resume it if the controller has
+      // recovered (a no-op otherwise, and _initCamera restarts it itself).
+      if (_phase == _ScanPhase.camera) await _startLiveDetection();
       return;
     }
 
     bool capturedOk = false;
     try {
       final xFile = await _controller!.takePicture();
+      trace.mark('pictureTaken');
       final bytes = await File(xFile.path).readAsBytes();
+      trace.mark('bytesRead');
       // The preview is a centered 16:9 frame. Persist exactly that frame so
       // detection, result display, box editing and training upload all share
       // the same image and coordinate system instead of reverting to the
@@ -504,12 +561,21 @@ class _ScanScreenState extends State<ScanScreen> {
       final framed = await compute(prepareCapturedFrame, bytes);
       final framedBytes = framed.bytes;
       final decoded = framed.image;
+      trace.mark('jpegDecoded');
       capturedOk = true;
 
       setState(() {
+        final resumeWinConditions = _resumeWinConditionsAfterRetake;
         _capturedBytes = framedBytes;
         _capturedImage = decoded;
         _phase = _ScanPhase.detecting;
+        _recognitionComplete = false;
+        if (!resumeWinConditions) {
+          _winConditionStep = _WinConditionStep.riichi;
+          _winConditionsComplete = false;
+          _doraSlotCount = math.max(1, _context.doraIndicators.length);
+        }
+        _resumeWinConditionsAfterRetake = false;
         for (int i = 0; i < _maxPhysicalTiles; i++) {
           _tiles[i] = null;
           _predictedTiles[i] = null;
@@ -521,24 +587,25 @@ class _ScanScreenState extends State<ScanScreen> {
         }
       });
 
-      // Always proceed straight to the results phase with whatever
-      // detection found — the results
-      // screen's "枠を追加" button and per-tile box editor already cover
-      // fixing up any missing/wrong boxes, so a partial/imperfect detection
-      // no longer needs to fall back to the separate manual grid-alignment
-      // phase (that fallback used to trigger on a count outside 13/14, which
-      // was hitting often enough to be disruptive on its own).
+      // Always proceed straight to the results phase with whatever detection
+      // found. Missing or extraneous boxes are recovered by changing the
+      // expected count, cropping the source region, or returning to camera.
       final detected = await compute(segmentTilesWithHintsForExpectedCount, (
         bytes: framedBytes,
         expectedTileCount: _expectedTileCount,
         allowExtendedAuto: _expectedTileCount == null,
       ));
+      trace.annotate('final_detected_tile_count', detected.boxes.length);
+      trace.mark('segmentationCompleted');
       if (!mounted) return;
       await _classifyBoxesAndFinish(
         detected.boxes,
         angleHints: detected.angleHints,
       );
     } catch (e) {
+      trace.mark('captureFailed');
+      trace.log();
+      if (identical(_performanceTrace, trace)) _performanceTrace = null;
       _showError('撮影エラー: $e');
       // If capture/decode itself failed, stay on the camera phase; if it was
       // detection that failed after a successful capture, still move on to
@@ -598,10 +665,22 @@ class _ScanScreenState extends State<ScanScreen> {
       // (every tile in a row would otherwise show the same size marker).
       _tileQuads[i] = refined.sourceQuad;
     }
+    _performanceTrace?.mark('cropsPrepared');
 
-    setState(() => _phase = _ScanPhase.results);
+    if (!_usesWinConditionWizard) {
+      setState(() => _phase = _ScanPhase.results);
+    }
     if (widget.autoClassify && boxes.isNotEmpty) {
       await _runClassification();
+    }
+    if (_usesWinConditionWizard && mounted) {
+      setState(() {
+        _recognitionComplete = true;
+        if (_winConditionsComplete) _phase = _ScanPhase.results;
+      });
+    }
+    if (mounted && _phase == _ScanPhase.results) {
+      _scheduleRecognitionFirstPaint();
     }
   }
 
@@ -707,6 +786,7 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() => _isRunningFullClassification = true);
     try {
       await _classifierInitialization;
+      _performanceTrace?.mark('modelReady');
       if (!mounted) return;
       if (!_classifier.isReady) {
         _showError('牌識別モデルが読み込まれていません');
@@ -716,6 +796,7 @@ class _ScanScreenState extends State<ScanScreen> {
       for (int i = 0; i < _maxPhysicalTiles; i++) {
         if (_croppedImages[i] != null) await _classifyTile(i);
       }
+      _performanceTrace?.mark('classificationCompleted');
     } finally {
       if (mounted) setState(() => _isRunningFullClassification = false);
     }
@@ -768,12 +849,14 @@ class _ScanScreenState extends State<ScanScreen> {
   /// `_clearTileSlot`
   /// (see FEZ-193 — previously the only way to undo a wrongly-added box
   /// was to retake the whole photo).
-  Future<void> _openBoxEditor(int index, {TileQuad? initialDecodedQuad}) async {
+  Future<void> _openBoxEditor(int index) async {
     final srcImage = _capturedImage;
     final imageBytes = _capturedBytes;
     if (srcImage == null || imageBytes == null) return;
+    final shouldReanalyze =
+        _operation == HandOperation.score && _hasScoreCalculation;
 
-    final quad = _tileQuads[index] ?? initialDecodedQuad;
+    final quad = _tileQuads[index];
     if (quad == null) return;
 
     final result = await Navigator.of(context).push<TileBoxEditorResult>(
@@ -787,11 +870,6 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
     if (result == null || !mounted) return;
-
-    if (result is TileBoxEditorDeleted) {
-      setState(() => _clearTileSlot(index));
-      return;
-    }
 
     final newQuad = (result as TileBoxEditorConfirmed).quad;
     final cropped = _cropQuad(srcImage, newQuad);
@@ -814,53 +892,11 @@ class _ScanScreenState extends State<ScanScreen> {
         _showError('牌識別モデルが読み込まれていません');
       } else {
         await _classifyTile(index);
+        if (shouldReanalyze && mounted && _allDetectedTilesReady) {
+          await _runInterpretationAndAnalyze();
+        }
       }
     }
-  }
-
-  /// Resets tile slot [index] back to empty (no quad, crop, or
-  /// classification) — the per-tile counterpart to `_backToCamera`'s full
-  /// reset. Must be called inside `setState`.
-  void _clearTileSlot(int index) {
-    _tileQuads[index] = null;
-    _croppedImages[index] = null;
-    _croppedImageThumbnails[index] = null;
-    _tiles[index] = null;
-    _predictedTiles[index] = null;
-    _candidates[index] = [];
-    _isClassifying[index] = false;
-    _invalidateInterpretation();
-  }
-
-  /// Opens the editor for the next empty physical-tile slot, seeded with a
-  /// median-size placeholder for the user to move into place.
-  void _addMissingTileBox() {
-    final srcImage = _capturedImage;
-    if (srcImage == null) return;
-    final existing = _tileQuads
-        .whereType<TileQuad>()
-        .map((q) => q.boundingRect)
-        .toList();
-    if (existing.isEmpty) return;
-    final newIndex = _tileQuads.indexWhere((q) => q == null);
-    if (newIndex == -1) return;
-
-    final medianW = _median(existing.map((r) => r.width).toList());
-    final medianH = _median(existing.map((r) => r.height).toList());
-    final placeholder = TileQuad.fromRect(
-      Rect.fromCenter(
-        center: Offset(srcImage.width / 2, srcImage.height / 2),
-        width: medianW,
-        height: medianH,
-      ),
-    );
-
-    _openBoxEditor(newIndex, initialDecodedQuad: placeholder);
-  }
-
-  static double _median(List<double> values) {
-    final sorted = [...values]..sort();
-    return sorted[sorted.length ~/ 2];
   }
 
   /// Perspective-rectifies the quadrilateral [quad] (in `source`'s pixel
@@ -975,10 +1011,10 @@ class _ScanScreenState extends State<ScanScreen> {
       await _runInterpretation();
       if (!mounted || _interpretation == null) return;
     }
-    await _confirmAndAnalyze();
+    await _confirmAndAnalyze(showResultDialog: false);
   }
 
-  Future<void> _confirmAndAnalyze() async {
+  Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
     if (_interpretation == null) return;
     if (_operation == HandOperation.score && _confirmedWinningTileId == null) {
       _showError('あがり牌を選択してください');
@@ -1018,7 +1054,7 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       );
       if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-      final rules = RuleSet();
+      final rules = widget.ruleSettings.rules;
       switch (_operation) {
         case HandOperation.score:
           final winTile = state.hand.winTile;
@@ -1075,7 +1111,7 @@ class _ScanScreenState extends State<ScanScreen> {
             );
           }
           if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-          _showResultDialog();
+          if (showResultDialog) _showResultDialog();
           break;
         case HandOperation.tenpai:
           final result = await _api.analyzeTenpai(
@@ -1087,7 +1123,7 @@ class _ScanScreenState extends State<ScanScreen> {
             setState(() => _analysisResult = result);
             await _saveAnalysisHistory(result);
             if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-            _showResultDialog();
+            if (showResultDialog) _showResultDialog();
           }
           break;
         case HandOperation.discardAnalysis:
@@ -1100,7 +1136,7 @@ class _ScanScreenState extends State<ScanScreen> {
             setState(() => _analysisResult = result);
             await _saveAnalysisHistory(result);
             if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-            _showResultDialog();
+            if (showResultDialog) _showResultDialog();
           }
           break;
         case HandOperation.callAnalysis:
@@ -1113,7 +1149,7 @@ class _ScanScreenState extends State<ScanScreen> {
             setState(() => _analysisResult = result);
             await _saveAnalysisHistory(result);
             if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
-            _showResultDialog();
+            if (showResultDialog) _showResultDialog();
           }
           break;
       }
@@ -1122,7 +1158,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _showError('解析エラー: $error');
       }
     } finally {
-      if (mounted) setState(() => _isScoring = false);
+      if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
+        setState(() => _isScoring = false);
+      }
     }
   }
 
@@ -1175,7 +1213,9 @@ class _ScanScreenState extends State<ScanScreen> {
         roundLabel: widget.historyRoundLabel,
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
+          'recognition_model': _recognitionModelMetadata,
           'context': _context.toJson(),
+          'rule_settings': widget.ruleSettings.toJson(),
           'tsumo': resultDetails(tsumoResponse),
           'ron': resultDetails(ronResponse),
         },
@@ -1201,11 +1241,65 @@ class _ScanScreenState extends State<ScanScreen> {
         roundLabel: widget.historyRoundLabel,
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
+          'recognition_model': _recognitionModelMetadata,
           'context': _context.toJson(),
+          'rule_settings': widget.ruleSettings.toJson(),
           'result': result,
+          if (_chatMessages.isNotEmpty)
+            'ai_conversation': _chatMessages
+                .map((message) => message.toJson())
+                .toList(growable: false),
         },
         accountUid: AuthService.currentUser?.uid,
       ),
+    );
+  }
+
+  Map<String, String> get _recognitionModelMetadata => {
+    'version': _classifier.modelVersion,
+    'source': _classifier.modelSource,
+    'preprocessing_version': _classifier.preprocessingVersion,
+  };
+
+  Future<void> _openAiChat({
+    Map<String, dynamic>? selectedCall,
+    String? discardFocus,
+  }) async {
+    final result = _analysisResult;
+    if (result == null ||
+        widget.purpose == ScanPurpose.score ||
+        widget.purpose == ScanPurpose.wait) {
+      return;
+    }
+    await AIChatSheet.show(
+      context,
+      purpose: widget.purpose == ScanPurpose.callAdvice
+          ? 'call_advice'
+          : 'discard',
+      tiles: _tiles.whereType<String>().toList(growable: false),
+      roundContext: _context.toJson(),
+      analysis: {...result, 'selected_call': ?selectedCall},
+      initialMessages: _chatMessages,
+      initialSituationTags: [?discardFocus],
+      initialDraft: discardFocus == null
+          ? null
+          : '$discardFocusで、上位3候補から何を切るべきか理由も含めて教えて',
+      onMessagesChanged: (messages) {
+        if (mounted) setState(() => _chatMessages = messages);
+        // Each write is isolated: one failed save must not leave the queue
+        // in an error state that silently skips every later conversation.
+        _historyUpdateQueue = _historyUpdateQueue.then((_) async {
+          try {
+            await _historyService.updateDetails(_historyEntryId, {
+              'ai_conversation': messages
+                  .map((message) => message.toJson())
+                  .toList(growable: false),
+            });
+          } catch (error) {
+            debugPrint('ScanScreen: failed to save AI conversation: $error');
+          }
+        });
+      },
     );
   }
 
@@ -1232,6 +1326,8 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void _onSlotTap(int index) async {
+    final shouldReanalyze =
+        _operation == HandOperation.score && _hasScoreCalculation;
     final selected = await TileImagePicker.show(
       context,
       currentTile: _tiles[index],
@@ -1242,6 +1338,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _candidates[index] = [TileCandidate(tile: selected, confidence: 1.0)];
         _invalidateInterpretation();
       });
+      if (shouldReanalyze && _allDetectedTilesReady) {
+        await _runInterpretationAndAnalyze();
+      }
     }
   }
 
@@ -1260,10 +1359,123 @@ class _ScanScreenState extends State<ScanScreen> {
     final roundWindChanged = _context.roundWind != c.roundWind;
     _context = c;
     if (roundWindChanged) widget.onRoundWindChanged?.call(c.roundWind);
-    _tsumoScoreResult = null;
-    _ronScoreResult = null;
-    _analysisResult = null;
-    _isNotWinning = false;
+    _invalidateAnalysisAndMaybeRecalculate();
+  }
+
+  void _selectWinner(int index) {
+    if (index < 0 || index >= widget.winnerOptions.length) return;
+    final winnerContext = widget.winnerOptions[index].context;
+    setState(() {
+      _selectedWinnerIndex = index;
+      _updateContext(
+        _context.copyWith(
+          roundWind: winnerContext.roundWind,
+          seatWind: winnerContext.seatWind,
+          isDealer: winnerContext.isDealer,
+          honba: winnerContext.honba,
+        ),
+      );
+    });
+  }
+
+  void _scheduleScoreRecalculation() {
+    _scoreRecalculationTimer?.cancel();
+    _scoreRecalculationTimer = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted ||
+          _phase != _ScanPhase.results ||
+          _operation != HandOperation.score ||
+          _interpretation == null ||
+          !_allDetectedTilesReady) {
+        return;
+      }
+      _confirmAndAnalyze(showResultDialog: false);
+    });
+  }
+
+  void _selectRiichiForWinFlow(bool riichi) {
+    final hasRegisteredDora = _context.doraIndicators.isNotEmpty;
+    setState(() {
+      _updateContext(
+        _context.copyWith(riichi: riichi, doubleRiichi: false, ippatsu: false),
+      );
+      if (hasRegisteredDora) {
+        _doraSlotCount = _context.doraIndicators.length;
+      }
+      _winConditionStep = _WinConditionStep.dora;
+    });
+    if (hasRegisteredDora) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _winConditionStep != _WinConditionStep.dora) return;
+        setState(_advanceAfterDora);
+      });
+    }
+  }
+
+  void _advanceAfterDora() {
+    if (_context.riichi) {
+      _winConditionStep = _WinConditionStep.uraDora;
+    } else {
+      _completeWinConditions();
+    }
+  }
+
+  void _selectConditionTile(String tile, {required bool ura}) {
+    setState(() {
+      final selected = ura
+          ? [..._context.uraDoraIndicators]
+          : [..._context.doraIndicators];
+      final limit = ura
+          ? math.max(1, _context.doraIndicators.length)
+          : _doraSlotCount;
+      if (selected.length >= limit) return;
+      selected.add(tile);
+      _updateContext(
+        ura
+            ? _context.copyWith(uraDoraIndicators: selected)
+            : _context.copyWith(doraIndicators: selected),
+      );
+      if (selected.length >= limit) {
+        if (ura) {
+          _completeWinConditions();
+        } else {
+          _advanceAfterDora();
+        }
+      }
+    });
+  }
+
+  void _removeConditionTile(int index, {required bool ura}) {
+    setState(() {
+      final selected = ura
+          ? [..._context.uraDoraIndicators]
+          : [..._context.doraIndicators];
+      selected.removeAt(index);
+      _updateContext(
+        ura
+            ? _context.copyWith(uraDoraIndicators: selected)
+            : _context.copyWith(doraIndicators: selected),
+      );
+    });
+  }
+
+  void _skipDoraStep({required bool ura}) {
+    setState(() {
+      if (ura) {
+        _completeWinConditions();
+      } else {
+        _advanceAfterDora();
+      }
+    });
+  }
+
+  void _completeWinConditions() {
+    _winConditionsComplete = true;
+    if (_recognitionComplete) {
+      _phase = _ScanPhase.results;
+      _scheduleRecognitionFirstPaint();
+    } else {
+      _winConditionStep = _WinConditionStep.waiting;
+    }
   }
 
   void _showContextDetailsSheet() {
@@ -1301,6 +1513,8 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void _backToCamera() {
+    final preserveWinConditions =
+        _usesWinConditionWizard && _capturedImage != null;
     setState(() {
       _phase = _ScanPhase.camera;
       _capturedBytes = null;
@@ -1321,6 +1535,12 @@ class _ScanScreenState extends State<ScanScreen> {
       _trainingDataSent = false;
       _isUndoingTraining = false;
       _sentTrainingEntryIds = [];
+      _resumeWinConditionsAfterRetake = preserveWinConditions;
+      if (!preserveWinConditions) {
+        _winConditionStep = _WinConditionStep.riichi;
+        _winConditionsComplete = false;
+      }
+      _recognitionComplete = false;
     });
     _startLiveDetection();
   }
@@ -1383,58 +1603,147 @@ class _ScanScreenState extends State<ScanScreen> {
   void _resetMelds() {
     setState(() {
       _confirmedMelds.clear();
-      _invalidateAnalysis();
+      _invalidateAnalysisAndMaybeRecalculate();
     });
   }
 
-  void _startMeldSelection() {
-    setState(() {
-      _isSelectingMeld = true;
-      _meldSelection.clear();
-      _deleteAffordanceIndex = null;
-    });
-  }
-
-  void _cancelMeldSelection() {
-    setState(() {
-      _isSelectingMeld = false;
-      _meldSelection.clear();
-    });
-  }
-
-  void _toggleMeldSelection(int index) {
-    if (!_meldEligibleIndices.contains(index)) return;
-    setState(() {
-      if (_meldSelection.contains(index)) {
-        _meldSelection.remove(index);
-      } else if (_meldSelection.length < 4) {
-        _meldSelection.add(index);
-      }
-    });
-  }
-
-  List<String> get _meldSelectionTileCodes => _meldSelection
-      .map((index) => _tiles[index])
-      .whereType<String>()
-      .toList(growable: false);
-
-  /// Appends a `ConfirmedMeld` built from the current `_meldSelection` and
-  /// exits selection mode. [type]/[open] are the wire values to record —
-  /// callers must already know these are valid for the current selection
-  /// (pon/chi from `detectMeldType`, or the user's own 暗槓/明槓 choice for a
-  /// 4-tile kan).
-  void _confirmMeldSelection({required String type, required bool open}) {
-    final observationIds = _meldSelection
+  void _addConfirmedMeld(
+    Set<int> selection, {
+    required String type,
+    required bool open,
+  }) {
+    final observationIds = (selection.toList()..sort())
         .map((index) => 'tile-${index.toString().padLeft(3, '0')}')
         .toList(growable: false);
     setState(() {
       _confirmedMelds.add(
         ConfirmedMeld(observationIds: observationIds, type: type, open: open),
       );
-      _isSelectingMeld = false;
-      _meldSelection.clear();
-      _invalidateAnalysis();
+      _invalidateAnalysisAndMaybeRecalculate();
     });
+  }
+
+  Future<void> _showMeldSelectionDialog() async {
+    final eligible = _meldEligibleIndices;
+    if (eligible.isEmpty) return;
+    final selection = <int>{};
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final codes = (selection.toList()..sort())
+              .map((index) => _tiles[index])
+              .whereType<String>()
+              .toList(growable: false);
+          final detection = detectMeldType(codes);
+
+          void addMeld(String type, {required bool open}) {
+            Navigator.pop(dialogContext);
+            _addConfirmedMeld(selection, type: type, open: open);
+          }
+
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Expanded(child: Text('副露を追加')),
+                CloseButton(),
+              ],
+            ),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final index in eligible)
+                          GestureDetector(
+                            key: ValueKey('meld-dialog-tile-$index'),
+                            onTap: () => setDialogState(() {
+                              if (!selection.remove(index) &&
+                                  selection.length < 4) {
+                                selection.add(index);
+                              }
+                            }),
+                            child: Container(
+                              width: 42,
+                              height: 58,
+                              padding: const EdgeInsets.all(2),
+                              decoration: BoxDecoration(
+                                color: selection.contains(index)
+                                    ? Colors.green.withValues(alpha: 0.25)
+                                    : Colors.white.withValues(alpha: 0.08),
+                                border: Border.all(
+                                  color: selection.contains(index)
+                                      ? Colors.greenAccent
+                                      : Colors.white24,
+                                  width: selection.contains(index) ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: TileGlyph(tileCode: _tiles[index]!),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (selection.length == 3) ...[
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed:
+                            detection == MeldDetection.pon ||
+                                detection == MeldDetection.chi
+                            ? () => addMeld(
+                                detection == MeldDetection.pon ? 'pon' : 'chi',
+                                open: true,
+                              )
+                            : null,
+                        child: const Text('確定'),
+                      ),
+                    ] else if (selection.length == 4 &&
+                        detection == MeldDetection.kan) ...[
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final closed = OutlinedButton(
+                            onPressed: () => addMeld('ankan', open: false),
+                            child: const Text('暗槓で追加'),
+                          );
+                          final open = FilledButton(
+                            onPressed: () => addMeld('kan', open: true),
+                            child: const Text('明槓で追加'),
+                          );
+                          if (constraints.maxWidth < 280) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                closed,
+                                const SizedBox(height: 8),
+                                open,
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(child: closed),
+                              const SizedBox(width: 8),
+                              Expanded(child: open),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   /// Compact リーチ(一発) controls for the bottom action bar —
@@ -1522,16 +1831,101 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  Widget _buildResultTile(int index, double cellWidth) {
+    final thumb = _croppedImageThumbnails[index];
+    final tile = _tiles[index];
+    final tileAsset = tile == null ? null : tileAssetPath(tile);
+    final winningTileId = 'tile-${index.toString().padLeft(3, '0')}';
+    final isWinningTile = _confirmedWinningTileId == winningTileId;
+    final canBeWinningTile = _operation == HandOperation.score && tile != null;
+    final showMeldFrame = _isConfirmedMeldMember(index);
+    final cropHeight = cellWidth * 1.4;
+
+    final cropImage = GestureDetector(
+      onTap: thumb == null ? null : () => _openBoxEditor(index),
+      child: SizedBox(
+        width: cellWidth,
+        height: cropHeight,
+        child: thumb == null
+            ? const DecoratedBox(
+                decoration: BoxDecoration(color: Colors.white10),
+              )
+            : Image.memory(thumb, fit: BoxFit.cover),
+      ),
+    );
+
+    final glyphCore = GestureDetector(
+      onTap: thumb == null ? null : () => _onSlotTap(index),
+      child: Container(
+        width: cellWidth,
+        height: cellWidth,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        alignment: Alignment.center,
+        child: _isClassifying[index]
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: Colors.white54,
+                ),
+              )
+            : tileAsset != null
+            ? Image.asset(tileAsset, fit: BoxFit.contain)
+            : const Text(
+                '?',
+                style: TextStyle(color: Colors.white38, fontSize: 16),
+              ),
+      ),
+    );
+
+    final glyph = Stack(
+      children: [
+        glyphCore,
+        if (canBeWinningTile && isWinningTile)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.amber, width: 2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ),
+        if (showMeldFrame)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.lightBlueAccent, width: 2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+
+    final result = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [cropImage, const SizedBox(height: 4), glyph],
+    );
+    return RepaintBoundary(
+      key: ValueKey('result-tile-$index'),
+      child: SizedBox(width: cellWidth, child: result),
+    );
+  }
+
   /// ◀/▶ controls stepping あがり牌 through `_identifiedIndices`.
   /// Combined 副露 add/reset controls (left) and あがり牌 ◀/▶ control
   /// (right) in a single row, directly below the thumbnail row — no boxed
   /// section around it (an earlier version wrapped 副露 controls in their
   /// own always-visible `Container`, which the user found needlessly tall).
-  /// While `_isSelectingMeld`, this row is replaced entirely by
-  /// `_buildMeldSelectionStatus()`.
   Widget _buildTileControlsRow() {
-    if (_isSelectingMeld) return _buildMeldSelectionStatus();
-
     final position = _winningTilePosition;
     final lastPosition = _identifiedIndices.length - 1;
     final winningTileCode = _confirmedWinningTileId == null
@@ -1542,7 +1936,9 @@ class _ScanScreenState extends State<ScanScreen> {
       spacing: 4,
       children: [
         TextButton.icon(
-          onPressed: _meldEligibleIndices.isEmpty ? null : _startMeldSelection,
+          onPressed: _meldEligibleIndices.isEmpty
+              ? null
+              : _showMeldSelectionDialog,
           icon: const Icon(Icons.add, size: 18),
           label: const Text('副露を追加'),
         ),
@@ -1608,69 +2004,6 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// The inline status/confirm row shown while `_isSelectingMeld` — replaces
-  /// `MeldTilePicker`'s bottom sheet: the user taps thumbnails in the
-  /// results row directly (see `_toggleMeldSelection`) instead of picking
-  /// from a separate grid, and pon/chi/kan is inferred from what they picked
-  /// (`detectMeldType`) instead of an explicit type dropdown.
-  Widget _buildMeldSelectionStatus() {
-    final codes = _meldSelectionTileCodes;
-    final detection = detectMeldType(codes);
-    final count = _meldSelection.length;
-    final target = count == 4 ? 4 : 3;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'サムネイルをタップして3枚（チー/ポン）または4枚（槓）選択 '
-          '($count/$target)',
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            TextButton(
-              onPressed: _cancelMeldSelection,
-              child: const Text('キャンセル'),
-            ),
-            const SizedBox(width: 8),
-            if (detection == MeldDetection.kan) ...[
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () =>
-                      _confirmMeldSelection(type: 'ankan', open: false),
-                  child: const Text('暗槓（閉じ）'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () =>
-                      _confirmMeldSelection(type: 'kan', open: true),
-                  child: const Text('明槓（開き）'),
-                ),
-              ),
-            ] else
-              Expanded(
-                child: FilledButton(
-                  onPressed:
-                      detection == MeldDetection.pon ||
-                          detection == MeldDetection.chi
-                      ? () => _confirmMeldSelection(
-                          type: detection == MeldDetection.pon ? 'pon' : 'chi',
-                          open: true,
-                        )
-                      : null,
-                  child: const Text('確定'),
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
   /// Shows the score/analysis result (`_tsumoScoreResult`/`_ronScoreResult`/
   /// `_analysisResult`/
   /// `_isNotWinning`, whichever `_confirmAndAnalyze` just set) as a popup
@@ -1730,6 +2063,8 @@ class _ScanScreenState extends State<ScanScreen> {
                       child: ScoreResultPanel(
                         tsumoResponse: _tsumoScoreResult,
                         ronResponse: _ronScoreResult,
+                        ruleSettings: widget.ruleSettings,
+                        isOpenHand: _confirmedMelds.any((meld) => meld.open),
                       ),
                     ),
                   ),
@@ -1740,7 +2075,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     width: double.infinity,
                     child: FilledButton(
                       onPressed: () {
-                        widget.onScoreConfirmed!(_context.isDealer);
+                        widget.onScoreConfirmed!(_selectedWinnerIndex ?? 0);
                         Navigator.of(dialogContext).pop();
                         Navigator.of(context).pop();
                       },
@@ -1754,7 +2089,18 @@ class _ScanScreenState extends State<ScanScreen> {
                       maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.65,
                     ),
                     child: SingleChildScrollView(
-                      child: AnalysisResultPanel(result: _analysisResult!),
+                      child: AnalysisResultPanel(
+                        result: _analysisResult!,
+                        onAskAiAboutCall:
+                            widget.purpose == ScanPurpose.callAdvice
+                            ? (candidate) =>
+                                  _openAiChat(selectedCall: candidate)
+                            : null,
+                        onAskAiWithDiscardFocus:
+                            widget.purpose == ScanPurpose.discard
+                            ? (focus) => _openAiChat(discardFocus: focus)
+                            : null,
+                      ),
                     ),
                   ),
               ],
@@ -1762,6 +2108,141 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildInlineScoreResult() {
+    if (_operation != HandOperation.score) return const SizedBox.shrink();
+
+    if (_isScoring) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text('点数を更新中...', style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      );
+    }
+
+    if (_isNotWinning) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.redAccent),
+        ),
+        child: const Text(
+          '上がりの形になっていません',
+          style: TextStyle(
+            color: Colors.redAccent,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    if (_tsumoScoreResult == null && _ronScoreResult == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_context.doraIndicators.isEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.amber),
+            ),
+            child: const Text(
+              '表ドラ表示牌が未入力のため、翻数と点数は未確定です',
+              style: TextStyle(
+                color: Colors.amberAccent,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        ScoreResultPanel(
+          tsumoResponse: _tsumoScoreResult,
+          ronResponse: _ronScoreResult,
+          ruleSettings: widget.ruleSettings,
+          isOpenHand: _confirmedMelds.any((meld) => meld.open),
+        ),
+        if (widget.onScoreConfirmed != null) ...[
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () {
+              widget.onScoreConfirmed!(_selectedWinnerIndex ?? 0);
+              Navigator.of(context).pop();
+            },
+            child: const Text('この結果で局終了'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildWinnerSelector() {
+    if (widget.winnerOptions.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '和了者',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            for (
+              int index = 0;
+              index < widget.winnerOptions.length;
+              index++
+            ) ...[
+              if (index > 0) const SizedBox(width: 6),
+              Expanded(
+                child: SizedBox(
+                  height: 42,
+                  child: _selectedWinnerIndex == index
+                      ? FilledButton(
+                          onPressed: () => _selectWinner(index),
+                          child: Text(widget.winnerOptions[index].label),
+                        )
+                      : OutlinedButton(
+                          onPressed: () => _selectWinner(index),
+                          child: Text(widget.winnerOptions[index].label),
+                        ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
     );
   }
 
@@ -1890,6 +2371,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // ════════════════════════════════════════
 
   Widget _buildDetectingPhase() {
+    if (_usesWinConditionWizard) return _buildWinConditionPhase();
     return SafeArea(
       child: Stack(
         fit: StackFit.expand,
@@ -1918,11 +2400,213 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  Widget _buildWinConditionPhase() {
+    return SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+            child: Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _backToCamera,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('撮り直す'),
+                ),
+                const Spacer(),
+                if (!_recognitionComplete) ...[
+                  const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 7),
+                  const Text('認識中', style: TextStyle(color: Colors.white70)),
+                ] else
+                  const Text(
+                    '認識完了',
+                    style: TextStyle(color: Colors.greenAccent),
+                  ),
+                const Spacer(),
+                IconButton(
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.home_outlined),
+                  tooltip: '対局ホーム',
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Colors.white12),
+          Expanded(
+            child: switch (_winConditionStep) {
+              _WinConditionStep.riichi => _buildRiichiStep(),
+              _WinConditionStep.dora => _buildDoraStep(ura: false),
+              _WinConditionStep.uraDora => _buildDoraStep(ura: true),
+              _WinConditionStep.waiting => _buildRecognitionWaiting(),
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRiichiStep() => Padding(
+    padding: const EdgeInsets.all(20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '立直しましたか？',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        const Spacer(),
+        SizedBox(
+          height: 92,
+          child: FilledButton(
+            onPressed: () => _selectRiichiForWinFlow(true),
+            child: const Text('はい', style: TextStyle(fontSize: 22)),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 92,
+          child: OutlinedButton(
+            onPressed: () => _selectRiichiForWinFlow(false),
+            child: const Text('いいえ', style: TextStyle(fontSize: 22)),
+          ),
+        ),
+        const Spacer(),
+      ],
+    ),
+  );
+
+  Widget _buildDoraStep({required bool ura}) {
+    final selected = ura ? _context.uraDoraIndicators : _context.doraIndicators;
+    final slots = ura
+        ? math.max(1, _context.doraIndicators.length)
+        : _doraSlotCount;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          child: Row(
+            children: [
+              TextButton.icon(
+                onPressed: () => setState(() {
+                  _winConditionStep = ura
+                      ? _WinConditionStep.dora
+                      : _WinConditionStep.riichi;
+                }),
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('一つ前'),
+              ),
+              const Spacer(),
+              Text(
+                ura ? '裏ドラ表示牌' : '表ドラ表示牌',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: () => _skipDoraStep(ura: ura),
+                child: const Text('あとで'),
+              ),
+            ],
+          ),
+        ),
+        if (ura && _context.doraIndicators.isNotEmpty) _buildReferenceDora(),
+        SizedBox(
+          height: 50,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var index = 0; index < slots; index++) ...[
+                Container(
+                  width: 34,
+                  height: 46,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    border: Border.all(color: Colors.white30),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: index < selected.length
+                      ? GestureDetector(
+                          onTap: () => _removeConditionTile(index, ura: ura),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: TileGlyph(tileCode: selected[index]),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
+              if (!ura && slots < 4)
+                IconButton(
+                  onPressed: () => setState(() => _doraSlotCount += 1),
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'ドラ表示牌を追加',
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TileImagePicker(
+            onTileSelected: (tile) => _selectConditionTile(tile, ura: ura),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReferenceDora() => Padding(
+    padding: const EdgeInsets.only(right: 16, bottom: 4),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        const Text(
+          '表ドラ',
+          style: TextStyle(color: Colors.white54, fontSize: 11),
+        ),
+        const SizedBox(width: 6),
+        for (final tile in _context.doraIndicators)
+          SizedBox(width: 22, height: 30, child: TileGlyph(tileCode: tile)),
+      ],
+    ),
+  );
+
+  Widget _buildRecognitionWaiting() => Stack(
+    fit: StackFit.expand,
+    children: [
+      if (_capturedBytes != null)
+        Opacity(
+          opacity: 0.32,
+          child: Image.memory(_capturedBytes!, fit: BoxFit.contain),
+        ),
+      const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.greenAccent),
+            SizedBox(height: 12),
+            Text('入力完了・認識結果を待っています', style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      ),
+    ],
+  );
+
   // ════════════════════════════════════════
   // Phase 1: Camera
   // ════════════════════════════════════════
 
   Widget _buildCameraPhase() {
+    if (_cameraInitError != null) return _buildCameraError();
     if (_controller == null || !_controller!.value.isInitialized) {
       return const Center(
         child: Text('カメラ初期化中...', style: TextStyle(color: Colors.white)),
@@ -1934,55 +2618,71 @@ class _ScanScreenState extends State<ScanScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           AspectRatio(
-            aspectRatio: captureFrameAspectRatio,
+            aspectRatio:
+                captureFrameAspectRatio *
+                captureGuideWidthFactor /
+                captureGuideHeightFactor,
             child: Stack(
               fit: StackFit.expand,
               children: [
-                _buildWideCameraPreview(),
+                _buildCaptureAreaPreview(),
                 Positioned(
-                  left: 12,
+                  left: 8,
+                  right: 8,
                   top: 8,
-                  child: IconButton.filledTonal(
-                    onPressed: () => Navigator.maybePop(context),
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: '戻る',
-                  ),
-                ),
-                Positioned(
-                  top: 12,
-                  left: 64,
-                  right: 64,
-                  child: Text(
-                    '牌を緑枠内に横一列で収めてください',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      shadows: const [
-                        Shadow(color: Colors.black, blurRadius: 6),
-                      ],
-                    ),
-                  ),
-                ),
-                Align(
-                  // Matches cropToCaptureGuide(): the guide is the actual
-                  // detection area, not merely a visual suggestion.
-                  alignment: const Alignment(0, 0.5),
-                  child: FractionallySizedBox(
-                    widthFactor: captureGuideWidthFactor,
-                    heightFactor: captureGuideHeightFactor,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                            color: Colors.greenAccent.withValues(alpha: 0.8),
-                            width: 2,
+                  child: Row(
+                    children: [
+                      IconButton.filledTonal(
+                        onPressed: () => Navigator.maybePop(context),
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: '戻る',
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Container(
+                          constraints: const BoxConstraints(minHeight: 44),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.68),
+                            borderRadius: BorderRadius.circular(22),
                           ),
-                          borderRadius: BorderRadius.circular(10),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  widget.purpose.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _cameraStatusLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        onPressed: () => Navigator.maybePop(context),
+                        icon: const Icon(Icons.home_outlined),
+                        tooltip: 'ホーム',
+                      ),
+                    ],
                   ),
                 ),
                 Positioned(
@@ -2001,18 +2701,12 @@ class _ScanScreenState extends State<ScanScreen> {
                 children: [
                   _buildExpectedTileCountSelector(),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [_buildLensSelector(), _buildAutoCaptureToggle()],
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: _buildAutoCaptureToggle(),
                   ),
                   const Spacer(),
                   _buildCaptureButton(),
-                  const SizedBox(height: 12),
-                  const Text(
-                    '0.5×は近距離向けです。牌が小さい場合は1×へ切り替えてください。',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
                 ],
               ),
             ),
@@ -2021,6 +2715,68 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
   }
+
+  Widget _buildCameraError() => SafeArea(
+    child: Column(
+      children: [
+        Row(
+          children: [
+            IconButton(
+              onPressed: () => Navigator.maybePop(context),
+              icon: const Icon(Icons.arrow_back),
+              tooltip: '戻る',
+            ),
+            const Expanded(
+              child: Text(
+                'カメラを開始できません',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: () => Navigator.maybePop(context),
+              icon: const Icon(Icons.home_outlined),
+              tooltip: 'ホーム',
+            ),
+          ],
+        ),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.no_photography_outlined,
+                    color: Colors.white70,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _cameraInitError!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  if (widget.cameras.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: _initCamera,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('再試行'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildWideCameraPreview() {
     final previewSize = _controller!.value.previewSize;
@@ -2037,6 +2793,27 @@ class _ScanScreenState extends State<ScanScreen> {
       ),
     );
   }
+
+  /// Shows only the same sub-region persisted by [prepareCapturedFrame].
+  /// The source preview remains 16:9, while the viewport expands the guide
+  /// crop to fill the available width. This keeps off-frame reflections out
+  /// of both what the user sees and what final recognition receives.
+  Widget _buildCaptureAreaPreview() => LayoutBuilder(
+    builder: (context, constraints) {
+      final sourceWidth = constraints.maxWidth / captureGuideWidthFactor;
+      final sourceHeight = constraints.maxHeight / captureGuideHeightFactor;
+      return ClipRect(
+        child: OverflowBox(
+          alignment: const Alignment(0, 0.5),
+          minWidth: sourceWidth,
+          maxWidth: sourceWidth,
+          minHeight: sourceHeight,
+          maxHeight: sourceHeight,
+          child: _buildWideCameraPreview(),
+        ),
+      );
+    },
+  );
 
   Widget _buildCaptureButton() {
     return Semantics(
@@ -2066,6 +2843,16 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       ),
     );
+  }
+
+  String get _cameraStatusLabel {
+    if (_isCapturing) return '撮影中';
+    final count = _liveDetectorResult?.tileCount ?? 0;
+    final isReady = _expectedTileCount == null
+        ? count >= 13 && count <= 18
+        : count == _expectedTileCount;
+    if (isReady) return _autoCaptureEnabled ? '安定待ち' : '撮影可能';
+    return '牌を検出中';
   }
 
   Widget _buildLiveTileCountBadge() {
@@ -2103,45 +2890,6 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _buildLensSelector() {
-    final ultraWide = _rearCameraFor(CameraLensType.ultraWide);
-    final wide = _rearCameraFor(CameraLensType.wide);
-    if (ultraWide == null || wide == null) return const SizedBox.shrink();
-
-    final selectedLens = _activeCamera?.lensType ?? CameraLensType.ultraWide;
-    return SegmentedButton<CameraLensType>(
-      segments: const [
-        ButtonSegment(
-          value: CameraLensType.ultraWide,
-          label: Text('0.5×'),
-          tooltip: '近い距離で横一列の牌を収める',
-        ),
-        ButtonSegment(
-          value: CameraLensType.wide,
-          label: Text('1×'),
-          tooltip: '標準カメラで撮影する',
-        ),
-      ],
-      selected: {selectedLens},
-      showSelectedIcon: false,
-      style: ButtonStyle(
-        minimumSize: const WidgetStatePropertyAll(Size(48, 44)),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 10),
-        ),
-        foregroundColor: const WidgetStatePropertyAll(Colors.white),
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          return states.contains(WidgetState.selected)
-              ? Colors.green.shade700.withValues(alpha: 0.9)
-              : Colors.black.withValues(alpha: 0.7);
-        }),
-      ),
-      onSelectionChanged: _isSwitchingCamera
-          ? null
-          : (selection) => _switchCameraLens(selection.single),
-    );
-  }
-
   Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
     return TileCountSelector(
       selectedCount: _expectedTileCount,
@@ -2151,6 +2899,7 @@ class _ScanScreenState extends State<ScanScreen> {
           _expectedTileCount = selected;
           _stableDetectionStreak = 0;
           _stableCandidateCount = null;
+          _stableCandidateGeometry = null;
         });
         if (redetectOnChange && _capturedImage != null) {
           await _redetectInRegion(_cropRegion);
@@ -2251,96 +3000,99 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: _backToCamera,
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: '撮影画面に戻る',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.maybePop(context),
+                        icon: const Icon(Icons.home_outlined),
+                        tooltip: 'ホーム',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                      const Expanded(
+                        child: Text(
+                          '認識結果を確認',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _cropAndRedetect,
+                        icon: const Icon(Icons.crop),
+                        tooltip: 'トリミング',
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                      if (_cropRegion != null)
+                        IconButton(
+                          onPressed: () => _redetectInRegion(null),
+                          icon: const Icon(Icons.undo),
+                          tooltip: '元の範囲に戻す',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          padding: EdgeInsets.zero,
+                        ),
+                    ],
+                  ),
                   _buildExpectedTileCountSelector(redetectOnChange: true),
-                  const SizedBox(height: 8),
-                  // Retake, above the photo as its own bar (not overlaid on
-                  // it) so it can't be mis-tapped during the photo's own
-                  // pinch-zoom/pan gestures, and not pinned to the bottom
-                  // bar either — it scrolls away with the rest of the
-                  // content like any other one-off decision made right
-                  // after reviewing the capture (see FEZ-191 follow-up: it
-                  // used to live in the bottom action bar, which hid it
-                  // entirely until every tile was identified — too late to
-                  // catch an obviously bad photo).
-                  // Retake (left) / training-data send-undo (right, opposite
-                  // side) — both one-off decisions made right after
-                  // reviewing the capture, not pinned to the bottom bar (see
-                  // FEZ-191 follow-up for why retake lives here).
-                  Container(
-                    color: Colors.black87,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        TextButton.icon(
-                          onPressed: _backToCamera,
-                          icon: const Icon(
-                            Icons.replay,
-                            size: 18,
-                            color: Colors.white70,
-                          ),
-                          label: const Text(
-                            '撮り直す',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-                        TextButton.icon(
-                          onPressed: () => launchUrl(
-                            Uri.parse(AppConfig.apiBaseUrl),
-                            mode: LaunchMode.externalApplication,
-                          ),
-                          icon: const Icon(
-                            Icons.dashboard_outlined,
-                            size: 18,
-                            color: Colors.white70,
-                          ),
-                          label: const Text(
-                            'Webダッシュボード',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-                        if (widget.showTrainingDataActions &&
-                            _trainingTilesReady)
-                          TextButton.icon(
-                            onPressed: _isSendingTraining || _isUndoingTraining
-                                ? null
-                                : _trainingDataSent
-                                ? _undoTrainingData
-                                : _sendTrainingData,
-                            icon: _isSendingTraining || _isUndoingTraining
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.orangeAccent,
-                                    ),
-                                  )
-                                : Icon(
-                                    _trainingDataSent
-                                        ? Icons.undo
-                                        : Icons.school,
-                                    size: 18,
-                                    color: Colors.orangeAccent,
-                                  ),
-                            label: Text(
-                              _isSendingTraining
-                                  ? '送信中...'
-                                  : _isUndoingTraining
-                                  ? '取り消し中...'
-                                  : _trainingDataSent
-                                  ? '取り消す'
-                                  : '学習データ送信',
-                              style: const TextStyle(
+                  if (widget.showTrainingDataActions && _trainingTilesReady)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _isSendingTraining || _isUndoingTraining
+                            ? null
+                            : _trainingDataSent
+                            ? _undoTrainingData
+                            : _sendTrainingData,
+                        icon: _isSendingTraining || _isUndoingTraining
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.orangeAccent,
+                                ),
+                              )
+                            : Icon(
+                                _trainingDataSent ? Icons.undo : Icons.school,
+                                size: 18,
                                 color: Colors.orangeAccent,
                               ),
-                            ),
-                          ),
-                      ],
+                        label: Text(
+                          _isSendingTraining
+                              ? '送信中...'
+                              : _isUndoingTraining
+                              ? '取り消し中...'
+                              : _trainingDataSent
+                              ? '取り消す'
+                              : '学習データ送信',
+                          style: const TextStyle(color: Colors.orangeAccent),
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
 
                   // Full photo with detected-tile markers, capped to a
                   // fraction of the screen height so it doesn't dominate the
@@ -2388,272 +3140,36 @@ class _ScanScreenState extends State<ScanScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        // FEZ-93 recovery flow: for when a reflection or
-                        // other non-tile object gets picked up by
-                        // detection, manually exclude it by re-detecting
-                        // within just the region that actually contains the
-                        // tiles. Entirely on-device. Placed beside the
-                        // photo (this app's landscape screens have spare
-                        // width there) rather than below it, so it doesn't
-                        // push the thumbnail row further down the scroll.
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            TextButton.icon(
-                              onPressed: _cropAndRedetect,
-                              icon: const Icon(
-                                Icons.crop,
-                                size: 16,
-                                color: Colors.white70,
-                              ),
-                              label: const Text(
-                                '範囲を切り抜いて\n再検出',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                            if (_cropRegion != null)
-                              TextButton.icon(
-                                onPressed: () => _redetectInRegion(null),
-                                icon: const Icon(
-                                  Icons.undo,
-                                  size: 16,
-                                  color: Colors.white70,
-                                ),
-                                label: const Text(
-                                  '元の範囲に\n戻す',
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
                   ],
 
                   // Cropped images preview, each paired with its identified
-                  // tile's illustration directly below (or "?" until "識別実行"
-                  // has been run for it), plus a trailing add-box tile when a
-                  // slot is still undetected. Tapping the crop opens the box
-                  // editor (`_openBoxEditor`); tapping the illustration opens
-                  // the image-based picker (`_onSlotTap`) to correct it
-                  // manually — except while `_isSelectingMeld`, when every
-                  // tap instead toggles that slot's meld membership
-                  // (`_toggleMeldSelection`). Long-pressing a crop (outside
-                  // meld-selection mode) shows a ✕ badge to delete that slot
-                  // (`_deleteAffordanceIndex`/`_handleThumbnailTap`). The
-                  // あがり牌 frame and confirmed-meld-membership frame are
-                  // border overlays; あがり牌 itself moves via the ◀/▶
-                  // controls below the row, not by dragging.
-                  SizedBox(
-                    height: 118,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount:
-                          _visibleSlotCount +
-                          (_tileQuads.any((q) => q == null) ? 1 : 0),
-                      itemBuilder: (_, i) {
-                        if (i == _visibleSlotCount) {
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: GestureDetector(
-                              onTap: _addMissingTileBox,
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.white24),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                alignment: Alignment.center,
-                                child: const Icon(
-                                  Icons.add,
-                                  color: Colors.greenAccent,
-                                ),
-                              ),
-                            ),
-                          );
-                        }
-                        final thumb = _croppedImageThumbnails[i];
-                        if (thumb == null) return const SizedBox(width: 40);
-                        final tile = _tiles[i];
-                        final tileAsset = tile == null
-                            ? null
-                            : tileAssetPath(tile);
-                        final winningTileId =
-                            'tile-${i.toString().padLeft(3, '0')}';
-                        final isWinningTile =
-                            _confirmedWinningTileId == winningTileId;
-                        final isMeldSelected = _meldSelection.contains(i);
-                        final isMeldEligible = _meldEligibleIndices.contains(i);
-                        final canBeWinningTile =
-                            _operation == HandOperation.score &&
-                            tile != null &&
-                            !_isSelectingMeld;
-                        final showMeldFrame =
-                            !_isSelectingMeld && _isConfirmedMeldMember(i);
-
-                        final Widget cropImage = GestureDetector(
-                          onTap: _isSelectingMeld
-                              ? () => _toggleMeldSelection(i)
-                              : () => _handleThumbnailTap(
-                                  () => _openBoxEditor(i),
-                                ),
-                          onLongPress: _isSelectingMeld
-                              ? null
-                              : () =>
-                                    setState(() => _deleteAffordanceIndex = i),
-                          child: Image.memory(
-                            thumb,
-                            width: 40,
-                            height: 56,
-                            fit: BoxFit.cover,
-                          ),
-                        );
-
-                        final Widget glyphCore = GestureDetector(
-                          onTap: _isSelectingMeld
-                              ? () => _toggleMeldSelection(i)
-                              : () => _handleThumbnailTap(() => _onSlotTap(i)),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            alignment: Alignment.center,
-                            child: _isClassifying[i]
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.5,
-                                      color: Colors.white54,
-                                    ),
-                                  )
-                                : tileAsset != null
-                                ? Image.asset(tileAsset, fit: BoxFit.contain)
-                                : const Text(
-                                    '?',
-                                    style: TextStyle(
-                                      color: Colors.white38,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                          ),
-                        );
-
-                        // あがり牌 (amber) / confirmed meld membership
-                        // (light blue) borders sit around the glyph only,
-                        // not the crop thumbnail above it.
-                        final Widget glyph = Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            glyphCore,
-                            if (canBeWinningTile && isWinningTile)
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      border: Border.all(
-                                        color: Colors.amber,
-                                        width: 2,
-                                      ),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            if (showMeldFrame)
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      border: Border.all(
-                                        color: Colors.lightBlueAccent,
-                                        width: 2,
-                                      ),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        );
-
-                        Widget column = Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            cropImage,
-                            const SizedBox(height: 4),
-                            glyph,
-                          ],
-                        );
-
-                        // Meld-selection-mode affordance: a colored border
-                        // on a selected slot, dimmed when the slot can't
-                        // join a meld (unidentified or already claimed).
-                        if (_isSelectingMeld) {
-                          column = Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              border: isMeldSelected
-                                  ? Border.all(
-                                      color: Colors.greenAccent,
-                                      width: 2,
-                                    )
-                                  : null,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Opacity(
-                              opacity: isMeldEligible ? 1.0 : 0.35,
-                              child: column,
-                            ),
-                          );
-                        }
-
-                        // ✕ delete badge when this slot's long-press
-                        // affordance is showing.
-                        final Widget framed = Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            column,
-                            if (_deleteAffordanceIndex == i)
-                              Positioned(
-                                top: -6,
-                                right: -6,
-                                child: GestureDetector(
-                                  onTap: () => setState(() {
-                                    _clearTileSlot(i);
-                                    _deleteAffordanceIndex = null;
-                                  }),
-                                  child: const Icon(
-                                    Icons.cancel,
-                                    color: Colors.redAccent,
-                                    size: 18,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        );
-
-                        return RepaintBoundary(
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: framed,
-                          ),
-                        );
-                      },
-                    ),
+                  // tile's illustration directly below (or "?" until
+                  // classification finishes). Tapping the crop opens the box
+                  // editor; tapping the illustration opens the tile picker,
+                  // except while meld selection redirects taps to membership.
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const columns = 9;
+                      const spacing = 3.0;
+                      final available =
+                          constraints.maxWidth - spacing * (columns - 1);
+                      final cellWidth = math.min(40.0, available / columns);
+                      return Wrap(
+                        spacing: spacing,
+                        runSpacing: 8,
+                        children: [
+                          for (
+                            var index = 0;
+                            index < _visibleSlotCount;
+                            index++
+                          )
+                            _buildResultTile(index, cellWidth),
+                        ],
+                      );
+                    },
                   ),
 
                   // Combined 副露 add/reset + あがり牌 ◀/▶ controls, one
@@ -2666,6 +3182,11 @@ class _ScanScreenState extends State<ScanScreen> {
                     const SizedBox(height: 12),
                   ],
 
+                  if (widget.winnerOptions.isNotEmpty) ...[
+                    _buildWinnerSelector(),
+                    const SizedBox(height: 12),
+                  ],
+
                   // Round/hand facts stay visible for every operation. The
                   // analysis API already receives this context and uses it
                   // for wait-score predictions.
@@ -2674,6 +3195,67 @@ class _ScanScreenState extends State<ScanScreen> {
                     onChanged: (c) => setState(() => _updateContext(c)),
                   ),
                   const SizedBox(height: 12),
+
+                  _buildInlineScoreResult(),
+                  if (_operation != HandOperation.score && _isScoring)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text(
+                            '結果を更新中...',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_operation != HandOperation.score &&
+                      _analysisResult != null) ...[
+                    AnalysisResultPanel(
+                      result: _analysisResult!,
+                      onAskAiAboutCall: widget.purpose == ScanPurpose.callAdvice
+                          ? (candidate) => _openAiChat(selectedCall: candidate)
+                          : null,
+                      onAskAiWithDiscardFocus:
+                          widget.purpose == ScanPurpose.discard
+                          ? (focus) => _openAiChat(discardFocus: focus)
+                          : null,
+                    ),
+                    if (widget.purpose == ScanPurpose.discard ||
+                        widget.purpose == ScanPurpose.callAdvice) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _openAiChat(),
+                          icon: const Icon(Icons.chat_bubble_outline),
+                          label: Text(
+                            _chatMessages.isEmpty ? 'AIに質問' : 'AIとの会話を続ける',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                  if (_isScoring ||
+                      _isNotWinning ||
+                      _tsumoScoreResult != null ||
+                      _ronScoreResult != null)
+                    const SizedBox(height: 12),
 
                   if (_interpretation != null) ...[
                     _buildInterpretationConfirmation(),
@@ -2753,58 +3335,64 @@ class _ScanScreenState extends State<ScanScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: !_allDetectedTilesReady
-                      ? OutlinedButton.icon(
-                          onPressed:
-                              _croppedImages.any((c) => c != null) &&
-                                  !_isRunningFullClassification &&
-                                  !_isClassifying.any((value) => value)
-                              ? _runClassification
-                              : null,
-                          icon: _isRunningFullClassification
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.auto_awesome, size: 18),
-                          label: Text(
-                            _isRunningFullClassification ? '識別中...' : '識別実行',
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.greenAccent,
-                            side: const BorderSide(color: Colors.greenAccent),
-                          ),
-                        )
-                      : ElevatedButton.icon(
-                          onPressed: !_isScoring && !_isInterpreting
-                              ? _runInterpretationAndAnalyze
-                              : null,
-                          icon: _isScoring || _isInterpreting
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.play_arrow, size: 20),
-                          label: const Text('実行'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green.withValues(
-                              alpha: 0.6,
+                if (!(_operation == HandOperation.score &&
+                    (_isScoring ||
+                        _isNotWinning ||
+                        _tsumoScoreResult != null ||
+                        _ronScoreResult != null))) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: !_allDetectedTilesReady
+                        ? OutlinedButton.icon(
+                            onPressed:
+                                _croppedImages.any((c) => c != null) &&
+                                    !_isRunningFullClassification &&
+                                    !_isClassifying.any((value) => value)
+                                ? _runClassification
+                                : null,
+                            icon: _isRunningFullClassification
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.auto_awesome, size: 18),
+                            label: Text(
+                              _isRunningFullClassification ? '識別中...' : '識別実行',
                             ),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.greenAccent,
+                              side: const BorderSide(color: Colors.greenAccent),
+                            ),
+                          )
+                        : ElevatedButton.icon(
+                            onPressed: !_isScoring && !_isInterpreting
+                                ? _runInterpretationAndAnalyze
+                                : null,
+                            icon: _isScoring || _isInterpreting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.play_arrow, size: 20),
+                            label: const Text('実行'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green.withValues(
+                                alpha: 0.6,
+                              ),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
                           ),
-                        ),
-                ),
+                  ),
+                ],
               ],
             ),
           ),

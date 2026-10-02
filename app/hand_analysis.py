@@ -14,10 +14,15 @@ from app.schemas import (
     DiscardAnalysisResponse,
     DiscardAnalysisResult,
     HandInput,
+    Meld,
+    MeldType,
     TenpaiAnalysisRequest,
     TenpaiAnalysisResponse,
     WaitAnalysis,
 )
+
+
+_BONUS_YAKU_NAMES = {"ドラ", "赤ドラ", "裏ドラ"}
 
 
 def _all_visible_counts(request: AnalysisRequestBase) -> tuple[int, ...]:
@@ -46,6 +51,78 @@ def _wait_results(
         score, error = _score_wait(request, base_tiles, wait.tile) if predict_scores else (None, None)
         results.append(WaitAnalysis(tile=wait.tile, remaining=wait.remaining, score=score, score_error=error))
     return results
+
+
+def _remove_tile_indices(tiles: list[str], indices: list[int]) -> list[str]:
+    """Remove one physical tile for each normalized tile index.
+
+    Red fives and ordinary fives share a normalized index. Keeping the
+    original string for every tile that remains preserves red-tile scoring.
+    """
+    remaining = list(tiles)
+    for tile_index in indices:
+        position = next(
+            index
+            for index, tile in enumerate(remaining)
+            if tile_to_index(tile) == tile_index
+        )
+        remaining.pop(position)
+    return remaining
+
+
+def _request_with_hypothetical_meld(
+    request: CallAnalysisRequest,
+    *,
+    call_type: str,
+    call_tile_index: int,
+    consumed_indices: list[int],
+) -> CallAnalysisRequest:
+    meld_type = {
+        "chi": MeldType.chi,
+        "pon": MeldType.pon,
+        "kan": MeldType.kan,
+    }[call_type]
+    meld = Meld(
+        type=meld_type,
+        tiles=[
+            *(index_to_tile(index) for index in consumed_indices),
+            index_to_tile(call_tile_index),
+        ],
+        open=True,
+    )
+    context = request.context
+    if context is not None:
+        # An open call makes riichi-family flags impossible. Clear stale
+        # values before running the existing deterministic score validator.
+        context = context.model_copy(
+            update={"riichi": False, "double_riichi": False, "ippatsu": False}
+        )
+    return request.model_copy(
+        update={"melds": [*request.melds, meld], "context": context}
+    )
+
+
+def _possible_yaku(*wait_groups: list[WaitAnalysis]) -> list[str]:
+    names: set[str] = set()
+    for waits in wait_groups:
+        for wait in waits:
+            if wait.score is None:
+                continue
+            names.update(
+                item.name
+                for item in wait.score.yaku
+                if item.name not in _BONUS_YAKU_NAMES
+            )
+            names.update(wait.score.yakuman)
+    return sorted(names)
+
+
+def _without_score_details(waits: list[WaitAnalysis]) -> list[WaitAnalysis]:
+    """Keep call-advice responses compact after extracting possible yaku."""
+    return [
+        wait.model_copy(update={"score": None, "score_error": None})
+        for wait in waits
+    ]
 
 
 def _validated_counts(request: AnalysisRequestBase, expected: int, operation: str):
@@ -118,11 +195,43 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
         reduced = list(closed_counts)
         for index in consumed_indices:
             reduced[index] -= 1
+        reduced_tiles = _remove_tile_indices(request.closed_tiles, consumed_indices)
+        hypothetical_request = _request_with_hypothetical_meld(
+            request,
+            call_type=call_type,
+            call_tile_index=call_tile_index,
+            consumed_indices=consumed_indices,
+        )
         visible = list(visible_counts)
         visible[call_tile_index] += 1
         discard_options = analyze_discards(tuple(reduced), completed_melds + 1, tuple(visible))
         best_shanten = discard_options[0].shanten
         best_discards = [item for item in discard_options if item.shanten == best_shanten]
+        discard_results: list[DiscardAnalysisResult] = []
+        wait_groups: list[list[WaitAnalysis]] = []
+        for item in best_discards:
+            after_discard = _remove_tile_indices(
+                reduced_tiles, [tile_to_index(item.discard)]
+            )
+            waits = _wait_results(
+                hypothetical_request,
+                after_discard,
+                item.waits,
+                predict_scores=(
+                    request.include_score_predictions
+                    and request.context is not None
+                    and item.shanten == 0
+                ),
+            )
+            wait_groups.append(waits)
+            discard_results.append(
+                DiscardAnalysisResult(
+                    discard=item.discard,
+                    shanten=item.shanten,
+                    improving_tiles=_without_score_details(waits),
+                    total_remaining=sum(wait.remaining for wait in waits),
+                )
+            )
         calls.append(
             CallAnalysisResult(
                 call_tile=index_to_tile(call_tile_index),
@@ -130,20 +239,8 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                 consumed_tiles=[index_to_tile(index) for index in consumed_indices],
                 shanten_after_call=best_shanten,
                 recommendation=recommendation(best_shanten),
-                discards=[
-                    DiscardAnalysisResult(
-                        discard=item.discard,
-                        shanten=item.shanten,
-                        improving_tiles=_wait_results(
-                            request,
-                            [],
-                            item.waits,
-                            predict_scores=False,
-                        ),
-                        total_remaining=sum(wait.remaining for wait in item.waits),
-                    )
-                    for item in best_discards
-                ],
+                possible_yaku=_possible_yaku(*wait_groups),
+                discards=discard_results,
             )
         )
 
@@ -156,12 +253,31 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
         if closed_counts[call_index] >= 3:
             reduced = list(closed_counts)
             reduced[call_index] -= 3
+            reduced_tiles = _remove_tile_indices(
+                request.closed_tiles, [call_index, call_index, call_index]
+            )
+            hypothetical_request = _request_with_hypothetical_meld(
+                request,
+                call_type="kan",
+                call_tile_index=call_index,
+                consumed_indices=[call_index, call_index, call_index],
+            )
             visible = list(visible_counts)
             visible[call_index] += 1
             replacement_tiles = enumerate_improving_tiles(
                 tuple(reduced), completed_melds + 1, tuple(visible)
             )
             replacement_shanten = calculate_shanten(tuple(reduced), completed_melds + 1)
+            replacement_results = _wait_results(
+                hypothetical_request,
+                reduced_tiles,
+                replacement_tiles,
+                predict_scores=(
+                    request.include_score_predictions
+                    and request.context is not None
+                    and replacement_shanten == 0
+                ),
+            )
             calls.append(
                 CallAnalysisResult(
                     call_tile=index_to_tile(call_index),
@@ -169,12 +285,8 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                     consumed_tiles=[index_to_tile(call_index)] * 3,
                     shanten_after_call=replacement_shanten,
                     recommendation=recommendation(replacement_shanten),
-                    replacement_tiles=_wait_results(
-                        request,
-                        [],
-                        replacement_tiles,
-                        predict_scores=False,
-                    ),
+                    possible_yaku=_possible_yaku(replacement_results),
+                    replacement_tiles=_without_score_details(replacement_results),
                 )
             )
 

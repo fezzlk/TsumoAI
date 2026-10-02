@@ -55,6 +55,18 @@ class AuthService {
     return token;
   }
 
+  static Future<bool> isAdmin({bool forceRefresh = false}) async {
+    final user = currentUser;
+    if (user == null) return false;
+    try {
+      final result = await user.getIdTokenResult(forceRefresh);
+      return result.claims?['admin'] == true;
+    } catch (_) {
+      // Developer-only UI must fail closed when claims cannot be verified.
+      return false;
+    }
+  }
+
   static Future<void> signOut() async {
     if (Firebase.apps.isEmpty) return;
     await FirebaseAuth.instance.signOut();

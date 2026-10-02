@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tsumoai_mobile/models/score_result.dart';
+import 'package:tsumoai_mobile/models/score_request.dart';
 import 'package:tsumoai_mobile/widgets/score_result_panel.dart';
 
-ScoreResponse response({required String winType}) => ScoreResponse.fromJson({
+ScoreResponse response({
+  required String winType,
+  int akaDora = 0,
+  int uraDora = 0,
+  bool ippatsu = false,
+}) => ScoreResponse.fromJson({
   'score_id': winType,
   'status': 'ok',
   'result': {
@@ -12,9 +18,10 @@ ScoreResponse response({required String winType}) => ScoreResponse.fromJson({
     'fu_breakdown': [],
     'yaku': [
       {'name': winType == 'tsumo' ? '門前清自摸和' : '立直', 'han': 1},
+      if (ippatsu) {'name': '一発', 'han': 1},
     ],
     'yakuman': [],
-    'dora': {'dora': 0, 'aka_dora': 0, 'ura_dora': 0},
+    'dora': {'dora': 0, 'aka_dora': akaDora, 'ura_dora': uraDora},
     'point_label': winType == 'tsumo' ? '満貫' : '2000点',
     'points': {
       'ron': winType == 'ron' ? 2000 : 0,
@@ -33,10 +40,20 @@ ScoreResponse response({required String winType}) => ScoreResponse.fromJson({
   'warnings': [],
 });
 
-Widget subject({ScoreResponse? tsumo, ScoreResponse? ron}) => MaterialApp(
+Widget subject({
+  ScoreResponse? tsumo,
+  ScoreResponse? ron,
+  MahjongRuleSettings settings = const MahjongRuleSettings(),
+  bool isOpenHand = false,
+}) => MaterialApp(
   home: Scaffold(
     backgroundColor: Colors.black,
-    body: ScoreResultPanel(tsumoResponse: tsumo, ronResponse: ron),
+    body: ScoreResultPanel(
+      tsumoResponse: tsumo,
+      ronResponse: ron,
+      ruleSettings: settings,
+      isOpenHand: isOpenHand,
+    ),
   ),
 );
 
@@ -63,5 +80,43 @@ void main() {
 
     expect(find.text('満貫'), findsOneWidget);
     expect(find.text('この条件では和了として成立しません'), findsOneWidget);
+  });
+
+  testWidgets('adds each red tile and the all-star bonus to chips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      subject(
+        tsumo: response(
+          winType: 'tsumo',
+          akaDora: 3,
+          uraDora: 1,
+          ippatsu: true,
+        ),
+        settings: const MahjongRuleSettings(chipsEnabled: true),
+      ),
+    );
+
+    expect(
+      find.text('チップ: 各7枚・合計21枚（7チップ点 / 素点7000点相当）'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('disables chips for an open hand when configured', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      subject(
+        ron: response(winType: 'ron', akaDora: 1),
+        settings: const MahjongRuleSettings(
+          chipsEnabled: true,
+          openHandChipsEnabled: false,
+        ),
+        isOpenHand: true,
+      ),
+    );
+
+    expect(find.text('チップ: なし（副露あり）'), findsOneWidget);
   });
 }

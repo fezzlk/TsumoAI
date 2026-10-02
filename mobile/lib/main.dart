@@ -7,16 +7,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
+import 'models/match_state.dart';
 import 'models/scan_purpose.dart';
+import 'models/score_request.dart';
 import 'screens/match_home_screen.dart';
-import 'screens/history_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/training_data_screen.dart';
 import 'services/app_preferences.dart';
 import 'services/auth_service.dart';
+import 'services/question_template_service.dart';
+import 'services/rule_settings_service.dart';
+import 'services/official_ai_chat_template_service.dart';
 
 List<CameraDescription> cameras = const [];
+
+const _startupSyncBudget = Duration(seconds: 2);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,10 +52,20 @@ Future<void> main() async {
 
   final showTrainingDataActions =
       await AppPreferences.showTrainingDataActions();
+  // Startup must not wait on the network: on a slow connection, start with
+  // the device copy and let the synchronization finish in the background.
+  final ruleSettingsService = RuleSettingsService();
+  final initialRuleSettings = await ruleSettingsService.synchronize().timeout(
+    _startupSyncBudget,
+    onTimeout: ruleSettingsService.loadLocal,
+  );
+  unawaited(QuestionTemplateService().synchronize());
+  unawaited(OfficialAIChatTemplateService().load());
   runApp(
     TsumoAIApp(
       startupError: startupError,
       initialShowTrainingDataActions: showTrainingDataActions,
+      initialRuleSettings: initialRuleSettings,
     ),
   );
 }
@@ -59,29 +75,52 @@ class TsumoAIApp extends StatefulWidget {
     super.key,
     this.startupError,
     this.initialShowTrainingDataActions = false,
+    this.initialRuleSettings = const MahjongRuleSettings(),
   });
 
   final String? startupError;
   final bool initialShowTrainingDataActions;
+  final MahjongRuleSettings initialRuleSettings;
 
   @override
   State<TsumoAIApp> createState() => _TsumoAIAppState();
 }
 
 class _TsumoAIAppState extends State<TsumoAIApp> {
-  bool _autoClassify = false;
+  bool _autoClassify = true;
   bool _showTrainingDataActions = false;
   String _roundWind = 'E';
+  MatchState _matchState = MatchState();
+  bool _matchActive = false;
+  late MahjongRuleSettings _ruleSettings;
+  final RuleSettingsService _ruleSettingsService = RuleSettingsService();
+  final QuestionTemplateService _questionTemplateService =
+      QuestionTemplateService();
 
   @override
   void initState() {
     super.initState();
     _showTrainingDataActions = widget.initialShowTrainingDataActions;
+    _ruleSettings = widget.initialRuleSettings;
   }
 
   void _setShowTrainingDataActions(bool value) {
     setState(() => _showTrainingDataActions = value);
     unawaited(AppPreferences.setShowTrainingDataActions(value));
+  }
+
+  void _setRuleSettings(MahjongRuleSettings value) {
+    setState(() => _ruleSettings = value);
+    unawaited(_ruleSettingsService.save(value));
+  }
+
+  Future<void> _synchronizeRuleSettings() async {
+    final results = await Future.wait([
+      _ruleSettingsService.synchronize(),
+      _questionTemplateService.synchronize(),
+    ]);
+    final value = results.first as MahjongRuleSettings;
+    if (mounted) setState(() => _ruleSettings = value);
   }
 
   @override
@@ -102,9 +141,20 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
         autoClassify: _autoClassify,
         roundWind: _roundWind,
         showTrainingDataActions: _showTrainingDataActions,
+        ruleSettings: _ruleSettings,
+        matchState: _matchState,
+        matchActive: _matchActive,
         onAutoClassifyChanged: (value) => setState(() => _autoClassify = value),
         onRoundWindChanged: (value) => setState(() => _roundWind = value),
         onShowTrainingDataActionsChanged: _setShowTrainingDataActions,
+        onRuleSettingsChanged: _setRuleSettings,
+        onAuthenticationChanged: _synchronizeRuleSettings,
+        onMatchStarted: () => setState(() => _matchActive = true),
+        onMatchReturned: () => setState(() {}),
+        onMatchEnded: () => setState(() {
+          _matchActive = false;
+          _matchState = MatchState();
+        }),
       ),
     );
   }
@@ -118,9 +168,17 @@ class HomeScreen extends StatelessWidget {
     required this.autoClassify,
     required this.roundWind,
     required this.showTrainingDataActions,
+    required this.ruleSettings,
+    required this.matchState,
+    required this.matchActive,
     required this.onAutoClassifyChanged,
     required this.onRoundWindChanged,
     required this.onShowTrainingDataActionsChanged,
+    required this.onRuleSettingsChanged,
+    required this.onAuthenticationChanged,
+    required this.onMatchStarted,
+    required this.onMatchReturned,
+    required this.onMatchEnded,
   });
 
   final List<CameraDescription> cameras;
@@ -128,9 +186,17 @@ class HomeScreen extends StatelessWidget {
   final bool autoClassify;
   final String roundWind;
   final bool showTrainingDataActions;
+  final MahjongRuleSettings ruleSettings;
+  final MatchState matchState;
+  final bool matchActive;
   final ValueChanged<bool> onAutoClassifyChanged;
   final ValueChanged<String> onRoundWindChanged;
   final ValueChanged<bool> onShowTrainingDataActionsChanged;
+  final ValueChanged<MahjongRuleSettings> onRuleSettingsChanged;
+  final Future<void> Function() onAuthenticationChanged;
+  final VoidCallback onMatchStarted;
+  final VoidCallback onMatchReturned;
+  final VoidCallback onMatchEnded;
 
   @override
   Widget build(BuildContext context) {
@@ -140,34 +206,12 @@ class HomeScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
           children: [
-            const Text(
-              'TsumoAI',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              '実卓の点数・待ちを牌から確認',
-              style: TextStyle(color: Colors.white60),
-            ),
+            _buildHeader(context),
             const SizedBox(height: 16),
-            _buildAccountCard(context),
             if (startupError != null) ...[
               const SizedBox(height: 12),
               _buildStartupError(),
             ],
-            const SizedBox(height: 24),
-            const Text(
-              'すぐ確認',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -187,86 +231,66 @@ class HomeScreen extends StatelessWidget {
                     context,
                     icon: Icons.center_focus_strong,
                     title: '待ち確認',
-                    subtitle: '待ち牌・残り枚数',
+                    subtitle: '待ち牌・有効牌',
                     purpose: ScanPurpose.wait,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 72,
-              child: OutlinedButton.icon(
-                onPressed: () => _showAiPurposePicker(context),
-                icon: const Icon(Icons.auto_awesome_outlined),
-                label: const Text('AI相談　何を切る？・鳴くべき？'),
-              ),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              height: 58,
-              child: ElevatedButton.icon(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MatchHomeScreen(
-                      cameras: cameras,
-                      autoClassify: autoClassify,
-                      showTrainingDataActions: showTrainingDataActions,
-                    ),
-                  ),
-                ),
-                icon: const Icon(Icons.groups_outlined),
-                label: const Text('対局を始める'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 50,
-              child: OutlinedButton.icon(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const HistoryScreen()),
-                ),
-                icon: const Icon(Icons.history),
-                label: const Text('利用履歴'),
-              ),
-            ),
-            if (showTrainingDataActions) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 50,
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => TrainingDataScreen(cameras: cameras),
-                    ),
-                  ),
-                  icon: const Icon(Icons.school_outlined),
-                  label: const Text('学習用の牌を1枚撮影'),
-                ),
-              ),
-            ],
-            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
-                  child: TextButton.icon(
-                    onPressed: () => _showComingSoon(context, '使い方'),
-                    icon: const Icon(Icons.help_outline),
-                    label: const Text('使い方'),
+                  child: _purposeCard(
+                    context,
+                    icon: Icons.swap_horiz,
+                    title: '何切る',
+                    subtitle: '切る牌の候補',
+                    purpose: ScanPurpose.discard,
                   ),
                 ),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: TextButton.icon(
-                    onPressed: () => _openSettings(context),
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text('設定・規約'),
+                  child: _purposeCard(
+                    context,
+                    icon: Icons.call_split,
+                    title: '鳴き判断',
+                    subtitle: '鳴ける牌と判断',
+                    purpose: ScanPurpose.callAdvice,
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 24),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 94),
+              child: ElevatedButton(
+                onPressed: () => _openMatch(context),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        matchActive ? '対局を再開' : '実際の対局進行に合わせて点数計算を行う',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        matchActive
+                            ? '${matchState.current.roundLabel}から続ける'
+                            : '点数計算できる人がいない場合に、1半荘分の点数計算をサポート',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            _buildTrainingAction(context),
           ],
         ),
       ),
@@ -286,38 +310,69 @@ class HomeScreen extends StatelessWidget {
     ),
   );
 
-  Widget _buildAccountCard(BuildContext context) => StreamBuilder<User?>(
+  Widget _buildHeader(BuildContext context) => StreamBuilder<User?>(
     stream: AuthService.authStateChanges(),
     initialData: AuthService.currentUser,
     builder: (context, snapshot) {
       final user = snapshot.data;
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.account_circle_outlined),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                user?.email ?? 'ログインしていません',
-                overflow: TextOverflow.ellipsis,
+      return Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'TsumoAI',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
               ),
             ),
+          ),
+          if (user == null)
             TextButton(
-              onPressed: user == null
-                  ? () => _signIn(context)
-                  : () => _signOut(context),
-              child: Text(user == null ? 'ログイン' : 'ログアウト'),
+              onPressed: () => _signIn(context),
+              child: const Text('ログイン'),
+            )
+          else
+            IconButton(
+              onPressed: () => _showAccountMenu(context, user),
+              icon: const Icon(Icons.account_circle_outlined),
+              tooltip: 'アカウント',
             ),
-          ],
-        ),
+          IconButton(
+            onPressed: () => _openSettings(context),
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '設定',
+          ),
+        ],
       );
     },
   );
+
+  Widget _buildTrainingAction(BuildContext context) {
+    if (!showTrainingDataActions) return const SizedBox.shrink();
+    return FutureBuilder<bool>(
+      future: AuthService.isAdmin(),
+      builder: (context, snapshot) {
+        if (snapshot.data != true) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: SizedBox(
+            height: 50,
+            child: OutlinedButton.icon(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => TrainingDataScreen(cameras: cameras),
+                ),
+              ),
+              icon: const Icon(Icons.school_outlined),
+              label: const Text('学習用の牌を1枚撮影'),
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   Widget _purposeCard(
     BuildContext context, {
@@ -354,7 +409,10 @@ class HomeScreen extends StatelessWidget {
         ],
       );
 
-  void _openScan(BuildContext context, ScanPurpose purpose) {
+  Future<void> _openScan(BuildContext context, ScanPurpose purpose) async {
+    final showDeveloperActions =
+        showTrainingDataActions && await AuthService.isAdmin();
+    if (!context.mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -364,46 +422,32 @@ class HomeScreen extends StatelessWidget {
           initialRoundWind: roundWind,
           onRoundWindChanged: onRoundWindChanged,
           purpose: purpose,
-          showTrainingDataActions: showTrainingDataActions,
+          showTrainingDataActions: showDeveloperActions,
+          ruleSettings: ruleSettings,
         ),
       ),
     );
   }
 
-  Future<void> _showAiPurposePicker(BuildContext context) async {
-    final purpose = await showModalBottomSheet<ScanPurpose>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                '何を相談しますか？',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: const Icon(Icons.swap_horiz),
-                title: const Text('何を切る？'),
-                subtitle: const Text('14枚を初期値にして撮影'),
-                onTap: () => Navigator.pop(context, ScanPurpose.discard),
-              ),
-              ListTile(
-                leading: const Icon(Icons.call_split),
-                title: const Text('鳴くべき？'),
-                subtitle: const Text('13枚を初期値にして撮影'),
-                onTap: () => Navigator.pop(context, ScanPurpose.callAdvice),
-              ),
-            ],
-          ),
+  Future<void> _openMatch(BuildContext context) async {
+    final showDeveloperActions =
+        showTrainingDataActions && await AuthService.isAdmin();
+    if (!context.mounted) return;
+    onMatchStarted();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MatchHomeScreen(
+          cameras: cameras,
+          autoClassify: autoClassify,
+          showTrainingDataActions: showDeveloperActions,
+          ruleSettings: ruleSettings,
+          matchState: matchState,
+          onMatchEnded: onMatchEnded,
         ),
       ),
     );
-    if (purpose != null && context.mounted) _openScan(context, purpose);
+    onMatchReturned();
   }
 
   void _openSettings(BuildContext context) {
@@ -415,6 +459,8 @@ class HomeScreen extends StatelessWidget {
           onAutoClassifyChanged: onAutoClassifyChanged,
           showTrainingDataActions: showTrainingDataActions,
           onShowTrainingDataActionsChanged: onShowTrainingDataActionsChanged,
+          ruleSettings: ruleSettings,
+          onRuleSettingsChanged: onRuleSettingsChanged,
         ),
       ),
     );
@@ -423,6 +469,7 @@ class HomeScreen extends StatelessWidget {
   Future<void> _signIn(BuildContext context) async {
     try {
       await AuthService.ensureSignedIn();
+      await onAuthenticationChanged();
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(
@@ -434,6 +481,7 @@ class HomeScreen extends StatelessWidget {
   Future<void> _signOut(BuildContext context) async {
     try {
       await AuthService.signOut();
+      await onAuthenticationChanged();
       if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -446,9 +494,26 @@ class HomeScreen extends StatelessWidget {
     }
   }
 
-  void _showComingSoon(BuildContext context, String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$featureは次の実装バッチで追加します')));
+  Future<void> _showAccountMenu(BuildContext context, User user) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('アカウント'),
+        content: Text(user.email ?? 'Googleアカウントでログイン中'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('閉じる'),
+          ),
+          FilledButton.tonal(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _signOut(context);
+            },
+            child: const Text('ログアウト'),
+          ),
+        ],
+      ),
+    );
   }
 }

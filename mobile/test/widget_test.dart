@@ -20,8 +20,10 @@ void main() {
 
     expect(find.text('点数計算'), findsOneWidget);
     expect(find.text('待ち確認'), findsOneWidget);
-    expect(find.text('AI相談　何を切る？・鳴くべき？'), findsOneWidget);
-    expect(find.text('ログインしていません'), findsOneWidget);
+    expect(find.text('何切る'), findsOneWidget);
+    expect(find.text('鳴き判断'), findsOneWidget);
+    expect(find.text('ログイン'), findsOneWidget);
+    expect(find.byTooltip('設定'), findsOneWidget);
   });
 
   testWidgets('wait purpose opens scan with a 13-tile default', (
@@ -37,15 +39,15 @@ void main() {
     expect(scan.purpose.defaultTileCount, 13);
   });
 
-  testWidgets('AI consultation distinguishes discard and call advice', (
+  testWidgets('discard and call advice are direct home actions', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const TsumoAIApp());
 
-    await tester.tap(find.text('AI相談　何を切る？・鳴くべき？'));
+    await tester.tap(find.text('鳴き判断'));
     await tester.pumpAndSettle();
-    expect(find.text('何を切る？'), findsOneWidget);
-    expect(find.text('鳴くべき？'), findsOneWidget);
+    final scan = tester.widget<ScanScreen>(find.byType(ScanScreen));
+    expect(scan.purpose, ScanPurpose.callAdvice);
   });
 
   testWidgets('history is available without login', (
@@ -59,6 +61,22 @@ void main() {
     expect(find.text('端末内履歴'), findsOneWidget);
     expect(find.text('履歴はまだありません'), findsOneWidget);
     expect(find.text('ログイン'), findsOneWidget);
+  });
+
+  testWidgets('settings centralizes history and hides developer controls', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const TsumoAIApp());
+
+    await tester.tap(find.byTooltip('設定'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('設定'), findsOneWidget);
+    expect(find.text('利用履歴'), findsOneWidget);
+    expect(find.text('利用履歴を削除'), findsOneWidget);
+    expect(find.text('使い方・ヘルプ'), findsOneWidget);
+    expect(find.text('開発者設定'), findsNothing);
+    expect(find.text('学習データ作成ボタンを表示'), findsNothing);
   });
 
   test('purpose defaults match the expected hand shape', () {

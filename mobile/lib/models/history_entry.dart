@@ -47,15 +47,19 @@ class HistoryEntry {
     'details': details,
   };
 
-  HistoryEntry copyWith({String? accountUid}) => HistoryEntry(
+  HistoryEntry copyWith({
+    DateTime? updatedAt,
+    Map<String, dynamic>? details,
+    String? accountUid,
+  }) => HistoryEntry(
     id: id,
     createdAt: createdAt,
-    updatedAt: updatedAt,
+    updatedAt: updatedAt ?? this.updatedAt,
     purpose: purpose,
     title: title,
     summary: summary,
     roundLabel: roundLabel,
-    details: details,
+    details: details ?? this.details,
     accountUid: accountUid ?? this.accountUid,
   );
 }

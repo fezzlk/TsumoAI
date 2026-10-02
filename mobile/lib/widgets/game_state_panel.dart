@@ -36,11 +36,13 @@ class GameStatePanel extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _windSelector(
+                context,
                 '場風',
                 context_.roundWind,
                 (v) => onChanged(context_.copyWith(roundWind: v)),
               ),
               _windSelector(
+                context,
                 '自風',
                 context_.seatWind,
                 (v) => onChanged(
@@ -78,6 +80,7 @@ class GameStatePanel extends StatelessWidget {
   }
 
   Widget _windSelector(
+    BuildContext context,
     String label,
     String value,
     ValueChanged<String> onValueChanged,
@@ -92,28 +95,59 @@ class GameStatePanel extends StatelessWidget {
           style: const TextStyle(color: Colors.white54, fontSize: 11),
         ),
         const SizedBox(width: 4),
-        Container(
-          height: 30,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.1),
+        Material(
+          color: Colors.white.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6),
+          child: InkWell(
+            key: ValueKey('wind-selector-$label'),
             borderRadius: BorderRadius.circular(6),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: value,
-              isDense: true,
-              dropdownColor: Colors.grey[850],
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              items: winds
-                  .map(
-                    (w) =>
-                        DropdownMenuItem(value: w, child: Text(windLabels[w]!)),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) onValueChanged(v);
-              },
+            onTap: () => showDialog<void>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: Row(
+                  children: [
+                    Expanded(child: Text('$labelを選択')),
+                    const CloseButton(),
+                  ],
+                ),
+                content: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final wind in winds)
+                      SizedBox(
+                        width: 52,
+                        height: 52,
+                        child: wind == value
+                            ? FilledButton(
+                                key: ValueKey('$label-$wind'),
+                                onPressed: () {
+                                  Navigator.pop(dialogContext);
+                                  onValueChanged(wind);
+                                },
+                                child: Text(windLabels[wind]!),
+                              )
+                            : OutlinedButton(
+                                key: ValueKey('$label-$wind'),
+                                onPressed: () {
+                                  Navigator.pop(dialogContext);
+                                  onValueChanged(wind);
+                                },
+                                child: Text(windLabels[wind]!),
+                              ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              child: Center(
+                child: Text(
+                  windLabels[value] ?? value,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
             ),
           ),
         ),

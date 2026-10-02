@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     max_image_bytes: int = 10 * 1024 * 1024
     anonymous_recognition_requests_per_minute: int = 20
+    ai_chat_requests_per_minute: int = 5
+    free_ai_chat_requests_per_month: int = 3
+    subscription_ai_chat_requests_per_month: int = 30
+    service_provider_name: str = "fezzlk"
+    contact_form_url: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

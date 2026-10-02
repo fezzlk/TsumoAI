@@ -149,6 +149,18 @@ class RuleSet(BaseModel):
     renpu_fu: Literal[2, 4] = 4
 
 
+class MahjongRuleSettings(BaseModel):
+    version: Literal[1] = 1
+    rules: RuleSet = Field(default_factory=RuleSet)
+    tobi_end: bool = True
+    chips_enabled: bool = False
+    open_hand_chips_enabled: bool = True
+
+
+class MahjongRuleSettingsDocument(MahjongRuleSettings):
+    updated_at: datetime
+
+
 class ScoreRequest(BaseModel):
     recognition_id: UUID | None = None
     hand: HandInput
@@ -256,6 +268,7 @@ class CallAnalysisResult(BaseModel):
     consumed_tiles: list[TileCode]
     shanten_after_call: int
     recommendation: Literal["improves", "keeps", "worsens"]
+    possible_yaku: list[str] = Field(default_factory=list)
     discards: list[DiscardAnalysisResult] = Field(default_factory=list)
     replacement_tiles: list[WaitAnalysis] = Field(default_factory=list)
 
@@ -281,6 +294,85 @@ class HistoryItem(HistoryItemUpsert):
 
 class HistoryListResponse(BaseModel):
     items: list[HistoryItem] = Field(default_factory=list)
+
+
+class QuestionTemplateUpsert(BaseModel):
+    name: str = Field(min_length=1, max_length=30)
+    body: str = Field(min_length=1, max_length=300)
+    created_at: datetime | None = None
+
+
+class QuestionTemplateItem(QuestionTemplateUpsert):
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuestionTemplateListResponse(BaseModel):
+    items: list[QuestionTemplateItem] = Field(default_factory=list)
+
+
+class AIChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=1200)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AIChatContext(BaseModel):
+    purpose: Literal["discard", "call_advice"]
+    tiles: list[TileCode] = Field(min_length=1, max_length=18)
+    round_context: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Any] = Field(default_factory=dict)
+    situation_tags: list[str] = Field(default_factory=list, max_length=10)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AIChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=600)
+    conversation: list[AIChatMessage] = Field(default_factory=list, max_length=12)
+    context: AIChatContext
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AIUsageStatus(BaseModel):
+    period: str
+    plan: Literal["free", "subscription"]
+    included_limit: int = Field(ge=0)
+    included_used: int = Field(ge=0)
+    bonus_remaining: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+    resets_at: datetime
+
+
+class AIChatResponse(BaseModel):
+    answer: str
+    usage: AIUsageStatus
+
+
+class OfficialAIChatTemplate(BaseModel):
+    id: str = Field(min_length=1, max_length=60, pattern=r"^[a-zA-Z0-9_-]+$")
+    kind: Literal["situation", "question"]
+    purpose: Literal["all", "discard", "call_advice"] = "all"
+    label: str = Field(min_length=1, max_length=40)
+    body: str = Field(min_length=1, max_length=200)
+    enabled: bool = True
+    sort_order: int = Field(default=0, ge=0, le=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OfficialAIChatTemplateUpdate(BaseModel):
+    items: list[OfficialAIChatTemplate] = Field(min_length=1, max_length=50)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OfficialAIChatTemplateConfig(OfficialAIChatTemplateUpdate):
+    version: int = Field(ge=1)
+    updated_at: datetime | None = None
 
 
 class RecognizeAndScorePayload(BaseModel):
@@ -353,3 +445,11 @@ class TrainingDataUploadResponse(BaseModel):
     status: Literal["ok"]
     id: str
     image_path: str
+
+
+class MyDataDeletionResponse(BaseModel):
+    status: Literal["ok"]
+    deleted_training_data: int
+    deleted_score_feedback: int
+    deleted_recognition_feedback: int
+    deleted_dataset_uploads: int

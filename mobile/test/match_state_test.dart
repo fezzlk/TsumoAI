@@ -52,4 +52,17 @@ void main() {
     match.recordDraw(dealerContinues: false);
     expect(match.current.roundLabel, '東2局 0本場');
   });
+
+  test('dora is shared in the current hand, cleared next hand, and restored', () {
+    final match = MatchState();
+    match.setDoraIndicators(['4m']);
+
+    expect(match.current.contextFor(TableSeat.right).doraIndicators, ['4m']);
+
+    match.recordWin(TableSeat.starting);
+    expect(match.current.doraIndicators, isEmpty);
+
+    match.undo();
+    expect(match.current.doraIndicators, ['4m']);
+  });
 }

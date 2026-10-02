@@ -11,10 +11,24 @@ import '../models/history_entry.dart';
 import 'auth_service.dart';
 
 class HistoryService {
-  HistoryService({Dio? dio}) : _dio = dio ?? Dio();
+  HistoryService({
+    Dio? dio,
+    Future<Directory> Function()? directoryProvider,
+    String? Function()? currentUidProvider,
+    Future<String> Function()? tokenProvider,
+  }) : _dio = dio ?? Dio(),
+       _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
+       _currentUidProvider =
+           currentUidProvider ?? (() => AuthService.currentUser?.uid),
+       _tokenProvider = tokenProvider ?? (() => AuthService.idToken());
 
   final Dio _dio;
+  final Future<Directory> Function() _directoryProvider;
+  final String? Function() _currentUidProvider;
+  final Future<String> Function() _tokenProvider;
   static const _fileName = 'usage_history.json';
+  static const _pendingDeletionFileName =
+      'usage_history_pending_deletions.json';
 
   static String createId() {
     final random = Random.secure();
@@ -29,11 +43,16 @@ class HistoryService {
   }
 
   Future<File> _file() async {
-    final directory = await getApplicationSupportDirectory();
+    final directory = await _directoryProvider();
     return File('${directory.path}/$_fileName');
   }
 
-  Future<List<HistoryEntry>> loadLocal() async {
+  Future<File> _pendingDeletionFile() async {
+    final directory = await _directoryProvider();
+    return File('${directory.path}/$_pendingDeletionFileName');
+  }
+
+  Future<List<HistoryEntry>> _loadAll() async {
     try {
       final file = await _file();
       if (!await file.exists()) return [];
@@ -43,12 +62,17 @@ class HistoryService {
           .whereType<Map>()
           .map((item) => HistoryEntry.fromJson(Map<String, dynamic>.from(item)))
           .toList();
-      entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return entries;
     } catch (_) {
       return [];
     }
   }
+
+  Future<List<HistoryEntry>> loadLocal() async => _sorted(
+    (await _loadAll()).where(
+      (entry) => _isVisible(entry, _currentUidProvider()),
+    ),
+  );
 
   Future<void> _writeLocal(Iterable<HistoryEntry> entries) async {
     final file = await _file();
@@ -60,11 +84,11 @@ class HistoryService {
   }
 
   Future<void> save(HistoryEntry entry) async {
-    final storedEntry =
-        entry.accountUid == null && AuthService.currentUser != null
-        ? entry.copyWith(accountUid: AuthService.currentUser!.uid)
+    final uid = _currentUidProvider();
+    final storedEntry = entry.accountUid == null && uid != null
+        ? entry.copyWith(accountUid: uid)
         : entry;
-    final entries = await loadLocal();
+    final entries = await _loadAll();
     final index = entries.indexWhere((item) => item.id == storedEntry.id);
     if (index == -1) {
       entries.add(storedEntry);
@@ -76,13 +100,41 @@ class HistoryService {
     unawaited(_uploadIfSignedIn(storedEntry));
   }
 
+  Future<HistoryEntry?> updateDetails(
+    String id,
+    Map<String, dynamic> updates,
+  ) async {
+    final entries = await _loadAll();
+    final index = entries.indexWhere((item) => item.id == id);
+    if (index == -1) return null;
+    final updated = entries[index].copyWith(
+      updatedAt: DateTime.now().toUtc(),
+      details: {...entries[index].details, ...updates},
+    );
+    entries[index] = updated;
+    await _writeLocal(entries);
+    unawaited(_uploadIfSignedIn(updated));
+    return updated;
+  }
+
   Future<List<HistoryEntry>> synchronize() async {
-    final user = AuthService.currentUser;
-    final local = await loadLocal();
-    if (user == null) return local;
+    final uid = _currentUidProvider();
+    final allLocal = await _loadAll();
+    final local = _sorted(allLocal.where((entry) => _isVisible(entry, uid)));
+    if (uid == null) return local;
 
     try {
-      final token = await AuthService.idToken();
+      final token = await _tokenProvider();
+      if (await _hasPendingDeletion(uid)) {
+        try {
+          await _deleteRemote(token);
+          await _clearPendingDeletion(uid);
+        } catch (_) {
+          // Do not fetch deleted remote data back onto the device. Retry the
+          // account deletion on the next synchronization.
+          return local;
+        }
+      }
       final response = await _dio.get(
         '${AppConfig.apiBaseUrl}/api/v1/history',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -91,14 +143,14 @@ class HistoryService {
           .map(
             (item) => HistoryEntry.fromJson(
               Map<String, dynamic>.from(item as Map),
-            ).copyWith(accountUid: user.uid),
+            ).copyWith(accountUid: uid),
           )
           .toList();
       final merged = <String, HistoryEntry>{};
-      final claimedLocal = [
+      final claimedLocal = <HistoryEntry>[
         for (final entry in local)
           if (entry.accountUid == null)
-            entry.copyWith(accountUid: user.uid)
+            entry.copyWith(accountUid: uid)
           else
             entry,
       ];
@@ -110,9 +162,12 @@ class HistoryService {
       }
       final entries = merged.values.toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      await _writeLocal(entries.take(500));
+      final otherAccounts = allLocal.where(
+        (entry) => entry.accountUid != null && entry.accountUid != uid,
+      );
+      await _writeLocal([...otherAccounts, ...entries.take(500)]);
       for (final entry in claimedLocal.where(
-        (item) => item.accountUid == user.uid,
+        (item) => item.accountUid == uid,
       )) {
         final remote = remoteItems
             .where((item) => item.id == entry.id)
@@ -132,20 +187,25 @@ class HistoryService {
   }
 
   Future<void> deleteAll() async {
-    if (AuthService.currentUser != null) {
-      final token = await AuthService.idToken();
-      await _dio.delete(
-        '${AppConfig.apiBaseUrl}/api/v1/history',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
-      );
+    final uid = _currentUidProvider();
+    final all = await _loadAll();
+    await _writeLocal(all.where((entry) => !_isVisible(entry, uid)));
+    if (uid == null) return;
+    await _markPendingDeletion(uid);
+    try {
+      await _deleteRemote(await _tokenProvider());
+      await _clearPendingDeletion(uid);
+    } catch (_) {
+      // Local deletion succeeds immediately. The account deletion remains
+      // queued and blocks remote history from being re-imported.
     }
-    await _writeLocal(const []);
   }
 
   Future<void> _uploadIfSignedIn(HistoryEntry entry) async {
-    if (AuthService.currentUser == null) return;
+    final uid = _currentUidProvider();
+    if (uid == null || entry.accountUid != uid) return;
     try {
-      await _upload(await AuthService.idToken(), entry);
+      await _upload(await _tokenProvider(), entry);
     } catch (_) {
       // The local record is authoritative while offline.
     }
@@ -156,4 +216,50 @@ class HistoryService {
     data: entry.toJson(includeId: false)..remove('updated_at'),
     options: Options(headers: {'Authorization': 'Bearer $token'}),
   );
+
+  Future<void> _deleteRemote(String token) => _dio.delete(
+    '${AppConfig.apiBaseUrl}/api/v1/history',
+    options: Options(headers: {'Authorization': 'Bearer $token'}),
+  );
+
+  Future<Set<String>> _pendingDeletions() async {
+    try {
+      final file = await _pendingDeletionFile();
+      if (!await file.exists()) return {};
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! List) return {};
+      return decoded.whereType<String>().toSet();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _writePendingDeletions(Set<String> uids) async {
+    final file = await _pendingDeletionFile();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonEncode(uids.toList()..sort()), flush: true);
+  }
+
+  Future<bool> _hasPendingDeletion(String uid) async =>
+      (await _pendingDeletions()).contains(uid);
+
+  Future<void> _markPendingDeletion(String uid) async {
+    final pending = (await _pendingDeletions())..add(uid);
+    await _writePendingDeletions(pending);
+  }
+
+  Future<void> _clearPendingDeletion(String uid) async {
+    final pending = (await _pendingDeletions())..remove(uid);
+    await _writePendingDeletions(pending);
+  }
+
+  List<HistoryEntry> _sorted(Iterable<HistoryEntry> entries) {
+    final result = entries.toList();
+    result.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return result;
+  }
+
+  bool _isVisible(HistoryEntry entry, String? uid) => uid == null
+      ? entry.accountUid == null
+      : entry.accountUid == null || entry.accountUid == uid;
 }

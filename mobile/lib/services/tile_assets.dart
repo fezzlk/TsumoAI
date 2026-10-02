@@ -25,6 +25,38 @@ String? tileAssetPath(String tileCode) {
   return null;
 }
 
+String doraTileFromIndicator(String indicator) {
+  final tile = _normalizeRed(indicator);
+  if (RegExp(r'^[1-9][mps]$').hasMatch(tile)) {
+    final number = int.parse(tile[0]);
+    return '${number == 9 ? 1 : number + 1}${tile[1]}';
+  }
+  const winds = ['E', 'S', 'W', 'N'];
+  const dragons = ['P', 'F', 'C'];
+  final order = winds.contains(tile) ? winds : dragons;
+  final index = order.indexOf(tile);
+  return index == -1 ? tile : order[(index + 1) % order.length];
+}
+
+String doraIndicatorFromTile(String doraTile) {
+  final tile = _normalizeRed(doraTile);
+  if (RegExp(r'^[1-9][mps]$').hasMatch(tile)) {
+    final number = int.parse(tile[0]);
+    return '${number == 1 ? 9 : number - 1}${tile[1]}';
+  }
+  const winds = ['E', 'S', 'W', 'N'];
+  const dragons = ['P', 'F', 'C'];
+  final order = winds.contains(tile) ? winds : dragons;
+  final index = order.indexOf(tile);
+  return index == -1 ? tile : order[(index - 1 + order.length) % order.length];
+}
+
+String _normalizeRed(String tile) {
+  final value = tile.trim();
+  final match = RegExp(r'^5([mps])r$').firstMatch(value);
+  return match == null ? value : '5${match.group(1)}';
+}
+
 const _tileDisplayNames = <String, String>{
   '1m': '一萬', '2m': '二萬', '3m': '三萬', '4m': '四萬', '5m': '五萬',
   '6m': '六萬', '7m': '七萬', '8m': '八萬', '9m': '九萬', '5mr': '赤五萬',

@@ -8,11 +8,13 @@ import '../services/tile_assets.dart';
 class TileImagePicker extends StatelessWidget {
   final String? currentTile;
   final ValueChanged<String> onTileSelected;
+  final bool showSuitLabels;
 
   const TileImagePicker({
     super.key,
     this.currentTile,
     required this.onTileSelected,
+    this.showSuitLabels = false,
   });
 
   static const _manRow = ['1m', '2m', '3m', '4m', '5m', '5mr', '6m', '7m', '8m', '9m'];
@@ -55,7 +57,7 @@ class TileImagePicker extends StatelessWidget {
           const rowSpacing = 4.0;
           final gridHeight = constraints.maxHeight - headerHeight - rowSpacing * 3;
           final maxHeightPerCell = (gridHeight / 4 - 4);
-          const labelColumnWidth = 20.0;
+          final labelColumnWidth = showSuitLabels ? 20.0 : 0.0;
           const perCellHorizontalMargin = 2.0; // 1px each side, from _buildRow
           final maxWidthPerCell =
               (constraints.maxWidth - labelColumnWidth - _columns * perCellHorizontalMargin) /
@@ -95,10 +97,11 @@ class TileImagePicker extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        SizedBox(
-          width: 20,
-          child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-        ),
+        if (showSuitLabels)
+          SizedBox(
+            width: 20,
+            child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          ),
         ...tiles.map((tile) => GestureDetector(
           key: ValueKey('tile_picker_cell_$tile'),
           onTap: () => onTileSelected(tile),
