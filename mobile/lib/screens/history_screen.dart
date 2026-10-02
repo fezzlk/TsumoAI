@@ -235,13 +235,19 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
       analysis: analysis,
       initialMessages: _conversation,
       onMessagesChanged: (messages) {
+        // Each write is isolated: one failed save must not leave the queue
+        // in an error state that silently skips every later conversation.
         _historyUpdateQueue = _historyUpdateQueue.then((_) async {
-          final updated = await _service.updateDetails(_entry.id, {
-            'ai_conversation': messages
-                .map((message) => message.toJson())
-                .toList(growable: false),
-          });
-          if (mounted && updated != null) setState(() => _entry = updated);
+          try {
+            final updated = await _service.updateDetails(_entry.id, {
+              'ai_conversation': messages
+                  .map((message) => message.toJson())
+                  .toList(growable: false),
+            });
+            if (mounted && updated != null) setState(() => _entry = updated);
+          } catch (error) {
+            debugPrint('HistoryDetail: failed to save AI conversation: $error');
+          }
         });
       },
     );
