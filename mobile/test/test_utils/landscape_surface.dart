@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tsumoai_mobile/theme/app_theme.dart';
 
 /// The app is portrait-first. `flutter test`'s default
 /// surface is 800x600 logical points — comfortably larger in both
@@ -43,7 +44,7 @@ Future<void> pumpAtDeviceSize(
   );
   addTearDown(tester.view.reset);
 
-  await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: child));
+  await tester.pumpWidget(MaterialApp(theme: AppTheme.light(), home: child));
 }
 
 /// Shorthand for [pumpAtDeviceSize] at [kLandscapeTestSize].

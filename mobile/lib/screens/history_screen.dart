@@ -298,10 +298,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
             ),
             if (tiles.isNotEmpty) ...[
               const SizedBox(height: 20),
-              const Text(
-                '認識した牌',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
+              Text('認識した牌', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -340,10 +337,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
               ),
               if (_conversation.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                const Text(
-                  'AIとの会話',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+                Text('AIとの会話', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 6),
                 for (final message in _conversation)
                   Padding(
@@ -411,7 +405,7 @@ class _ScoreHistorySection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(label, style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 6),
             if (result.isEmpty)
               const Text('和了不成立')

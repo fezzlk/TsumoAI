@@ -123,12 +123,12 @@ class _MahjongRulesScreenState extends State<MahjongRulesScreen> {
                         _settings.copyWith(openHandChipsEnabled: value),
                       ),
                     ),
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(24, 0, 24, 18),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
                       child: Text(
                         '赤牌・裏ドラは1枚につき1、一発は1、赤牌3枚のオールスターは追加2。'
                         '1チップ点は素点1,000点相当です。',
-                        style: TextStyle(fontSize: 12),
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
                   ],
