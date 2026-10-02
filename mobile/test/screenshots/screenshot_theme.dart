@@ -5,6 +5,4 @@ import 'package:tsumoai_mobile/theme/app_theme.dart';
 ThemeData screenshotTheme() => AppTheme.light();
 
 /// Background behind result panels, as on the scan screen's results phase.
-// The scan screen still draws its results on black until its styles move to
-// the theme tokens.
-Color screenshotResultBackground() => Colors.black;
+Color screenshotResultBackground() => screenshotTheme().scaffoldBackgroundColor;

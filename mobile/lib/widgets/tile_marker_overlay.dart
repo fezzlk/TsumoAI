@@ -1,6 +1,9 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+
 /// Draws detected tile bounding boxes over a static (already-captured)
 /// hand photo. Boxes are given in the original image's pixel coordinate
 /// space (i.e. [imageWidth]x[imageHeight]); this widget maps them onto
@@ -54,6 +57,7 @@ class TileMarkerOverlay extends StatelessWidget {
         final scale = dispW / imageWidth;
 
         final markers = <Widget>[];
+        final colors = context.appColors;
         for (int i = 0; i < boxes.length; i++) {
           final box = boxes[i];
           if (box == null) continue;
@@ -63,23 +67,20 @@ class TileMarkerOverlay extends StatelessWidget {
           final width = box.width * scale;
           final height = box.height * scale;
 
+          // Drawn over a photo, so camera colors regardless of the theme.
           Widget marker = Container(
             decoration: BoxDecoration(
-              border: Border.all(
-                color: Colors.greenAccent.withValues(alpha: 0.85),
-                width: 1.5,
-              ),
-              borderRadius: BorderRadius.circular(3),
+              border: Border.all(color: colors.detectionBox, width: 1.5),
+              borderRadius: BorderRadius.circular(AppRadius.small),
             ),
             alignment: Alignment.topLeft,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-              color: Colors.black.withValues(alpha: 0.55),
+              color: colors.cameraScrim,
               child: Text(
                 '${i + 1}',
-                style: const TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 10,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colors.detectionBox,
                   fontWeight: FontWeight.bold,
                 ),
               ),

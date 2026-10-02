@@ -42,6 +42,10 @@ import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
 import '../services/purpose_switch.dart';
 import '../widgets/purpose_switch_dialogs.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+import '../widgets/status_banner.dart';
+import '../widgets/toggle_chip.dart';
 
 class ScoreWinnerOption {
   const ScoreWinnerOption({required this.label, required this.context});
@@ -1626,11 +1630,7 @@ class _ScanScreenState extends State<ScanScreen> {
   void _showContextDetailsSheet() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.grey[900],
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (sheetContext, setSheetState) {
@@ -1820,15 +1820,17 @@ class _ScanScreenState extends State<ScanScreen> {
                               padding: const EdgeInsets.all(2),
                               decoration: BoxDecoration(
                                 color: selection.contains(index)
-                                    ? Colors.green.withValues(alpha: 0.25)
-                                    : Colors.white.withValues(alpha: 0.08),
+                                    ? _scheme.primaryContainer
+                                    : _scheme.surfaceContainerHighest,
                                 border: Border.all(
                                   color: selection.contains(index)
-                                      ? Colors.greenAccent
-                                      : Colors.white24,
+                                      ? _scheme.primary
+                                      : _scheme.outlineVariant,
                                   width: selection.contains(index) ? 2 : 1,
                                 ),
-                                borderRadius: BorderRadius.circular(5),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.small,
+                                ),
                               ),
                               child: TileGlyph(tileCode: _tiles[index]!),
                             ),
@@ -1950,31 +1952,8 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _quickChip(String label, bool selected, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-        decoration: BoxDecoration(
-          color: selected
-              ? Colors.green.withValues(alpha: 0.5)
-              : Colors.white.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: selected
-              ? Border.all(color: Colors.greenAccent, width: 1)
-              : null,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.greenAccent : Colors.white54,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _quickChip(String label, bool selected, VoidCallback onTap) =>
+      ToggleChip(label: label, selected: selected, onTap: onTap);
 
   Widget _buildResultTile(int index, double cellWidth) {
     final thumb = _croppedImageThumbnails[index];
@@ -1992,8 +1971,10 @@ class _ScanScreenState extends State<ScanScreen> {
         width: cellWidth,
         height: cropHeight,
         child: thumb == null
-            ? const DecoratedBox(
-                decoration: BoxDecoration(color: Colors.white10),
+            ? DecoratedBox(
+                decoration: BoxDecoration(
+                  color: _scheme.surfaceContainerHighest,
+                ),
               )
             : Image.memory(thumb, fit: BoxFit.cover),
       ),
@@ -2006,24 +1987,23 @@ class _ScanScreenState extends State<ScanScreen> {
         width: cellWidth,
         height: cellWidth,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(4),
+          color: _scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(AppRadius.small),
         ),
         alignment: Alignment.center,
         child: _isClassifying[index]
             ? const SizedBox(
                 width: 16,
                 height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.5,
-                  color: Colors.white54,
-                ),
+                child: CircularProgressIndicator(strokeWidth: 1.5),
               )
             : tileAsset != null
             ? Image.asset(tileAsset, fit: BoxFit.contain)
-            : const Text(
+            : Text(
                 '?',
-                style: TextStyle(color: Colors.white38, fontSize: 16),
+                style: _text.titleMedium?.copyWith(
+                  color: _scheme.onSurfaceVariant,
+                ),
               ),
       ),
     );
@@ -2036,8 +2016,8 @@ class _ScanScreenState extends State<ScanScreen> {
             child: IgnorePointer(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  border: Border.all(color: Colors.amber, width: 2),
-                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: _colors.winningTile, width: 2),
+                  borderRadius: BorderRadius.circular(AppRadius.small),
                 ),
               ),
             ),
@@ -2047,8 +2027,8 @@ class _ScanScreenState extends State<ScanScreen> {
             child: IgnorePointer(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  border: Border.all(color: Colors.lightBlueAccent, width: 2),
-                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: _colors.meldTile, width: 2),
+                  borderRadius: BorderRadius.circular(AppRadius.small),
                 ),
               ),
             ),
@@ -2101,16 +2081,16 @@ class _ScanScreenState extends State<ScanScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (hasWinningTileControls) ...[
-          const Text(
+          Text(
             'あがり牌',
-            style: TextStyle(color: Colors.white70, fontSize: 12),
+            style: _text.bodySmall,
           ),
           IconButton(
             onPressed: position == null || position > 0
                 ? () => _moveWinningTile(-1)
                 : null,
             icon: const Icon(Icons.chevron_left),
-            color: Colors.white70,
+            color: _scheme.onSurfaceVariant,
           ),
           SizedBox(
             width: 30,
@@ -2119,7 +2099,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 ? null
                 : TileGlyph(
                     tileCode: winningTileCode,
-                    fallbackTextStyle: const TextStyle(color: Colors.amber),
+                    fallbackTextStyle: TextStyle(color: _colors.winningTile),
                   ),
           ),
           IconButton(
@@ -2127,7 +2107,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 ? () => _moveWinningTile(1)
                 : null,
             icon: const Icon(Icons.chevron_right),
-            color: Colors.white70,
+            color: _scheme.onSurfaceVariant,
           ),
         ],
       ],
@@ -2162,8 +2142,6 @@ class _ScanScreenState extends State<ScanScreen> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => Dialog(
-        backgroundColor: Colors.grey[900],
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 360),
           child: Padding(
@@ -2176,27 +2154,13 @@ class _ScanScreenState extends State<ScanScreen> {
                   alignment: Alignment.centerRight,
                   child: IconButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
-                    icon: const Icon(Icons.close, color: Colors.white70),
+                    icon: const Icon(Icons.close),
                   ),
                 ),
                 if (_isNotWinning) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text(
-                      '上がりの形になっていません',
-                      style: TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                  const StatusBanner(
+                    kind: StatusKind.error,
+                    message: '上がりの形になっていません',
                   ),
                   const SizedBox(height: 8),
                 ],
@@ -2261,43 +2225,33 @@ class _ScanScreenState extends State<ScanScreen> {
     if (_isScoring) {
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(10),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.m,
+          vertical: AppSpacing.l,
         ),
-        child: const Row(
+        decoration: BoxDecoration(
+          color: _scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(AppRadius.large),
+        ),
+        child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            SizedBox(
+            const SizedBox(
               width: 18,
               height: 18,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            SizedBox(width: 10),
-            Text('点数を更新中...', style: TextStyle(color: Colors.white70)),
+            const SizedBox(width: AppSpacing.s),
+            Text('点数を更新中...', style: _text.bodyMedium),
           ],
         ),
       );
     }
 
     if (_isNotWinning) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.red.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.redAccent),
-        ),
-        child: const Text(
-          '上がりの形になっていません',
-          style: TextStyle(
-            color: Colors.redAccent,
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+      return const StatusBanner(
+        kind: StatusKind.error,
+        message: '上がりの形になっていません',
       );
     }
 
@@ -2309,21 +2263,9 @@ class _ScanScreenState extends State<ScanScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (_context.doraIndicators.isEmpty) ...[
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.amber.withValues(alpha: 0.16),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.amber),
-            ),
-            child: const Text(
-              '表ドラ表示牌が未入力のため、翻数と点数は未確定です',
-              style: TextStyle(
-                color: Colors.amberAccent,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+          const StatusBanner(
+            kind: StatusKind.warning,
+            message: '表ドラ表示牌が未入力のため、翻数と点数は未確定です',
           ),
           const SizedBox(height: 8),
         ],
@@ -2352,14 +2294,7 @@ class _ScanScreenState extends State<ScanScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          '和了者',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        Text('和了者', style: _text.titleSmall),
         const SizedBox(height: 6),
         Row(
           children: [
@@ -2397,26 +2332,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _confirmedWinningTileId == null)) {
       return const SizedBox.shrink();
     }
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.amber.withValues(alpha: 0.12),
-        border: Border.all(color: Colors.amber),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '画像解釈の確認',
-            style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
-          ),
-          Text(
-            'あがり牌: 上の牌画像の枠の下にある◀▶ボタンで選べます',
-            style: TextStyle(color: Colors.white70),
-          ),
-        ],
-      ),
+    return const StatusBanner(
+      kind: StatusKind.info,
+      message: '画像解釈の確認: あがり牌は上の牌画像の枠の下にある◀▶ボタンで選べます',
     );
   }
 
@@ -2493,10 +2411,20 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  /// Camera and detection overlay a photo, so they stay dark; condition
+  /// entry and results follow the light app theme.
+  bool get _showsCameraSurface =>
+      _phase == _ScanPhase.camera ||
+      (_phase == _ScanPhase.detecting && !_usesWinConditionWizard);
+
+  ColorScheme get _scheme => Theme.of(context).colorScheme;
+  TextTheme get _text => Theme.of(context).textTheme;
+  AppColors get _colors => context.appColors;
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
+    final scaffold = Scaffold(
+      backgroundColor: _showsCameraSurface ? _colors.cameraBackground : null,
       // No AppBar: its only job would have been a back button, which
       // duplicated "撮り直す" (retake stays within this screen, keeping the
       // camera controller alive; a real back button would instead pop the
@@ -2508,6 +2436,9 @@ class _ScanScreenState extends State<ScanScreen> {
         _ScanPhase.results => _buildResultsPhase(),
       },
     );
+    return _showsCameraSurface
+        ? Theme(data: AppTheme.camera(), child: scaffold)
+        : scaffold;
   }
 
   // ════════════════════════════════════════
@@ -2529,13 +2460,18 @@ class _ScanScreenState extends State<ScanScreen> {
                 gaplessPlayback: true,
               ),
             ),
-          const Center(
+          Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(color: Colors.greenAccent),
-                SizedBox(height: 12),
-                Text('牌を検出中...', style: TextStyle(color: Colors.white70)),
+                CircularProgressIndicator(color: _colors.detectionBox),
+                const SizedBox(height: AppSpacing.m),
+                Text(
+                  '牌を検出中...',
+                  style: _text.bodyMedium?.copyWith(
+                    color: _colors.cameraOnSurfaceVariant,
+                  ),
+                ),
               ],
             ),
           ),
@@ -2566,12 +2502,21 @@ class _ScanScreenState extends State<ScanScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                   const SizedBox(width: 7),
-                  const Text('認識中', style: TextStyle(color: Colors.white70)),
-                ] else
-                  const Text(
-                    '認識完了',
-                    style: TextStyle(color: Colors.greenAccent),
+                  Text('認識中', style: _text.bodyMedium),
+                ] else ...[
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 18,
+                    color: _colors.success.color,
                   ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    '認識完了',
+                    style: _text.bodyMedium?.copyWith(
+                      color: _colors.success.color,
+                    ),
+                  ),
+                ],
                 const Spacer(),
                 IconButton(
                   onPressed: () => Navigator.maybePop(context),
@@ -2581,7 +2526,7 @@ class _ScanScreenState extends State<ScanScreen> {
               ],
             ),
           ),
-          const Divider(height: 1, color: Colors.white12),
+          const Divider(height: 1),
           Expanded(
             child: switch (_winConditionStep) {
               _WinConditionStep.riichi => _buildRiichiStep(),
@@ -2600,17 +2545,19 @@ class _ScanScreenState extends State<ScanScreen> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
+        Text(
           '立直しましたか？',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          style: _text.headlineSmall,
         ),
         const Spacer(),
         SizedBox(
           height: 92,
           child: FilledButton(
             onPressed: () => _selectRiichiForWinFlow(true),
-            child: const Text('はい', style: TextStyle(fontSize: 22)),
+            child: Text('はい', style: _text.titleLarge?.copyWith(
+              color: _scheme.onPrimary,
+            )),
           ),
         ),
         const SizedBox(height: 16),
@@ -2618,7 +2565,9 @@ class _ScanScreenState extends State<ScanScreen> {
           height: 92,
           child: OutlinedButton(
             onPressed: () => _selectRiichiForWinFlow(false),
-            child: const Text('いいえ', style: TextStyle(fontSize: 22)),
+            child: Text('いいえ', style: _text.titleLarge?.copyWith(
+              color: _scheme.primary,
+            )),
           ),
         ),
         const Spacer(),
@@ -2650,10 +2599,7 @@ class _ScanScreenState extends State<ScanScreen> {
               const Spacer(),
               Text(
                 ura ? '裏ドラ表示牌' : '表ドラ表示牌',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: _text.titleMedium,
               ),
               const Spacer(),
               TextButton(
@@ -2675,9 +2621,9 @@ class _ScanScreenState extends State<ScanScreen> {
                   height: 46,
                   margin: const EdgeInsets.symmetric(horizontal: 3),
                   decoration: BoxDecoration(
-                    color: Colors.white10,
-                    border: Border.all(color: Colors.white30),
-                    borderRadius: BorderRadius.circular(4),
+                    color: _scheme.surfaceContainerHighest,
+                    border: Border.all(color: _scheme.outline),
+                    borderRadius: BorderRadius.circular(AppRadius.small),
                   ),
                   child: index < selected.length
                       ? GestureDetector(
@@ -2713,10 +2659,9 @@ class _ScanScreenState extends State<ScanScreen> {
     child: Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        const Text(
-          '表ドラ',
-          style: TextStyle(color: Colors.white54, fontSize: 11),
-        ),
+        Text('表ドラ', style: _text.labelSmall?.copyWith(
+          color: _scheme.onSurfaceVariant,
+        )),
         const SizedBox(width: 6),
         for (final tile in _context.doraIndicators)
           SizedBox(width: 22, height: 30, child: TileGlyph(tileCode: tile)),
@@ -2732,13 +2677,13 @@ class _ScanScreenState extends State<ScanScreen> {
           opacity: 0.32,
           child: Image.memory(_capturedBytes!, fit: BoxFit.contain),
         ),
-      const Center(
+      Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(color: Colors.greenAccent),
-            SizedBox(height: 12),
-            Text('入力完了・認識結果を待っています', style: TextStyle(color: Colors.white70)),
+            const CircularProgressIndicator(),
+            const SizedBox(height: AppSpacing.m),
+            Text('入力完了・認識結果を待っています', style: _text.bodyMedium),
           ],
         ),
       ),
@@ -2752,8 +2697,11 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget _buildCameraPhase() {
     if (_cameraInitError != null) return _buildCameraError();
     if (_controller == null || !_controller!.value.isInitialized) {
-      return const Center(
-        child: Text('カメラ初期化中...', style: TextStyle(color: Colors.white)),
+      return Center(
+        child: Text(
+          'カメラ初期化中...',
+          style: _text.bodyMedium?.copyWith(color: _colors.cameraOnSurface),
+        ),
       );
     }
 
@@ -2787,8 +2735,10 @@ class _ScanScreenState extends State<ScanScreen> {
                           constraints: const BoxConstraints(minHeight: 44),
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.68),
-                            borderRadius: BorderRadius.circular(22),
+                            color: _colors.cameraScrim,
+                            borderRadius: BorderRadius.circular(
+                              AppRadius.xLarge,
+                            ),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -2798,9 +2748,8 @@ class _ScanScreenState extends State<ScanScreen> {
                                   _purpose.label,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
+                                  style: _text.titleSmall?.copyWith(
+                                    color: _colors.cameraOnSurface,
                                   ),
                                 ),
                               ),
@@ -2810,9 +2759,8 @@ class _ScanScreenState extends State<ScanScreen> {
                                   _cameraStatusLabel,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
+                                  style: _text.bodySmall?.copyWith(
+                                    color: _colors.cameraOnSurfaceVariant,
                                   ),
                                 ),
                               ),
@@ -2839,7 +2787,7 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           Expanded(
             child: Container(
-              color: Colors.black,
+              color: _colors.cameraBackground,
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
               child: Column(
                 children: [
@@ -2870,13 +2818,12 @@ class _ScanScreenState extends State<ScanScreen> {
               icon: const Icon(Icons.arrow_back),
               tooltip: '戻る',
             ),
-            const Expanded(
+            Expanded(
               child: Text(
                 'カメラを開始できません',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+                style: _text.titleMedium?.copyWith(
+                  color: _colors.cameraOnSurface,
                 ),
               ),
             ),
@@ -2894,16 +2841,18 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.no_photography_outlined,
-                    color: Colors.white70,
+                    color: _colors.cameraOnSurfaceVariant,
                     size: 48,
                   ),
                   const SizedBox(height: 16),
                   Text(
                     _cameraInitError!,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70),
+                    style: _text.bodyMedium?.copyWith(
+                      color: _colors.cameraOnSurfaceVariant,
+                    ),
                   ),
                   if (widget.cameras.isNotEmpty) ...[
                     const SizedBox(height: 20),
@@ -2970,20 +2919,24 @@ class _ScanScreenState extends State<ScanScreen> {
           height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 4),
+            border: Border.all(color: _colors.cameraOnSurface, width: 4),
             color: _isCapturing
-                ? Colors.grey
-                : Colors.white.withValues(alpha: 0.18),
+                ? _colors.cameraOnSurfaceVariant
+                : _colors.cameraOnSurface.withValues(alpha: 0.18),
           ),
           child: _isCapturing
-              ? const Padding(
-                  padding: EdgeInsets.all(20),
+              ? Padding(
+                  padding: const EdgeInsets.all(20),
                   child: CircularProgressIndicator(
-                    color: Colors.white,
+                    color: _colors.cameraOnSurface,
                     strokeWidth: 3,
                   ),
                 )
-              : const Icon(Icons.camera_alt, color: Colors.white, size: 32),
+              : Icon(
+                  Icons.camera_alt,
+                  color: _colors.cameraOnSurface,
+                  size: 32,
+                ),
         ),
       ),
     );
@@ -3009,23 +2962,22 @@ class _ScanScreenState extends State<ScanScreen> {
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: (isReady ? Colors.green : Colors.black54).withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(16),
+        color: isReady ? _colors.success.color : _colors.cameraScrim,
+        borderRadius: BorderRadius.circular(AppRadius.xLarge),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             isReady ? Icons.check_circle : Icons.search,
-            color: Colors.white,
+            color: _colors.cameraOnSurface,
             size: 16,
           ),
           const SizedBox(width: 6),
           Text(
             '$count / $expectedLabel 牌',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 13,
+            style: _text.labelLarge?.copyWith(
+              color: _colors.cameraOnSurface,
               fontWeight: isReady ? FontWeight.bold : FontWeight.normal,
             ),
           ),
@@ -3058,8 +3010,8 @@ class _ScanScreenState extends State<ScanScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.black54.withValues(alpha: 0.8),
-          borderRadius: BorderRadius.circular(16),
+          color: _colors.cameraScrim,
+          borderRadius: BorderRadius.circular(AppRadius.xLarge),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -3068,17 +3020,18 @@ class _ScanScreenState extends State<ScanScreen> {
               _autoCaptureEnabled
                   ? Icons.auto_awesome
                   : Icons.auto_awesome_outlined,
-              color: _autoCaptureEnabled ? Colors.amberAccent : Colors.white54,
+              color: _autoCaptureEnabled
+                  ? _colors.detectionBoxPending
+                  : _colors.cameraOnSurfaceVariant,
               size: 16,
             ),
             const SizedBox(width: 4),
             Text(
               _autoCaptureEnabled ? '自動' : '手動',
-              style: TextStyle(
+              style: _text.labelMedium?.copyWith(
                 color: _autoCaptureEnabled
-                    ? Colors.amberAccent
-                    : Colors.white54,
-                fontSize: 12,
+                    ? _colors.detectionBoxPending
+                    : _colors.cameraOnSurfaceVariant,
               ),
             ),
           ],
@@ -3166,15 +3119,11 @@ class _ScanScreenState extends State<ScanScreen> {
                         ),
                         padding: EdgeInsets.zero,
                       ),
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           '認識結果を確認',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: _text.titleMedium,
                         ),
                       ),
                       IconButton(
@@ -3211,18 +3160,18 @@ class _ScanScreenState extends State<ScanScreen> {
                             ? _undoTrainingData
                             : _sendTrainingData,
                         icon: _isSendingTraining || _isUndoingTraining
-                            ? const SizedBox(
+                            ? SizedBox(
                                 width: 14,
                                 height: 14,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.orangeAccent,
+                                  color: _scheme.tertiary,
                                 ),
                               )
                             : Icon(
                                 _trainingDataSent ? Icons.undo : Icons.school,
                                 size: 18,
-                                color: Colors.orangeAccent,
+                                color: _scheme.tertiary,
                               ),
                         label: Text(
                           _isSendingTraining
@@ -3232,7 +3181,7 @@ class _ScanScreenState extends State<ScanScreen> {
                               : _trainingDataSent
                               ? '取り消す'
                               : '学習データ送信',
-                          style: const TextStyle(color: Colors.orangeAccent),
+                          style: TextStyle(color: _scheme.tertiary),
                         ),
                       ),
                     ),
@@ -3349,22 +3298,19 @@ class _ScanScreenState extends State<ScanScreen> {
                         vertical: 16,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        borderRadius: BorderRadius.circular(10),
+                        color: _scheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(AppRadius.large),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          SizedBox(
+                          const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
-                          SizedBox(width: 10),
-                          Text(
-                            '結果を更新中...',
-                            style: TextStyle(color: Colors.white70),
-                          ),
+                          const SizedBox(width: AppSpacing.s),
+                          Text('結果を更新中...', style: _text.bodyMedium),
                         ],
                       ),
                     ),
@@ -3446,9 +3392,9 @@ class _ScanScreenState extends State<ScanScreen> {
           // duplicated in intent with a since-removed AppBar back button.
           Container(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            decoration: const BoxDecoration(
-              color: Colors.black,
-              border: Border(top: BorderSide(color: Colors.white12)),
+            decoration: BoxDecoration(
+              color: _scheme.surface,
+              border: Border(top: BorderSide(color: _scheme.outlineVariant)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3458,18 +3404,11 @@ class _ScanScreenState extends State<ScanScreen> {
                   height: 44,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
+                    color: _scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(AppRadius.medium),
                   ),
                   alignment: Alignment.centerLeft,
-                  child: Text(
-                    _purpose.label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: Text(_purpose.label, style: _text.titleSmall),
                 ),
                 if (_operation == HandOperation.score) ...[
                   const SizedBox(width: 8),
@@ -3491,13 +3430,11 @@ class _ScanScreenState extends State<ScanScreen> {
                       ? _showContextDetailsSheet
                       : null,
                   icon: const Icon(Icons.tune),
-                  color: Colors.white70,
-                  disabledColor: Colors.white24,
                   tooltip: '詳細条件',
                   style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    backgroundColor: _scheme.surfaceContainerHighest,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(AppRadius.medium),
                     ),
                   ),
                 ),
@@ -3510,7 +3447,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: !_allDetectedTilesReady
-                        ? OutlinedButton.icon(
+                        ? FilledButton.icon(
                             onPressed:
                                 _croppedImages.any((c) => c != null) &&
                                     !_isRunningFullClassification &&
@@ -3529,12 +3466,8 @@ class _ScanScreenState extends State<ScanScreen> {
                             label: Text(
                               _isRunningFullClassification ? '識別中...' : '識別実行',
                             ),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.greenAccent,
-                              side: const BorderSide(color: Colors.greenAccent),
-                            ),
                           )
-                        : ElevatedButton.icon(
+                        : FilledButton.icon(
                             onPressed: !_isScoring && !_isInterpreting
                                 ? _runInterpretationAndAnalyze
                                 : null,
@@ -3544,18 +3477,10 @@ class _ScanScreenState extends State<ScanScreen> {
                                     height: 16,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: Colors.white,
                                     ),
                                   )
                                 : const Icon(Icons.play_arrow, size: 20),
                             label: const Text('実行'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green.withValues(
-                                alpha: 0.6,
-                              ),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
                           ),
                   ),
                 ],

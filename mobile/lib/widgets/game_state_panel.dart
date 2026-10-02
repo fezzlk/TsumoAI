@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../theme/app_theme.dart';
 import '../models/score_request.dart';
 import 'tile_glyph.dart';
 import 'tile_image_picker.dart';
@@ -23,8 +25,9 @@ class GameStatePanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(8),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -90,17 +93,14 @@ class GameStatePanel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white54, fontSize: 11),
-        ),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(width: 4),
         Material(
-          color: Colors.white.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(6),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(AppRadius.medium),
           child: InkWell(
             key: ValueKey('wind-selector-$label'),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(AppRadius.medium),
             onTap: () => showDialog<void>(
               context: context,
               builder: (dialogContext) => AlertDialog(
@@ -145,7 +145,7 @@ class GameStatePanel extends StatelessWidget {
               child: Center(
                 child: Text(
                   windLabels[value] ?? value,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
             ),
@@ -164,10 +164,7 @@ class GameStatePanel extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white54, fontSize: 11),
-        ),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(width: 6),
         Expanded(
           child: Wrap(
@@ -185,9 +182,11 @@ class GameStatePanel extends StatelessWidget {
                     width: 26,
                     height: 34,
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.white24),
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(AppRadius.small),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
                     ),
                     child: Stack(
                       children: [
@@ -196,20 +195,19 @@ class GameStatePanel extends StatelessWidget {
                             padding: const EdgeInsets.all(2),
                             child: TileGlyph(
                               tileCode: indicators[i],
-                              fallbackTextStyle: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                              ),
+                              fallbackTextStyle: Theme.of(
+                                context,
+                              ).textTheme.labelSmall,
                             ),
                           ),
                         ),
-                        const Positioned(
+                        Positioned(
                           right: 0,
                           top: 0,
                           child: Icon(
                             Icons.close,
                             size: 10,
-                            color: Colors.redAccent,
+                            color: Theme.of(context).colorScheme.error,
                           ),
                         ),
                       ],
@@ -225,15 +223,18 @@ class GameStatePanel extends StatelessWidget {
                   width: 26,
                   height: 34,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(4),
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.small),
                     border: Border.all(
-                      color: Colors.white24,
-                      style: BorderStyle.solid,
+                      color: Theme.of(context).colorScheme.outline,
                     ),
                   ),
                   alignment: Alignment.center,
-                  child: const Icon(Icons.add, size: 16, color: Colors.white54),
+                  child: Icon(
+                    Icons.add,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],

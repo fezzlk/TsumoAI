@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 class TileCountSelector extends StatelessWidget {
   const TileCountSelector({
     super.key,
@@ -15,21 +17,20 @@ class TileCountSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final options = <int?>[null, ...counts];
+    final scheme = Theme.of(context).colorScheme;
+    // Follows the surrounding theme: dark on the camera, light on results.
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.68),
-        borderRadius: BorderRadius.circular(16),
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(AppRadius.large),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '想定牌数',
-            style: TextStyle(color: Colors.white70, fontSize: 12),
-          ),
+          Text('想定牌数', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 4),
           Row(
             children: [
@@ -65,6 +66,7 @@ class _CountButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = count?.toString() ?? '自動';
+    final scheme = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
       selected: selected,
@@ -72,12 +74,10 @@ class _CountButton extends StatelessWidget {
       child: SizedBox(
         height: 44,
         child: Material(
-          color: selected
-              ? Colors.green.shade700.withValues(alpha: 0.95)
-              : Colors.white.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(10),
+          color: selected ? scheme.primary : scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(AppRadius.medium),
           child: InkWell(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(AppRadius.medium),
             onTap: onPressed,
             child: Center(
               child: FittedBox(
@@ -86,7 +86,7 @@ class _CountButton extends StatelessWidget {
                   label,
                   maxLines: 1,
                   style: TextStyle(
-                    color: selected ? Colors.white : Colors.white70,
+                    color: selected ? scheme.onPrimary : scheme.onSurface,
                     fontWeight: selected ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),

@@ -40,6 +40,8 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.detectionBox,
     required this.detectionBoxPending,
     required this.scoreHighlight,
+    required this.winningTile,
+    required this.meldTile,
   });
 
   final StatusColors success;
@@ -64,6 +66,12 @@ class AppColors extends ThemeExtension<AppColors> {
 
   /// The most important number of a result (points, waits).
   final Color scoreHighlight;
+
+  /// Frame around the あがり牌 in tile rows.
+  final Color winningTile;
+
+  /// Frame around tiles that belong to a confirmed 副露.
+  final Color meldTile;
 
   static const light = AppColors(
     success: StatusColors(
@@ -93,6 +101,8 @@ class AppColors extends ThemeExtension<AppColors> {
     detectionBox: Color(0xFF4ADE80),
     detectionBoxPending: Color(0xFFFBBF24),
     scoreHighlight: Color(0xFF14633A),
+    winningTile: Color(0xFFC77700),
+    meldTile: Color(0xFF1E5AA8),
   );
 
   @override
@@ -108,6 +118,8 @@ class AppColors extends ThemeExtension<AppColors> {
     Color? detectionBox,
     Color? detectionBoxPending,
     Color? scoreHighlight,
+    Color? winningTile,
+    Color? meldTile,
   }) => AppColors(
     success: success ?? this.success,
     warning: warning ?? this.warning,
@@ -121,6 +133,8 @@ class AppColors extends ThemeExtension<AppColors> {
     detectionBox: detectionBox ?? this.detectionBox,
     detectionBoxPending: detectionBoxPending ?? this.detectionBoxPending,
     scoreHighlight: scoreHighlight ?? this.scoreHighlight,
+    winningTile: winningTile ?? this.winningTile,
+    meldTile: meldTile ?? this.meldTile,
   );
 
   @override
@@ -150,6 +164,8 @@ class AppColors extends ThemeExtension<AppColors> {
         t,
       )!,
       scoreHighlight: Color.lerp(scoreHighlight, other.scoreHighlight, t)!,
+      winningTile: Color.lerp(winningTile, other.winningTile, t)!,
+      meldTile: Color.lerp(meldTile, other.meldTile, t)!,
     );
   }
 }

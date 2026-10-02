@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import 'tile_glyph.dart';
 
 /// Displays tenpai/discard analysis with tile illustrations while keeping the
@@ -22,92 +24,73 @@ class AnalysisResultPanel extends StatelessWidget {
     final improvingTiles = _maps(result['improving_tiles']);
     final discards = _maps(result['discards']).take(3).toList(growable: false);
     final calls = _maps(result['calls']);
+    final text = Theme.of(context).textTheme;
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'シャンテン数: $shanten',
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          if (improvingTiles.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              shanten == 0 ? '待ち牌' : '有効牌',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            const SizedBox(height: 6),
-            _ImprovingTiles(tiles: improvingTiles, keyPrefix: 'analysis-wait'),
-          ] else if (result.containsKey('improving_tiles')) ...[
-            const SizedBox(height: 8),
-            const Text('有効牌・待ち: なし', style: TextStyle(color: Colors.white70)),
-          ],
-          if (discards.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            const Text(
-              '牌効率重視の上位3候補',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 2),
-            const Text(
-              '他家の立直・捨て牌・点数状況は考慮していません。',
-              style: TextStyle(color: Colors.white54, fontSize: 11),
-            ),
-            const SizedBox(height: 8),
-            for (var index = 0; index < discards.length; index++) ...[
-              if (index > 0) const SizedBox(height: 8),
-              _DiscardResult(item: discards[index], index: index),
-            ],
-            if (onAskAiWithDiscardFocus != null) ...[
-              const SizedBox(height: 12),
-              const Text(
-                '別の判断基準でAIに相談',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
-              ),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.m),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('シャンテン数: $shanten', style: text.titleMedium),
+            if (improvingTiles.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(shanten == 0 ? '待ち牌' : '有効牌', style: text.titleSmall),
               const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final focus in ['打点優先', '即和了優先', '守備考慮'])
-                    ActionChip(
-                      label: Text(focus),
-                      onPressed: () => onAskAiWithDiscardFocus!(focus),
-                    ),
-                ],
+              _ImprovingTiles(
+                tiles: improvingTiles,
+                keyPrefix: 'analysis-wait',
               ),
+            ] else if (result.containsKey('improving_tiles')) ...[
+              const SizedBox(height: 8),
+              Text('有効牌・待ち: なし', style: text.bodyMedium),
+            ],
+            if (discards.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text('牌効率重視の上位3候補', style: text.titleSmall),
+              const SizedBox(height: 2),
+              Text('他家の立直・捨て牌・点数状況は考慮していません。', style: text.bodySmall),
+              const SizedBox(height: 8),
+              for (var index = 0; index < discards.length; index++) ...[
+                if (index > 0) const SizedBox(height: 8),
+                _DiscardResult(item: discards[index], index: index),
+              ],
+              if (onAskAiWithDiscardFocus != null) ...[
+                const SizedBox(height: 12),
+                Text('別の判断基準でAIに相談', style: text.titleSmall),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final focus in ['打点優先', '即和了優先', '守備考慮'])
+                      ActionChip(
+                        label: Text(focus),
+                        onPressed: () => onAskAiWithDiscardFocus!(focus),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+            if (calls.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _CallResults(
+                calls: calls,
+                currentShanten: shanten,
+                onAskAi: onAskAiAboutCall,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'チーは上家から出た場合だけ可能です。役・守備・点数状況は含まない牌効率上の候補です。',
+                style: text.bodySmall,
+              ),
+            ] else if (result.containsKey('calls')) ...[
+              const SizedBox(height: 8),
+              const Text('現在の手牌から鳴ける候補はありません'),
             ],
           ],
-          if (calls.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _CallResults(
-              calls: calls,
-              currentShanten: shanten,
-              onAskAi: onAskAiAboutCall,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'チーは上家から出た場合だけ可能です。役・守備・点数状況は含まない牌効率上の候補です。',
-              style: TextStyle(color: Colors.white54, fontSize: 11),
-            ),
-          ] else if (result.containsKey('calls')) ...[
-            const SizedBox(height: 8),
-            const Text('現在の手牌から鳴ける候補はありません'),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -173,24 +156,49 @@ class _CallRecommendationGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (label, color) = switch (recommendation) {
-      _CallRecommendation.recommended => ('推奨', Colors.greenAccent),
-      _CallRecommendation.conditional => ('条件付き', Colors.amberAccent),
-      _CallRecommendation.skip => ('見送り', Colors.white54),
+    final colors = context.appColors;
+    final scheme = Theme.of(context).colorScheme;
+    final (label, icon, color, container) = switch (recommendation) {
+      _CallRecommendation.recommended => (
+        '推奨',
+        Icons.thumb_up_alt_outlined,
+        colors.success.color,
+        colors.success.container,
+      ),
+      _CallRecommendation.conditional => (
+        '条件付き',
+        Icons.help_outline,
+        colors.warning.color,
+        colors.warning.container,
+      ),
+      _CallRecommendation.skip => (
+        '見送り',
+        Icons.do_not_disturb_alt,
+        scheme.onSurfaceVariant,
+        scheme.surfaceContainerHighest,
+      ),
     };
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        border: Border.all(color: color.withValues(alpha: 0.55)),
-        borderRadius: BorderRadius.circular(8),
+        color: container,
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                label,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(color: color),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -238,7 +246,7 @@ class _CallCandidateButton extends StatelessWidget {
       label: '$callTileを$typeする候補の詳細',
       child: InkWell(
         key: ValueKey('analysis-call-candidate-$index'),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
         onTap: () => showDialog<void>(
           context: context,
           builder: (_) => _CallDetailDialog(
@@ -252,8 +260,8 @@ class _CallCandidateButton extends StatelessWidget {
           constraints: const BoxConstraints(minWidth: 92, minHeight: 64),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.28),
-            borderRadius: BorderRadius.circular(8),
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(AppRadius.medium),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -274,7 +282,9 @@ class _CallCandidateButton extends StatelessWidget {
                   ),
                   Text(
                     '$currentShanten → $after向聴',
-                    style: TextStyle(color: accent, fontSize: 11),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: accent),
                   ),
                 ],
               ),
@@ -328,7 +338,7 @@ class _CallDetailDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('鳴く形', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text('鳴く形', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 4,
@@ -354,10 +364,7 @@ class _CallDetailDialog extends StatelessWidget {
               Text(reason),
               if (possibleYaku.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                const Text(
-                  '成立可能役',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+                Text('成立可能役', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 4),
                 Text(possibleYaku.join('・')),
               ],
@@ -367,9 +374,9 @@ class _CallDetailDialog extends StatelessWidget {
               ],
               if (discards.isNotEmpty) ...[
                 const SizedBox(height: 14),
-                const Text(
+                Text(
                   '鳴いた後に切る候補',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 8),
                 for (
@@ -388,9 +395,9 @@ class _CallDetailDialog extends StatelessWidget {
               ],
               if (replacementTiles.isNotEmpty) ...[
                 const SizedBox(height: 14),
-                const Text(
+                Text(
                   'カン後の補充牌で進む牌',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 8),
                 _ImprovingTiles(
@@ -501,11 +508,14 @@ class _DiscardResult extends StatelessWidget {
             (total, tile) => total + _asInt(tile['remaining']),
           );
 
+    final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(AppSpacing.s),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.24),
-        borderRadius: BorderRadius.circular(6),
+        color: scheme.surfaceContainerLow,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -515,24 +525,18 @@ class _DiscardResult extends StatelessWidget {
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(
-                '${index + 1}位',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
+              Text('${index + 1}位', style: text.titleSmall),
               _TileImage(
                 tileCode: discard,
                 semanticPrefix: '打牌',
                 tileKey: ValueKey('analysis-discard-$discard-$index'),
               ),
-              Text(
-                '$shantenシャンテン',
-                style: const TextStyle(color: Colors.white),
-              ),
+              Text('$shantenシャンテン', style: text.bodyMedium),
               Text(
                 '有効牌 $totalRemaining枚',
-                style: const TextStyle(
-                  color: Colors.lightBlueAccent,
-                  fontSize: 12,
+                style: text.bodyMedium?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -574,7 +578,9 @@ class _ImprovingTiles extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 '残り${_asInt(tiles[index]['remaining'])}枚',
-                style: const TextStyle(color: Colors.white70, fontSize: 10),
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
@@ -605,7 +611,7 @@ class _TileImage extends StatelessWidget {
         height: 42,
         child: TileGlyph(
           tileCode: tileCode,
-          fallbackTextStyle: const TextStyle(color: Colors.white, fontSize: 10),
+          fallbackTextStyle: Theme.of(context).textTheme.labelSmall,
         ),
       ),
     );
