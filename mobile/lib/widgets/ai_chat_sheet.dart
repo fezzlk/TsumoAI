@@ -8,6 +8,8 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/question_template_service.dart';
 import '../services/official_ai_chat_template_service.dart';
+import '../theme/app_theme.dart';
+import 'status_banner.dart';
 
 typedef AIChatSender =
     Future<String> Function({
@@ -497,26 +499,15 @@ class _AIChatSheetState extends State<AIChatSheet> {
             ],
             if (_loadingUsage) const LinearProgressIndicator(),
             if (_usage case final usage?) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: usage.exhausted
-                      ? Theme.of(context).colorScheme.errorContainer
-                      : Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  usage.exhausted
-                      ? '今月のAI相談枠を使い切りました。${usage.resetsAt.month}月1日に更新されます。'
-                      : 'AI相談は今月あと${usage.remaining}回利用できます',
-                ),
+              StatusBanner(
+                kind: usage.exhausted ? StatusKind.warning : StatusKind.info,
+                message: usage.exhausted
+                    ? '今月のAI相談枠を使い切りました。${usage.resetsAt.month}月1日に更新されます。'
+                    : 'AI相談は今月あと${usage.remaining}回利用できます',
               ),
               const SizedBox(height: 12),
             ],
-            const Text('状況', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text('状況', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 6),
             Wrap(
               spacing: 6,
@@ -585,32 +576,24 @@ class _AIChatSheetState extends State<AIChatSheet> {
             ),
             if (_templates.any((item) => item.pendingSync)) ...[
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(Icons.cloud_off_outlined, size: 18),
-                  const SizedBox(width: 6),
-                  const Expanded(child: Text('未同期のテンプレートがあります')),
-                  TextButton(
-                    onPressed: _syncingTemplates ? null : _retryTemplateSync,
-                    child: Text(_syncingTemplates ? '同期中' : '再試行'),
-                  ),
-                ],
+              StatusBanner(
+                kind: StatusKind.warning,
+                message: '未同期のテンプレートがあります',
+                action: TextButton(
+                  onPressed: _syncingTemplates ? null : _retryTemplateSync,
+                  child: Text(_syncingTemplates ? '同期中' : '再試行'),
+                ),
               ),
             ],
             if (_templateLoadFailed) ...[
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(Icons.warning_amber_rounded, size: 18),
-                  const SizedBox(width: 6),
-                  const Expanded(
-                    child: Text('個人テンプレートを読み込めませんでした。自由入力は利用できます。'),
-                  ),
-                  TextButton(
-                    onPressed: _loadTemplates,
-                    child: const Text('再試行'),
-                  ),
-                ],
+              StatusBanner(
+                kind: StatusKind.warning,
+                message: '個人テンプレートを読み込めませんでした。自由入力は利用できます。',
+                action: TextButton(
+                  onPressed: _loadTemplates,
+                  child: const Text('再試行'),
+                ),
               ),
             ],
             const Divider(height: 24),
@@ -641,11 +624,8 @@ class _AIChatSheetState extends State<AIChatSheet> {
               ),
             if (_error != null)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
+                padding: const EdgeInsets.only(top: AppSpacing.s),
+                child: StatusBanner(kind: StatusKind.error, message: _error!),
               ),
           ],
         ),
@@ -694,24 +674,20 @@ class _LoginRequiredNotice extends StatelessWidget {
   final VoidCallback onSignIn;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.secondaryContainer,
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('AI相談はログインすると利用できます。基本の計算結果はログインなしで利用できます。'),
-        const SizedBox(height: 8),
-        FilledButton.icon(
-          onPressed: signingIn ? null : onSignIn,
-          icon: const Icon(Icons.login),
-          label: Text(signingIn ? 'ログイン中' : 'Googleでログイン'),
-        ),
-      ],
-    ),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const StatusBanner(
+        kind: StatusKind.info,
+        message: 'AI相談はログインすると利用できます。基本の計算結果はログインなしで利用できます。',
+      ),
+      const SizedBox(height: AppSpacing.s),
+      FilledButton.icon(
+        onPressed: signingIn ? null : onSignIn,
+        icon: const Icon(Icons.login),
+        label: Text(signingIn ? 'ログイン中' : 'Googleでログイン'),
+      ),
+    ],
   );
 }
 
@@ -739,7 +715,7 @@ class _MessageBubble extends StatelessWidget {
           color: isUser
               ? Theme.of(context).colorScheme.primaryContainer
               : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppRadius.large),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

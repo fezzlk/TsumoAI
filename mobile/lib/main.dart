@@ -19,7 +19,9 @@ import 'services/auth_service.dart';
 import 'services/question_template_service.dart';
 import 'services/rule_settings_service.dart';
 import 'services/official_ai_chat_template_service.dart';
+import 'theme/app_theme.dart';
 import 'widgets/help_dialog.dart';
+import 'widgets/status_banner.dart';
 
 List<CameraDescription> cameras = const [];
 
@@ -129,13 +131,7 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
     return MaterialApp(
       title: 'TsumoAI',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.green,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light(),
       home: HomeScreen(
         cameras: cameras,
         startupError: widget.startupError,
@@ -202,7 +198,6 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
@@ -265,7 +260,10 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 24),
             ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 94),
-              child: ElevatedButton(
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.surface,
+                ),
                 onPressed: () => _openMatch(context),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -276,7 +274,7 @@ class HomeScreen extends StatelessWidget {
                       Text(
                         matchActive ? '対局を再開' : '実際の対局進行に合わせて点数計算を行う',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: Theme.of(context).textTheme.titleSmall,
                       ),
                       const SizedBox(height: 6),
                       Text(
@@ -284,7 +282,7 @@ class HomeScreen extends StatelessWidget {
                             ? '${matchState.current.roundLabel}から続ける'
                             : '点数計算できる人がいない場合に、1半荘分の点数計算をサポート',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 11),
+                        style: Theme.of(context).textTheme.labelSmall,
                       ),
                     ],
                   ),
@@ -298,18 +296,8 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildStartupError() => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: Colors.red.withValues(alpha: 0.15),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: Colors.redAccent),
-    ),
-    child: Text(
-      startupError!,
-      style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-    ),
-  );
+  Widget _buildStartupError() =>
+      StatusBanner(kind: StatusKind.error, message: startupError!);
 
   Widget _buildHeader(BuildContext context) => StreamBuilder<User?>(
     stream: AuthService.authStateChanges(),
@@ -318,14 +306,10 @@ class HomeScreen extends StatelessWidget {
       final user = snapshot.data;
       return Row(
         children: [
-          const Expanded(
+          Expanded(
             child: Text(
               'TsumoAI',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-              ),
+              style: Theme.of(context).textTheme.headlineMedium,
             ),
           ),
           IconButton(
@@ -392,28 +376,34 @@ class HomeScreen extends StatelessWidget {
     child: emphasized
         ? ElevatedButton(
             onPressed: () => _openScan(context, purpose),
-            child: _purposeCardContent(icon, title, subtitle),
+            child: _purposeCardContent(context, icon, title, subtitle),
           )
         : OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.surface,
+            ),
             onPressed: () => _openScan(context, purpose),
-            child: _purposeCardContent(icon, title, subtitle),
+            child: _purposeCardContent(context, icon, title, subtitle),
           ),
   );
 
-  Widget _purposeCardContent(IconData icon, String title, String subtitle) =>
-      Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon),
-          const SizedBox(height: 6),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 11),
-          ),
-        ],
-      );
+  Widget _purposeCardContent(
+    BuildContext context,
+    IconData icon,
+    String title,
+    String subtitle,
+  ) {
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon),
+        const SizedBox(height: AppSpacing.xs),
+        Text(title, style: textTheme.titleSmall),
+        Text(subtitle, textAlign: TextAlign.center, style: textTheme.labelSmall),
+      ],
+    );
+  }
 
   Future<void> _openScan(BuildContext context, ScanPurpose purpose) async {
     final showDeveloperActions =
