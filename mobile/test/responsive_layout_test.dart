@@ -12,6 +12,8 @@ import 'package:tsumoai_mobile/widgets/game_state_panel.dart';
 import 'package:tsumoai_mobile/widgets/score_result_panel.dart';
 import 'package:tsumoai_mobile/widgets/tile_count_selector.dart';
 import 'package:tsumoai_mobile/widgets/tile_image_picker.dart';
+import 'package:tsumoai_mobile/widgets/purpose_switch_dialogs.dart';
+import 'package:tsumoai_mobile/models/scan_purpose.dart';
 
 import 'test_utils/landscape_surface.dart';
 
@@ -93,6 +95,36 @@ void main() {
     expect(find.text('点数計算'), findsOneWidget);
     expect(find.text('実際の対局進行に合わせて点数計算を行う'), findsOneWidget);
     expectNoOverflow(tester);
+  });
+
+  testWidgets('home header keeps help, login and settings on screen', (
+    tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await pumpAtDeviceSize(
+      tester,
+      const TsumoAIApp(),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+    await tester.pumpAndSettle();
+
+    for (final finder in [
+      find.byTooltip('使い方'),
+      find.text('ログイン'),
+      find.byTooltip('設定'),
+    ]) {
+      expect(finder, findsOneWidget);
+      expect(tester.getRect(finder).right, lessThanOrEqualTo(320));
+    }
+    expectNoOverflow(tester);
+
+    await tester.tap(find.byTooltip('使い方'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(AlertDialog, '使い方'), findsOneWidget);
   });
 
   testWidgets('tile count choices stay visible on a narrow portrait screen', (
@@ -424,5 +456,160 @@ void main() {
     await tester.pumpAndSettle();
     expect(value.roundWind, 'W');
     expect(find.text('西'), findsOneWidget);
+  });
+  testWidgets('switch-purpose dialog fits a narrow screen with enlarged text', (
+    tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    ScanPurpose? selected;
+    await pumpAtDeviceSize(
+      tester,
+      Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              onPressed: () async {
+                selected = await showPurposeSwitchDialog(
+                  context,
+                  current: ScanPurpose.score,
+                );
+              },
+              child: const Text('別の確認へ'),
+            ),
+          ),
+        ),
+      ),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+
+    await tester.tap(find.text('別の確認へ'));
+    await tester.pumpAndSettle();
+    expectNoOverflow(tester);
+
+    expect(find.byKey(const ValueKey('switch-purpose-score')), findsNothing);
+    expect(find.text('同じ牌で確認します'), findsOneWidget);
+    expect(find.text('外す牌を1枚選びます'), findsNWidgets(2));
+    for (final purpose in [
+      ScanPurpose.wait,
+      ScanPurpose.discard,
+      ScanPurpose.callAdvice,
+    ]) {
+      final rect = tester.getRect(
+        find.byKey(ValueKey('switch-purpose-${purpose.name}')),
+      );
+      expect(rect.height, greaterThanOrEqualTo(48));
+      expect(rect.right, lessThanOrEqualTo(320));
+    }
+
+    await tester.tap(find.byKey(const ValueKey('switch-purpose-wait')));
+    await tester.pumpAndSettle();
+    expect(selected, ScanPurpose.wait);
+  });
+
+  testWidgets('switch-purpose dialog from 13 tiles offers adding a tile', (
+    tester,
+  ) async {
+    await pumpAtDeviceSize(
+      tester,
+      Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              onPressed: () =>
+                  showPurposeSwitchDialog(context, current: ScanPurpose.wait),
+              child: const Text('別の確認へ'),
+            ),
+          ),
+        ),
+      ),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+
+    await tester.tap(find.text('別の確認へ'));
+    await tester.pumpAndSettle();
+    expect(find.text('同じ牌で確認します'), findsOneWidget);
+    expect(find.text('ツモ牌を1枚追加します'), findsNWidgets(2));
+  });
+
+  testWidgets('tile removal dialog shows all 14 tiles on a narrow screen', (
+    tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    const tiles = [
+      '1m', '2m', '3m', '4p', '5pr', '6p', '7s', '8s', '9s', 'E', 'E', 'E', //
+      'C', 'C',
+    ];
+    int? removed;
+    await pumpAtDeviceSize(
+      tester,
+      Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              onPressed: () async {
+                removed = await showTileRemovalDialog(
+                  context,
+                  target: ScanPurpose.wait,
+                  candidates: [
+                    for (var index = 0; index < tiles.length; index++)
+                      (index, tiles[index]),
+                  ],
+                  highlightedIndex: 13,
+                );
+              },
+              child: const Text('外す'),
+            ),
+          ),
+        ),
+      ),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+
+    await tester.tap(find.text('外す'));
+    await tester.pumpAndSettle();
+    expectNoOverflow(tester);
+    expect(find.textContaining('待ち確認は13枚で行います'), findsOneWidget);
+
+    for (var index = 0; index < tiles.length; index++) {
+      final finder = find.byKey(ValueKey('remove-tile-$index'));
+      expect(finder, findsOneWidget);
+      expect(tester.getRect(finder).right, lessThanOrEqualTo(320));
+    }
+
+    await tester.ensureVisible(find.byKey(const ValueKey('remove-tile-13')));
+    await tester.tap(find.byKey(const ValueKey('remove-tile-13')));
+    await tester.pumpAndSettle();
+    expect(removed, 13);
+  });
+
+  testWidgets('tile picker can explain why a tile is being added', (
+    tester,
+  ) async {
+    await pumpAtDeviceSize(
+      tester,
+      Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: ElevatedButton(
+              onPressed: () =>
+                  TileImagePicker.show(context, title: '追加するツモ牌を選択'),
+              child: const Text('追加'),
+            ),
+          ),
+        ),
+      ),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+
+    await tester.tap(find.text('追加'));
+    await tester.pumpAndSettle();
+    expectNoOverflow(tester);
+    expect(find.text('追加するツモ牌を選択'), findsOneWidget);
   });
 }

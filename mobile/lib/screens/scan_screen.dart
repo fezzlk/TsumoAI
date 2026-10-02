@@ -40,6 +40,8 @@ import '../services/capture_framing.dart';
 import '../services/performance_trace.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
+import '../services/purpose_switch.dart';
+import '../widgets/purpose_switch_dialogs.dart';
 
 class ScoreWinnerOption {
   const ScoreWinnerOption({required this.label, required this.context});
@@ -97,8 +99,10 @@ class _ScanScreenState extends State<ScanScreen> {
   final TrainingDataClient _trainingClient = TrainingDataClient();
   final HistoryService _historyService = HistoryService();
   Future<void> _historyUpdateQueue = Future.value();
-  late final String _historyEntryId = HistoryService.createId();
-  late final DateTime _historyCreatedAt = DateTime.now().toUtc();
+  // Not final: 「別の確認へ」 starts a new history entry for the new purpose
+  // instead of overwriting the previous purpose's result.
+  String _historyEntryId = HistoryService.createId();
+  DateTime _historyCreatedAt = DateTime.now().toUtc();
 
   _ScanPhase _phase = _ScanPhase.camera;
 
@@ -190,6 +194,9 @@ class _ScanScreenState extends State<ScanScreen> {
   // manual choice may never be silently overwritten.
   bool _winningTileManuallySet = false;
   final List<ConfirmedMeld> _confirmedMelds = [];
+  // The purpose currently shown on the results screen. Starts as
+  // `widget.purpose` and changes only through 「別の確認へ」.
+  late ScanPurpose _purpose;
   late HandOperation _operation;
   Map<String, dynamic>? _analysisResult;
   List<AIChatMessage> _chatMessages = [];
@@ -224,6 +231,18 @@ class _ScanScreenState extends State<ScanScreen> {
     _confirmedWinningTileId = _defaultWinningTileId;
     _winningTileManuallySet = false;
     _confirmedMelds.clear();
+  }
+
+  /// Pre-fill the あがり牌 from the image's own reading, unless the user chose
+  /// it themselves. Only score uses an あがり牌.
+  void _applySuggestedWinningTile(InterpretationResult result) {
+    final suggestedId = result.winningTile.observationId;
+    if (_operation == HandOperation.score &&
+        !_winningTileManuallySet &&
+        suggestedId != null &&
+        result.winningTile.status != FactStatus.unknown) {
+      _confirmedWinningTileId = suggestedId;
+    }
   }
 
   /// Physical-tile indices with an identified tile, ascending — the ◀/▶
@@ -307,8 +326,9 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void initState() {
     super.initState();
-    _operation = widget.purpose.operation;
-    _expectedTileCount = widget.purpose.defaultTileCount;
+    _purpose = widget.purpose;
+    _operation = _purpose.operation;
+    _expectedTileCount = _purpose.defaultTileCount;
     _autoCaptureEnabled = true;
     _context =
         widget.initialContext ??
@@ -520,7 +540,7 @@ class _ScanScreenState extends State<ScanScreen> {
     final trace = PerformanceTrace(
       name: 'tileRecognition',
       metadata: {
-        'purpose': widget.purpose.name,
+        'purpose': _purpose.name,
         'tile_count_mode': _expectedTileCount == null ? 'automatic' : 'manual',
         'requested_tile_count': _expectedTileCount,
         'auto_inferred_tile_count': _expectedTileCount == null
@@ -956,11 +976,22 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Future<void> _runInterpretation() async {
+  /// [carriedMelds] and [carriedWinningTileId] survive the reset below:
+  /// they are user decisions about the current tiles (e.g. carried over by
+  /// 「別の確認へ」), not stale facts from a previous interpretation.
+  Future<void> _runInterpretation({
+    List<ConfirmedMeld> carriedMelds = const [],
+    String? carriedWinningTileId,
+  }) async {
     if (!_allDetectedTilesReady) return;
     setState(() {
       _isInterpreting = true;
       _invalidateInterpretation();
+      _confirmedMelds.addAll(carriedMelds);
+      if (carriedWinningTileId != null) {
+        _confirmedWinningTileId = carriedWinningTileId;
+        _winningTileManuallySet = true;
+      }
     });
     final requestEpoch = _requestEpoch.current;
     try {
@@ -978,13 +1009,7 @@ class _ScanScreenState extends State<ScanScreen> {
         // never a manual choice) — this replaces a separate, confusing
         // "suggested winning tile" text block that duplicated this same
         // information without driving the real control.
-        final suggestedId = result.winningTile.observationId;
-        if (_operation == HandOperation.score &&
-            !_winningTileManuallySet &&
-            suggestedId != null &&
-            result.winningTile.status != FactStatus.unknown) {
-          _confirmedWinningTileId = suggestedId;
-        }
+        _applySuggestedWinningTile(result);
       });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
@@ -1006,9 +1031,15 @@ class _ScanScreenState extends State<ScanScreen> {
   /// (`_confirmedWinningTileId == null`) stopped ever being true, so the
   /// first tap silently did nothing visible and the button looked broken
   /// until pressed a second time.
-  Future<void> _runInterpretationAndAnalyze() async {
+  Future<void> _runInterpretationAndAnalyze({
+    List<ConfirmedMeld> carriedMelds = const [],
+    String? carriedWinningTileId,
+  }) async {
     if (_interpretation == null) {
-      await _runInterpretation();
+      await _runInterpretation(
+        carriedMelds: carriedMelds,
+        carriedWinningTileId: carriedWinningTileId,
+      );
       if (!mounted || _interpretation == null) return;
     }
     await _confirmAndAnalyze(showResultDialog: false);
@@ -1225,7 +1256,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _saveAnalysisHistory(Map<String, dynamic> result) async {
-    final purpose = switch (widget.purpose) {
+    final purpose = switch (_purpose) {
       ScanPurpose.wait => 'wait',
       ScanPurpose.callAdvice => 'call_advice',
       _ => 'discard',
@@ -1236,7 +1267,7 @@ class _ScanScreenState extends State<ScanScreen> {
         createdAt: _historyCreatedAt,
         updatedAt: DateTime.now().toUtc(),
         purpose: purpose,
-        title: widget.purpose.label,
+        title: _purpose.label,
         summary: _analysisSummary(result),
         roundLabel: widget.historyRoundLabel,
         details: {
@@ -1267,15 +1298,13 @@ class _ScanScreenState extends State<ScanScreen> {
   }) async {
     final result = _analysisResult;
     if (result == null ||
-        widget.purpose == ScanPurpose.score ||
-        widget.purpose == ScanPurpose.wait) {
+        _purpose == ScanPurpose.score ||
+        _purpose == ScanPurpose.wait) {
       return;
     }
     await AIChatSheet.show(
       context,
-      purpose: widget.purpose == ScanPurpose.callAdvice
-          ? 'call_advice'
-          : 'discard',
+      purpose: _purpose == ScanPurpose.callAdvice ? 'call_advice' : 'discard',
       tiles: _tiles.whereType<String>().toList(growable: false),
       roundContext: _context.toJson(),
       analysis: {...result, 'selected_call': ?selectedCall},
@@ -1303,8 +1332,124 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  /// Concealed (not in a confirmed meld) identified slots, ascending — the
+  /// tiles 「別の確認へ」 may leave out when moving from 14 to 13 tiles.
+  List<int> get _concealedIndices => [
+    for (final index in _identifiedIndices)
+      if (!_isConfirmedMeldMember(index)) index,
+  ];
+
+  /// The slot right after the last identified tile, where 「別の確認へ」
+  /// appends an added drawn tile.
+  int get _nextFreeSlot {
+    final identified = _identifiedIndices;
+    return identified.isEmpty ? 0 : identified.last + 1;
+  }
+
+  void _setDisplayedTileCount(int count) {
+    if (_expectedTileCount != null) {
+      _expectedTileCount = count;
+    } else {
+      _autoDetectedTileCount = count;
+    }
+  }
+
+  /// 「別の確認へ」: re-runs analysis for another purpose on the same photo,
+  /// boxes and confirmed tiles, without re-capturing or re-detecting. Moving
+  /// between 14-tile and 13-tile purposes first asks for the one tile to
+  /// leave out or add.
+  Future<void> _switchPurpose() async {
+    final target = await showPurposeSwitchDialog(context, current: _purpose);
+    if (target == null || !mounted) return;
+
+    final adjustment = purposeSwitchAdjustment(_purpose, target);
+    int? removedIndex;
+    String? addedTile;
+    switch (adjustment) {
+      case PurposeSwitchAdjustment.none:
+        break;
+      case PurposeSwitchAdjustment.removeOne:
+        final candidates = _concealedIndices;
+        if (candidates.isEmpty) return;
+        removedIndex = await showTileRemovalDialog(
+          context,
+          target: target,
+          candidates: [for (final index in candidates) (index, _tiles[index]!)],
+          highlightedIndex: slotForObservationId(_confirmedWinningTileId),
+        );
+        if (removedIndex == null || !mounted) return;
+      case PurposeSwitchAdjustment.addOne:
+        if (_nextFreeSlot >= _maxPhysicalTiles) {
+          _showError('これ以上牌を追加できません');
+          return;
+        }
+        addedTile = await TileImagePicker.show(context, title: '追加するツモ牌を選択');
+        if (addedTile == null || !mounted) return;
+    }
+
+    final tilesChanged = adjustment != PurposeSwitchAdjustment.none;
+    var carriedMelds = const <ConfirmedMeld>[];
+    String? carriedWinningTileId;
+    setState(() {
+      final melds = List.of(_confirmedMelds);
+      _purpose = target;
+      _operation = target.operation;
+      _historyEntryId = HistoryService.createId();
+      _historyCreatedAt = DateTime.now().toUtc();
+
+      if (removedIndex != null) {
+        final index = removedIndex;
+        removeSlot<String?>(_tiles, index, null);
+        removeSlot<String?>(_predictedTiles, index, null);
+        removeSlot<List<TileCandidate>>(_candidates, index, <TileCandidate>[]);
+        removeSlot<bool>(_isClassifying, index, false);
+        removeSlot<img.Image?>(_croppedImages, index, null);
+        removeSlot<Uint8List?>(_croppedImageThumbnails, index, null);
+        removeSlot<TileQuad?>(_tileQuads, index, null);
+        _setDisplayedTileCount(_identifiedIndices.length);
+      }
+      if (addedTile != null) {
+        final index = _nextFreeSlot;
+        _tiles[index] = addedTile;
+        _candidates[index] = [TileCandidate(tile: addedTile, confidence: 1.0)];
+        _setDisplayedTileCount(index + 1);
+      }
+
+      if (tilesChanged) {
+        // The interpretation described the old tile set and is redone below.
+        // Melds are carried through that reset, renumbered to the shifted
+        // slots when a tile was left out.
+        _invalidateInterpretation();
+        carriedMelds = removedIndex == null
+            ? melds
+            : shiftMeldsAfterRemoval(melds, removedIndex);
+        // The tile the user just added is the drawn tile, so it is the
+        // あがり牌 for score — don't let the interpretation's guess move it.
+        if (addedTile != null && _operation == HandOperation.score) {
+          carriedWinningTileId = _defaultWinningTileId;
+        }
+      } else {
+        _invalidateAnalysis();
+        _confirmedWinningTileId ??= _defaultWinningTileId;
+        // The kept interpretation may have run for a non-score purpose,
+        // which skips its あがり牌 suggestion; apply it now.
+        if (_interpretation case final interpretation?) {
+          _applySuggestedWinningTile(interpretation);
+        }
+      }
+      _isScoring = false;
+    });
+
+    if (_allDetectedTilesReady) {
+      await _runInterpretationAndAnalyze(
+        carriedMelds: carriedMelds,
+        carriedWinningTileId: carriedWinningTileId,
+      );
+    }
+  }
+
   String _analysisSummary(Map<String, dynamic> result) {
-    if (widget.purpose == ScanPurpose.wait) {
+    if (_purpose == ScanPurpose.wait) {
       final tiles = (result['improving_tiles'] as List<dynamic>? ?? const [])
           .whereType<Map>()
           .map((item) => item['tile'])
@@ -1312,7 +1457,7 @@ class _ScanScreenState extends State<ScanScreen> {
           .join(' / ');
       return tiles.isEmpty ? '待ち・有効牌なし' : '待ち・有効牌 $tiles';
     }
-    if (widget.purpose == ScanPurpose.callAdvice) {
+    if (_purpose == ScanPurpose.callAdvice) {
       final count = (result['calls'] as List<dynamic>? ?? const []).length;
       return '鳴き候補 $count件';
     }
@@ -1577,7 +1722,7 @@ class _ScanScreenState extends State<ScanScreen> {
     final expected =
         _expectedTileCount ??
         _autoDetectedTileCount ??
-        widget.purpose.defaultTileCount;
+        _purpose.defaultTileCount;
     return math.max(expected, last + 1).clamp(expected, _maxPhysicalTiles);
   }
 
@@ -1855,7 +2000,8 @@ class _ScanScreenState extends State<ScanScreen> {
     );
 
     final glyphCore = GestureDetector(
-      onTap: thumb == null ? null : () => _onSlotTap(index),
+      // A tile added by 「別の確認へ」 has no crop but is still correctable.
+      onTap: thumb == null && tile == null ? null : () => _onSlotTap(index),
       child: Container(
         width: cellWidth,
         height: cellWidth,
@@ -2091,13 +2237,11 @@ class _ScanScreenState extends State<ScanScreen> {
                     child: SingleChildScrollView(
                       child: AnalysisResultPanel(
                         result: _analysisResult!,
-                        onAskAiAboutCall:
-                            widget.purpose == ScanPurpose.callAdvice
+                        onAskAiAboutCall: _purpose == ScanPurpose.callAdvice
                             ? (candidate) =>
                                   _openAiChat(selectedCall: candidate)
                             : null,
-                        onAskAiWithDiscardFocus:
-                            widget.purpose == ScanPurpose.discard
+                        onAskAiWithDiscardFocus: _purpose == ScanPurpose.discard
                             ? (focus) => _openAiChat(discardFocus: focus)
                             : null,
                       ),
@@ -2651,7 +2795,7 @@ class _ScanScreenState extends State<ScanScreen> {
                             children: [
                               Flexible(
                                 child: Text(
-                                  widget.purpose.label,
+                                  _purpose.label,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -3228,16 +3372,15 @@ class _ScanScreenState extends State<ScanScreen> {
                       _analysisResult != null) ...[
                     AnalysisResultPanel(
                       result: _analysisResult!,
-                      onAskAiAboutCall: widget.purpose == ScanPurpose.callAdvice
+                      onAskAiAboutCall: _purpose == ScanPurpose.callAdvice
                           ? (candidate) => _openAiChat(selectedCall: candidate)
                           : null,
-                      onAskAiWithDiscardFocus:
-                          widget.purpose == ScanPurpose.discard
+                      onAskAiWithDiscardFocus: _purpose == ScanPurpose.discard
                           ? (focus) => _openAiChat(discardFocus: focus)
                           : null,
                     ),
-                    if (widget.purpose == ScanPurpose.discard ||
-                        widget.purpose == ScanPurpose.callAdvice) ...[
+                    if (_purpose == ScanPurpose.discard ||
+                        _purpose == ScanPurpose.callAdvice) ...[
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
@@ -3256,6 +3399,29 @@ class _ScanScreenState extends State<ScanScreen> {
                       _tsumoScoreResult != null ||
                       _ronScoreResult != null)
                     const SizedBox(height: 12),
+
+                  // 「別の確認へ」 (UC-01 結果後). Not offered in the match win
+                  // flow, whose result is recorded into the round state.
+                  if (widget.onScoreConfirmed == null &&
+                      !_isScoring &&
+                      (_analysisResult != null ||
+                          _isNotWinning ||
+                          _tsumoScoreResult != null ||
+                          _ronScoreResult != null)) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('switch-purpose-button'),
+                        onPressed: _switchPurpose,
+                        icon: const Icon(Icons.swap_horiz),
+                        label: const Text('別の確認へ'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
 
                   if (_interpretation != null) ...[
                     _buildInterpretationConfirmation(),
@@ -3297,7 +3463,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    widget.purpose.label,
+                    _purpose.label,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 13,
