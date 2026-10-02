@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import 'package:flutter/services.dart' show DeviceOrientation, SystemChrome;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
@@ -244,18 +247,20 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
     }
   }
 
+  AppColors get _colors => context.appColors;
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
+    // Every phase here works on a photo, so the screen stays dark.
+    return Theme(
+      data: AppTheme.camera(),
+      child: Scaffold(
       appBar: AppBar(
         title: Text(
           _pendingSends > 0
               ? '学習データ作成 ($_sentCount枚送信済み・送信中$_pendingSends件)'
               : '学習データ作成 ($_sentCount枚送信済み)',
         ),
-        backgroundColor: Colors.black87,
-        foregroundColor: Colors.white,
       ),
       body: SafeArea(
         child: switch (_phase) {
@@ -264,6 +269,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
           _TDPhase.label => _buildLabel(),
         },
       ),
+    ),
     );
   }
 
@@ -287,12 +293,14 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(20),
+                color: _colors.cameraScrim,
+                borderRadius: BorderRadius.circular(AppRadius.xLarge),
               ),
-              child: const Text(
+              child: Text(
                 '牌1枚を撮影してください',
-                style: TextStyle(color: Colors.white, fontSize: 14),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: _colors.cameraOnSurface),
               ),
             ),
           ),
@@ -309,12 +317,12 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
                 height: 72,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 4),
-                  color: Colors.white.withValues(alpha: 0.3),
+                  border: Border.all(color: _colors.cameraOnSurface, width: 4),
+                  color: _colors.cameraOnSurface.withValues(alpha: 0.18),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.camera_alt,
-                  color: Colors.white,
+                  color: _colors.cameraOnSurface,
                   size: 32,
                 ),
               ),
@@ -421,12 +429,14 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
                     math.pi / 2,
                   ).multiplied(_imageTransform);
                 }),
-                icon: const Icon(
+                icon: Icon(
                   Icons.rotate_right,
-                  color: Colors.white70,
+                  color: _colors.cameraOnSurfaceVariant,
                   size: 28,
                 ),
-                style: IconButton.styleFrom(backgroundColor: Colors.black54),
+                style: IconButton.styleFrom(
+                  backgroundColor: _colors.cameraScrim,
+                ),
               ),
             ),
 
@@ -437,26 +447,22 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
               bottom: 0,
               child: Container(
                 padding: const EdgeInsets.all(16),
-                color: Colors.black87,
+                color: _colors.cameraScrim,
                 child: Row(
                   children: [
                     Expanded(
-                      child: ElevatedButton(
+                      child: OutlinedButton(
                         onPressed: () => setState(() {
                           _phase = _TDPhase.camera;
                           _capturedBytes = null;
                         }),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white.withValues(alpha: 0.15),
-                          foregroundColor: Colors.white,
-                        ),
                         child: const Text('撮り直す'),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       flex: 2,
-                      child: ElevatedButton.icon(
+                      child: FilledButton.icon(
                         onPressed: () => _cropAndSelectLabel(
                           slotRect,
                           baseLeft,
@@ -466,10 +472,6 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
                         ),
                         icon: const Icon(Icons.crop, size: 20),
                         label: const Text('切り出し'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green.withValues(alpha: 0.7),
-                          foregroundColor: Colors.white,
-                        ),
                       ),
                     ),
                   ],
@@ -504,11 +506,11 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
             Container(
               height: 160,
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.white24),
-                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _colors.cameraOnSurfaceVariant),
+                borderRadius: BorderRadius.circular(AppRadius.medium),
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppRadius.medium),
                 child: Image.memory(jpgBytes, fit: BoxFit.contain),
               ),
             ),
@@ -526,12 +528,12 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
+                color: _colors.cameraOnSurface.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(AppRadius.medium),
                 border: Border.all(
                   color: _selectedTileCode != null
-                      ? Colors.greenAccent
-                      : Colors.white24,
+                      ? _colors.detectionBox
+                      : _colors.cameraOnSurfaceVariant,
                 ),
               ),
               child: Row(
@@ -553,16 +555,18 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
                     _selectedTileCode == null
                         ? '牌を選択してください'
                         : tileDisplayName(_selectedTileCode!),
-                    style: TextStyle(
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       color: _selectedTileCode != null
-                          ? Colors.greenAccent
-                          : Colors.white54,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
+                          ? _colors.detectionBox
+                          : _colors.cameraOnSurfaceVariant,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.touch_app, color: Colors.white38, size: 20),
+                  Icon(
+                    Icons.touch_app,
+                    color: _colors.cameraOnSurfaceVariant,
+                    size: 20,
+                  ),
                 ],
               ),
             ),
@@ -573,32 +577,21 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
           Row(
             children: [
               Expanded(
-                child: ElevatedButton(
+                child: OutlinedButton(
                   onPressed: () => setState(() {
                     _phase = _TDPhase.align;
                     _selectedTileCode = null;
                   }),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.15),
-                    foregroundColor: Colors.white,
-                  ),
                   child: const Text('戻る'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 flex: 2,
-                child: ElevatedButton.icon(
+                child: FilledButton.icon(
                   onPressed: _selectedTileCode != null ? _send : null,
                   icon: const Icon(Icons.send, size: 20),
                   label: const Text('送信'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _selectedTileCode != null
-                        ? Colors.orange.withValues(alpha: 0.7)
-                        : Colors.white.withValues(alpha: 0.1),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
                 ),
               ),
             ],
@@ -618,13 +611,13 @@ class _SingleSlotPainter extends CustomPainter {
     canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = Colors.black.withValues(alpha: 0.5),
+      Paint()..color = AppColors.light.cameraScrim,
     );
     canvas.drawRect(slotRect, Paint()..blendMode = BlendMode.clear);
     canvas.drawRect(
       slotRect,
       Paint()
-        ..color = Colors.greenAccent.withValues(alpha: 0.7)
+        ..color = AppColors.light.detectionBox
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.0,
     );
