@@ -1,6 +1,9 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+
 /// Full-screen manual selection of one rectangular region of the captured
 /// photo — the FEZ-93 recovery flow for when the whole-photo tile detector
 /// (`segmentTilesWithHintsForExpectedCount`) picks up something that isn't
@@ -219,22 +222,17 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
+    final colors = context.appColors;
+    // Photo editing stays dark like the camera.
+    return Theme(
+      data: AppTheme.camera(),
+      child: Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
         title: const Text('範囲を切り抜いて再検出'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, _region),
-            child: const Text(
-              '確定',
-              style: TextStyle(
-                color: Colors.greenAccent,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            child: const Text('確定'),
           ),
         ],
       ),
@@ -279,12 +277,9 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                     onPointerCancel: (event) => _onPointerEnd(h, event),
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.greenAccent.withValues(alpha: 0.9),
+                        color: colors.detectionBox,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.black.withValues(alpha: 0.6),
-                          width: 2,
-                        ),
+                        border: Border.all(color: colors.cameraScrim, width: 2),
                       ),
                     ),
                   ),
@@ -343,7 +338,7 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                         child: Container(
                           decoration: BoxDecoration(
                             border: Border.all(
-                              color: Colors.orangeAccent,
+                              color: colors.detectionBoxPending,
                               width: 2.5,
                             ),
                           ),
@@ -366,12 +361,17 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.55),
-                              borderRadius: BorderRadius.circular(6),
+                              color: colors.cameraScrim,
+                              borderRadius: BorderRadius.circular(
+                                AppRadius.medium,
+                              ),
                             ),
-                            child: const Text(
+                            child: Text(
                               '牌が写っている範囲を指定してください',
-                              style: TextStyle(color: Colors.white70, fontSize: 11),
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: colors.cameraOnSurfaceVariant,
+                                  ),
                             ),
                           ),
                         ),
@@ -384,6 +384,7 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -394,7 +395,7 @@ class _CropMaskPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.black.withValues(alpha: 0.55);
+    final paint = Paint()..color = AppColors.light.cameraScrim;
     final outer = Path()..addRect(Offset.zero & size);
     final inner = Path()..addRect(regionRect);
     final diff = Path.combine(PathOperation.difference, outer, inner);

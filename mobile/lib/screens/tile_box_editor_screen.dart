@@ -1,6 +1,9 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import '../models/tile_quad.dart';
 
 /// Full-screen manual correction of one tile's crop quadrilateral. Pushed
@@ -88,11 +91,12 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
+    final colors = context.appColors;
+    // Photo editing stays dark like the camera.
+    return Theme(
+      data: AppTheme.camera(),
+      child: Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
         title: const Text('枠を補正'),
         actions: [
           IconButton(
@@ -113,7 +117,7 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
           TextButton(
             onPressed: () =>
                 Navigator.pop(context, TileBoxEditorConfirmed(_quad)),
-            child: const Text('確定', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+            child: const Text('確定'),
           ),
         ],
       ),
@@ -196,9 +200,9 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
                     onPanUpdate: (details) => moveCorner(corner, point, details.delta),
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.greenAccent.withValues(alpha: 0.9),
+                        color: colors.detectionBox,
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.black.withValues(alpha: 0.6), width: 2),
+                        border: Border.all(color: colors.cameraScrim, width: 2),
                       ),
                     ),
                   ),
@@ -248,11 +252,11 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
                   top: screenPoint.dy - 12,
                   width: 24,
                   height: 24,
-                  child: const IgnorePointer(
+                  child: IgnorePointer(
                     child: Icon(
                       Icons.open_with,
                       size: 20,
-                      color: Colors.orangeAccent,
+                      color: colors.detectionBoxPending,
                     ),
                   ),
                 );
@@ -296,12 +300,17 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.55),
-                              borderRadius: BorderRadius.circular(6),
+                              color: colors.cameraScrim,
+                              borderRadius: BorderRadius.circular(
+                                AppRadius.medium,
+                              ),
                             ),
-                            child: const Text(
+                            child: Text(
                               '内側をドラッグで移動 / 外側をドラッグで表示範囲を移動',
-                              style: TextStyle(color: Colors.white70, fontSize: 11),
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: colors.cameraOnSurfaceVariant,
+                                  ),
                             ),
                           ),
                         ),
@@ -314,6 +323,7 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -330,7 +340,7 @@ class _QuadOutlinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.orangeAccent
+      ..color = AppColors.light.detectionBoxPending
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5;
     final path = Path()
