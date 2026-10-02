@@ -233,6 +233,18 @@ class _ScanScreenState extends State<ScanScreen> {
     _confirmedMelds.clear();
   }
 
+  /// Pre-fill the あがり牌 from the image's own reading, unless the user chose
+  /// it themselves. Only score uses an あがり牌.
+  void _applySuggestedWinningTile(InterpretationResult result) {
+    final suggestedId = result.winningTile.observationId;
+    if (_operation == HandOperation.score &&
+        !_winningTileManuallySet &&
+        suggestedId != null &&
+        result.winningTile.status != FactStatus.unknown) {
+      _confirmedWinningTileId = suggestedId;
+    }
+  }
+
   /// Physical-tile indices with an identified tile, ascending — the ◀/▶
   /// あがり牌 controls step through exactly this list.
   List<int> get _identifiedIndices => [
@@ -959,11 +971,22 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Future<void> _runInterpretation() async {
+  /// [carriedMelds] and [carriedWinningTileId] survive the reset below:
+  /// they are user decisions about the current tiles (e.g. carried over by
+  /// 「別の確認へ」), not stale facts from a previous interpretation.
+  Future<void> _runInterpretation({
+    List<ConfirmedMeld> carriedMelds = const [],
+    String? carriedWinningTileId,
+  }) async {
     if (!_allDetectedTilesReady) return;
     setState(() {
       _isInterpreting = true;
       _invalidateInterpretation();
+      _confirmedMelds.addAll(carriedMelds);
+      if (carriedWinningTileId != null) {
+        _confirmedWinningTileId = carriedWinningTileId;
+        _winningTileManuallySet = true;
+      }
     });
     final requestEpoch = _requestEpoch.current;
     try {
@@ -981,13 +1004,7 @@ class _ScanScreenState extends State<ScanScreen> {
         // never a manual choice) — this replaces a separate, confusing
         // "suggested winning tile" text block that duplicated this same
         // information without driving the real control.
-        final suggestedId = result.winningTile.observationId;
-        if (_operation == HandOperation.score &&
-            !_winningTileManuallySet &&
-            suggestedId != null &&
-            result.winningTile.status != FactStatus.unknown) {
-          _confirmedWinningTileId = suggestedId;
-        }
+        _applySuggestedWinningTile(result);
       });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
@@ -1009,9 +1026,15 @@ class _ScanScreenState extends State<ScanScreen> {
   /// (`_confirmedWinningTileId == null`) stopped ever being true, so the
   /// first tap silently did nothing visible and the button looked broken
   /// until pressed a second time.
-  Future<void> _runInterpretationAndAnalyze() async {
+  Future<void> _runInterpretationAndAnalyze({
+    List<ConfirmedMeld> carriedMelds = const [],
+    String? carriedWinningTileId,
+  }) async {
     if (_interpretation == null) {
-      await _runInterpretation();
+      await _runInterpretation(
+        carriedMelds: carriedMelds,
+        carriedWinningTileId: carriedWinningTileId,
+      );
       if (!mounted || _interpretation == null) return;
     }
     await _confirmAndAnalyze(showResultDialog: false);
@@ -1353,9 +1376,11 @@ class _ScanScreenState extends State<ScanScreen> {
         if (addedTile == null || !mounted) return;
     }
 
+    final tilesChanged = adjustment != PurposeSwitchAdjustment.none;
+    var carriedMelds = const <ConfirmedMeld>[];
+    String? carriedWinningTileId;
     setState(() {
       final melds = List.of(_confirmedMelds);
-      final tilesChanged = adjustment != PurposeSwitchAdjustment.none;
       _purpose = target;
       _operation = target.operation;
       _historyEntryId = HistoryService.createId();
@@ -1380,27 +1405,36 @@ class _ScanScreenState extends State<ScanScreen> {
       }
 
       if (tilesChanged) {
-        // The interpretation described the old tile set; melds are kept,
-        // renumbered to the shifted slots when a tile was left out.
+        // The interpretation described the old tile set and is redone below.
+        // Melds are carried through that reset, renumbered to the shifted
+        // slots when a tile was left out.
         _invalidateInterpretation();
-        _confirmedMelds.addAll(
-          removedIndex == null
-              ? melds
-              : shiftMeldsAfterRemoval(melds, removedIndex),
-        );
+        carriedMelds = removedIndex == null
+            ? melds
+            : shiftMeldsAfterRemoval(melds, removedIndex);
         // The tile the user just added is the drawn tile, so it is the
         // あがり牌 for score — don't let the interpretation's guess move it.
         if (addedTile != null && _operation == HandOperation.score) {
-          _winningTileManuallySet = true;
+          carriedWinningTileId = _defaultWinningTileId;
         }
       } else {
         _invalidateAnalysis();
         _confirmedWinningTileId ??= _defaultWinningTileId;
+        // The kept interpretation may have run for a non-score purpose,
+        // which skips its あがり牌 suggestion; apply it now.
+        if (_interpretation case final interpretation?) {
+          _applySuggestedWinningTile(interpretation);
+        }
       }
       _isScoring = false;
     });
 
-    if (_allDetectedTilesReady) await _runInterpretationAndAnalyze();
+    if (_allDetectedTilesReady) {
+      await _runInterpretationAndAnalyze(
+        carriedMelds: carriedMelds,
+        carriedWinningTileId: carriedWinningTileId,
+      );
+    }
   }
 
   String _analysisSummary(Map<String, dynamic> result) {
