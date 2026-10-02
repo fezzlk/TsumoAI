@@ -9,12 +9,14 @@ class TileImagePicker extends StatelessWidget {
   final String? currentTile;
   final ValueChanged<String> onTileSelected;
   final bool showSuitLabels;
+  final String title;
 
   const TileImagePicker({
     super.key,
     this.currentTile,
     required this.onTileSelected,
     this.showSuitLabels = false,
+    this.title = '牌を選択',
   });
 
   static const _manRow = ['1m', '2m', '3m', '4m', '5m', '5mr', '6m', '7m', '8m', '9m'];
@@ -23,7 +25,11 @@ class TileImagePicker extends StatelessWidget {
   static const _honorRow = ['E', 'S', 'W', 'N', 'P', 'F', 'C'];
   static const _columns = 10;
 
-  static Future<String?> show(BuildContext context, {String? currentTile}) {
+  static Future<String?> show(
+    BuildContext context, {
+    String? currentTile,
+    String title = '牌を選択',
+  }) {
     return showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.grey[900],
@@ -33,6 +39,7 @@ class TileImagePicker extends StatelessWidget {
       constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.95),
       builder: (_) => TileImagePicker(
         currentTile: currentTile,
+        title: title,
         onTileSelected: (tile) => Navigator.pop(context, tile),
       ),
     );
@@ -77,7 +84,12 @@ class TileImagePicker extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text('牌を選択', style: TextStyle(color: Colors.white70, fontSize: 14)),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
               const SizedBox(height: 8),
               _buildRow('萬', _manRow, cellWidth, cellHeight),
               const SizedBox(height: rowSpacing),
