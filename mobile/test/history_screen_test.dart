@@ -59,7 +59,7 @@ void main() {
       expect(find.text('場風 東'), findsOneWidget);
       expect(find.text('自風 南'), findsOneWidget);
       expect(find.byKey(const ValueKey('history-tile-0')), findsOneWidget);
-      expect(find.text('シャンテン数: 2'), findsOneWidget);
+      expect(find.text('2 → 1シャンテン'), findsOneWidget);
       expect(find.text('推奨'), findsOneWidget);
     },
   );

@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// A compact on/off condition chip (立直, 一発, 海底, ...).
+/// A pill-shaped on/off condition chip (立直, 一発, 海底, ...).
 ///
-/// The selected state is shown by a check mark and border as well as color.
+/// Selected chips are filled with the primary colour and white text;
+/// unselected ones are white with a thin border.
 class ToggleChip extends StatelessWidget {
   const ToggleChip({
     super.key,
@@ -20,40 +21,35 @@ class ToggleChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final foreground = selected
-        ? scheme.onPrimaryContainer
-        : scheme.onSurfaceVariant;
     return Semantics(
       button: true,
       toggled: selected,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: selected
-                ? scheme.primaryContainer
-                : scheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(AppRadius.medium),
-            border: Border.all(
-              color: selected ? scheme.primary : scheme.outlineVariant,
-            ),
+      child: Material(
+        color: selected ? scheme.primary : scheme.surface,
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected) ...[
-                Icon(Icons.check, size: 12, color: foreground),
-                const SizedBox(width: 2),
-              ],
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: foreground,
-                  fontWeight: FontWeight.bold,
+        ),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: AppSizes.chip),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.m),
+              child: Center(
+                widthFactor: 1,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: selected ? scheme.onPrimary : scheme.onSurface,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),

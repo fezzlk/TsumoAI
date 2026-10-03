@@ -121,7 +121,7 @@ void main() {
     expectNoOverflow(tester);
   });
 
-  testWidgets('tile count choices stay visible on a narrow portrait screen', (
+  testWidgets('tile count choices: frequent ones visible, 17/18 by scroll', (
     tester,
   ) async {
     int? selected = 14;
@@ -141,9 +141,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final labels = ['自動', '13', '14', '15', '16', '17', '18'];
-    final verticalCenters = <double>[];
-    for (final label in labels) {
+    // 17 and 18 are rare (decided 2026-09-26): they may sit past the edge.
+    final verticalCenters = <double>{};
+    for (final label in ['自動', '13', '14', '15']) {
       final finder = find.text(label);
       expect(finder, findsOneWidget);
       expect(
@@ -152,9 +152,11 @@ void main() {
       );
       verticalCenters.add(tester.getCenter(finder).dy);
     }
-    expect(verticalCenters.toSet(), hasLength(1));
+    expect(verticalCenters, hasLength(1));
     expectNoOverflow(tester);
 
+    await tester.ensureVisible(find.text('18'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('18'));
     await tester.pump();
     expect(selected, 18);

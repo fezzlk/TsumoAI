@@ -34,8 +34,11 @@ import 'package:tsumoai_mobile/services/official_ai_chat_template_service.dart';
 import 'package:tsumoai_mobile/services/question_template_service.dart';
 import 'package:tsumoai_mobile/widgets/ai_chat_sheet.dart';
 import 'package:tsumoai_mobile/widgets/analysis_result_panel.dart';
+import 'package:tsumoai_mobile/widgets/game_state_panel.dart';
 import 'package:tsumoai_mobile/widgets/purpose_switch_dialogs.dart';
 import 'package:tsumoai_mobile/widgets/score_result_panel.dart';
+import 'package:tsumoai_mobile/widgets/tile_image_picker.dart';
+import 'package:tsumoai_mobile/widgets/toggle_chip.dart';
 
 import 'screenshot_theme.dart';
 
@@ -76,6 +79,8 @@ Future<void> _capture(
   );
   addTearDown(tester.view.reset);
 
+  // Drop the previous screen (and any dialog it left open) first.
+  await tester.pumpWidget(const SizedBox());
   await tester.pumpWidget(
     RepaintBoundary(
       key: const ValueKey('screenshot'),
@@ -93,6 +98,11 @@ Future<void> _capture(
     await interact(tester);
     await tester.pumpAndSettle();
   }
+  // Let asset images finish decoding, or tiles render blank.
+  await tester.runAsync(
+    () => Future<void>.delayed(const Duration(milliseconds: 500)),
+  );
+  await tester.pumpAndSettle();
 
   final boundary = tester.renderObject<RenderRepaintBoundary>(
     find.byKey(const ValueKey('screenshot')),
@@ -193,7 +203,12 @@ ScoreResponse _score(String winType) => ScoreResponse.fromJson({
 
 Widget _panelHost(Widget panel) => Scaffold(
   backgroundColor: screenshotResultBackground(),
-  body: SafeArea(child: SingleChildScrollView(child: panel)),
+  body: SafeArea(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: panel,
+    ),
+  ),
 );
 
 void main() {
@@ -386,6 +401,49 @@ void main() {
             child: TextButton(
               onPressed: () =>
                   showPurposeSwitchDialog(context, current: ScanPurpose.score),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+      interact: (tester) => tester.tap(find.text('open')),
+    );
+    await _capture(
+      tester,
+      '12_condition_card',
+      _panelHost(
+        Builder(
+          builder: (_) => GameStatePanel(
+            context_: ContextInput(
+              roundWind: 'E',
+              seatWind: 'S',
+              riichi: true,
+              doraIndicators: const ['3p'],
+              uraDoraIndicators: const ['E'],
+            ),
+            onChanged: (_) {},
+            conditionChips: [
+              for (final (label, on) in [
+                ('立直', true),
+                ('一発', false),
+                ('ダブル立直', false),
+                ('嶺上開花', false),
+                ('槍槓', false),
+              ])
+                ToggleChip(label: label, selected: on, onTap: () {}),
+            ],
+          ),
+        ),
+      ),
+    );
+    await _capture(
+      tester,
+      '13_tile_picker',
+      Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: TextButton(
+              onPressed: () => TileImagePicker.show(context),
               child: const Text('open'),
             ),
           ),

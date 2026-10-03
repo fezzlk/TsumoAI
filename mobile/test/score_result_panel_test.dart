@@ -68,9 +68,10 @@ void main() {
     expect(find.text('ツモの場合'), findsOneWidget);
     expect(find.text('ロンの場合'), findsOneWidget);
     expect(find.text('満貫'), findsOneWidget);
-    expect(find.text('2000点'), findsOneWidget);
-    expect(find.text('ツモ: 1000 / 2000点'), findsOneWidget);
-    expect(find.text('ロン: 2000点'), findsOneWidget);
+    expect(find.text('1,000 / 2,000'), findsOneWidget);
+    expect(find.text('子の支払い / 親の支払い'), findsOneWidget);
+    expect(find.text('2,000'), findsOneWidget);
+    expect(find.text('放銃者の支払い'), findsOneWidget);
   });
 
   testWidgets('keeps the valid side when the other side does not score', (

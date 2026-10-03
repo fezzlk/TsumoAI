@@ -20,7 +20,6 @@ import '../models/interpretation_result.dart';
 import '../models/tile_observation.dart';
 import '../widgets/tile_image_picker.dart';
 import '../widgets/tile_glyph.dart';
-import '../widgets/context_input_panel.dart';
 import '../widgets/game_state_panel.dart';
 import '../widgets/score_result_panel.dart';
 import '../widgets/analysis_result_panel.dart';
@@ -46,6 +45,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../widgets/status_banner.dart';
 import '../widgets/toggle_chip.dart';
+import '../widgets/screen_header.dart';
 
 class ScoreWinnerOption {
   const ScoreWinnerOption({required this.label, required this.context});
@@ -1493,16 +1493,8 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  /// Opens the game-context settings (場風/自風/リーチ/ドラ表示牌 etc., via
-  /// `ContextInputPanel`) as a bottom sheet instead of always inline in the
-  /// scroll — most hands don't need to touch these every time. Wrapped in
-  /// `StatefulBuilder` so the sheet's own content redraws immediately after
-  /// each edit; `ContextInputPanel` only re-renders when given a new
-  /// `context_`, and a plain `setState` here rebuilds `ScanScreen`, not this
-  /// separately-routed sheet.
   /// Applies a new `_context` and clears any stale result computed from the
-  /// old one — shared by every place that edits it (the 詳細条件 sheet, the
-  /// quick リーチ controls in the bottom bar, and
+  /// old one — shared by every place that edits it (the condition chips and
   /// `GameStatePanel`). Callers still wrap this in their own `setState`.
   void _updateContext(ContextInput c) {
     final roundWindChanged = _context.roundWind != c.roundWind;
@@ -1625,36 +1617,6 @@ class _ScanScreenState extends State<ScanScreen> {
     } else {
       _winConditionStep = _WinConditionStep.waiting;
     }
-  }
-
-  void _showContextDetailsSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 12,
-                right: 12,
-                top: 12,
-                bottom: 12 + MediaQuery.of(sheetContext).viewInsets.bottom,
-              ),
-              child: SingleChildScrollView(
-                child: ContextInputPanel(
-                  context_: _context,
-                  onChanged: (c) {
-                    setState(() => _updateContext(c));
-                    setSheetState(() {});
-                  },
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   void _backToCamera() {
@@ -1893,67 +1855,44 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// Compact リーチ(一発) controls for the bottom action bar —
-  /// the win-time conditions used on many hands, pulled out of
-  /// the "詳細条件" sheet (`ContextInputPanel`) so they don't need an extra
-  /// tap to reach. Everything else (海底・河底・嶺上・槍槓・地和・天和) stays
-  /// in that sheet.
-  Widget _buildQuickWinConditions() {
-    final isNoneRiichi = !_context.riichi && !_context.doubleRiichi;
-    final isRiichi = _context.riichi && !_context.doubleRiichi;
-    final isDoubleRiichi = _context.doubleRiichi;
-
-    return Wrap(
-      spacing: 4,
-      runSpacing: 4,
-      children: [
-        _quickChip(
-          'なし',
-          isNoneRiichi,
-          () => setState(
-            () => _updateContext(
-              _context.copyWith(
-                riichi: false,
-                doubleRiichi: false,
-                ippatsu: false,
-              ),
-            ),
-          ),
-        ),
-        _quickChip(
-          'リーチ',
-          isRiichi,
-          () => setState(
-            () => _updateContext(
-              _context.copyWith(riichi: true, doubleRiichi: false),
-            ),
-          ),
-        ),
-        _quickChip(
-          'Wリーチ',
-          isDoubleRiichi,
-          () => setState(
-            () => _updateContext(
-              _context.copyWith(riichi: true, doubleRiichi: true),
-            ),
-          ),
-        ),
-        if (_context.riichi || _context.doubleRiichi) ...[
-          _quickChip(
-            '一発',
-            _context.ippatsu,
-            () => setState(
-              () =>
-                  _updateContext(_context.copyWith(ippatsu: !_context.ippatsu)),
-            ),
-          ),
-        ],
-      ],
-    );
+  /// Win-time condition chips shown in the condition card's wind row.
+  /// 立直・ダブル立直・一発 are independent chips (decided 2026-09-26): 一発
+  /// and ダブル立直 can be chosen directly and imply 立直 themselves.
+  List<Widget> _conditionChips() {
+    final c = _context;
+    void apply(ContextInput next) => setState(() => _updateContext(next));
+    Widget chip(String label, bool selected, ContextInput Function() next) =>
+        ToggleChip(label: label, selected: selected, onTap: () => apply(next()));
+    return [
+      chip(
+        '立直',
+        c.riichi && !c.doubleRiichi,
+        () => c.riichi && !c.doubleRiichi
+            ? c.copyWith(riichi: false, ippatsu: false)
+            : c.copyWith(riichi: true, doubleRiichi: false),
+      ),
+      chip(
+        '一発',
+        c.ippatsu,
+        () => c.ippatsu
+            ? c.copyWith(ippatsu: false)
+            : c.copyWith(ippatsu: true, riichi: true),
+      ),
+      chip(
+        'ダブル立直',
+        c.doubleRiichi,
+        () => c.doubleRiichi
+            ? c.copyWith(riichi: false, doubleRiichi: false, ippatsu: false)
+            : c.copyWith(riichi: true, doubleRiichi: true),
+      ),
+      chip('嶺上開花', c.rinshan, () => c.copyWith(rinshan: !c.rinshan)),
+      chip('槍槓', c.chankan, () => c.copyWith(chankan: !c.chankan)),
+      chip('海底摸月', c.haitei, () => c.copyWith(haitei: !c.haitei)),
+      chip('河底撈魚', c.houtei, () => c.copyWith(houtei: !c.houtei)),
+      chip('天和', c.tenhou, () => c.copyWith(tenhou: !c.tenhou)),
+      chip('地和', c.chiihou, () => c.copyWith(chiihou: !c.chiihou)),
+    ];
   }
-
-  Widget _quickChip(String label, bool selected, VoidCallback onTap) =>
-      ToggleChip(label: label, selected: selected, onTap: onTap);
 
   Widget _buildResultTile(int index, double cellWidth) {
     final thumb = _croppedImageThumbnails[index];
@@ -2038,7 +1977,24 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final result = Column(
       mainAxisSize: MainAxisSize.min,
-      children: [cropImage, const SizedBox(height: 4), glyph],
+      children: [
+        cropImage,
+        const SizedBox(height: 4),
+        glyph,
+        if (canBeWinningTile && isWinningTile) ...[
+          Icon(Icons.arrow_upward, size: 20, color: _colors.winningTile),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '和了牌',
+              style: _text.labelSmall?.copyWith(
+                color: _colors.winningTile,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
     return RepaintBoundary(
       key: ValueKey('result-tile-$index'),
@@ -2046,87 +2002,62 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// ◀/▶ controls stepping あがり牌 through `_identifiedIndices`.
-  /// Combined 副露 add/reset controls (left) and あがり牌 ◀/▶ control
-  /// (right) in a single row, directly below the thumbnail row — no boxed
-  /// section around it (an earlier version wrapped 副露 controls in their
-  /// own always-visible `Container`, which the user found needlessly tall).
+  /// あがり牌 ◀/▶ stepping through `_identifiedIndices` (left; the arrow
+  /// under the tile marks the current one) and 副露 add/reset (right),
+  /// directly below the tile row.
   Widget _buildTileControlsRow() {
     final position = _winningTilePosition;
     final lastPosition = _identifiedIndices.length - 1;
-    final winningTileCode = _confirmedWinningTileId == null
-        ? null
-        : _tiles[int.parse(_confirmedWinningTileId!.split('-').last)];
+    final hasWinningTileControls =
+        _operation == HandOperation.score && _identifiedIndices.isNotEmpty;
 
     final meldControls = Wrap(
-      spacing: 4,
+      spacing: AppSpacing.xs,
+      runSpacing: AppSpacing.xs,
+      alignment: WrapAlignment.end,
       children: [
-        TextButton.icon(
+        if (_confirmedMelds.isNotEmpty)
+          TextButton(onPressed: _resetMelds, child: const Text('副露をリセット')),
+        OutlinedButton.icon(
           onPressed: _meldEligibleIndices.isEmpty
               ? null
               : _showMeldSelectionDialog,
           icon: const Icon(Icons.add, size: 18),
           label: const Text('副露を追加'),
         ),
-        TextButton.icon(
-          onPressed: _confirmedMelds.isEmpty ? null : _resetMelds,
-          icon: const Icon(Icons.restart_alt, size: 18),
-          label: const Text('副露をリセット'),
-        ),
       ],
     );
-    final hasWinningTileControls =
-        _operation == HandOperation.score && _identifiedIndices.isNotEmpty;
     final winningControls = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (hasWinningTileControls) ...[
-          Text(
-            'あがり牌',
-            style: _text.bodySmall,
-          ),
-          IconButton(
-            onPressed: position == null || position > 0
-                ? () => _moveWinningTile(-1)
-                : null,
-            icon: const Icon(Icons.chevron_left),
-            color: _scheme.onSurfaceVariant,
-          ),
-          SizedBox(
-            width: 30,
-            height: 40,
-            child: winningTileCode == null
-                ? null
-                : TileGlyph(
-                    tileCode: winningTileCode,
-                    fallbackTextStyle: TextStyle(color: _colors.winningTile),
-                  ),
-          ),
-          IconButton(
-            onPressed: position == null || position < lastPosition
-                ? () => _moveWinningTile(1)
-                : null,
-            icon: const Icon(Icons.chevron_right),
-            color: _scheme.onSurfaceVariant,
-          ),
-        ],
+        Text('和了牌', style: _text.labelMedium),
+        IconButton(
+          tooltip: '和了牌を左へ',
+          onPressed: position == null || position > 0
+              ? () => _moveWinningTile(-1)
+              : null,
+          icon: const Icon(Icons.chevron_left),
+          color: _colors.winningTile,
+        ),
+        IconButton(
+          tooltip: '和了牌を右へ',
+          onPressed: position == null || position < lastPosition
+              ? () => _moveWinningTile(1)
+              : null,
+          icon: const Icon(Icons.chevron_right),
+          color: _colors.winningTile,
+        ),
       ],
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (!hasWinningTileControls) return meldControls;
-        if (constraints.maxWidth < 420) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              meldControls,
-              Align(alignment: Alignment.centerRight, child: winningControls),
-            ],
-          );
-        }
-        return Row(children: [meldControls, const Spacer(), winningControls]);
-      },
+    return Row(
+      children: [
+        if (hasWinningTileControls) winningControls,
+        const SizedBox(width: AppSpacing.xs),
+        Expanded(
+          child: Align(alignment: Alignment.centerRight, child: meldControls),
+        ),
+      ],
     );
   }
 
@@ -2222,31 +2153,7 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget _buildInlineScoreResult() {
     if (_operation != HandOperation.score) return const SizedBox.shrink();
 
-    if (_isScoring) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.m,
-          vertical: AppSpacing.l,
-        ),
-        decoration: BoxDecoration(
-          color: _scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(AppRadius.large),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: AppSpacing.s),
-            Text('点数を更新中...', style: _text.bodyMedium),
-          ],
-        ),
-      );
-    }
+    if (_isScoring) return _busyCard('点数を更新中...');
 
     if (_isNotWinning) {
       return const StatusBanner(
@@ -2259,15 +2166,33 @@ class _ScanScreenState extends State<ScanScreen> {
       return const SizedBox.shrink();
     }
 
+    final roundLabel = [
+      ?widget.historyRoundLabel,
+      _context.isDealer ? '親' : '子',
+    ].join('・');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Expanded(child: Text('点数', style: _text.titleMedium)),
+            Text(
+              roundLabel,
+              style: _text.bodyMedium?.copyWith(
+                color: _scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.s),
         if (_context.doraIndicators.isEmpty) ...[
           const StatusBanner(
             kind: StatusKind.warning,
             message: '表ドラ表示牌が未入力のため、翻数と点数は未確定です',
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.s),
         ],
         ScoreResultPanel(
           tsumoResponse: _tsumoScoreResult,
@@ -2276,7 +2201,7 @@ class _ScanScreenState extends State<ScanScreen> {
           isOpenHand: _confirmedMelds.any((meld) => meld.open),
         ),
         if (widget.onScoreConfirmed != null) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.m),
           FilledButton(
             onPressed: () {
               widget.onScoreConfirmed!(_selectedWinnerIndex ?? 0);
@@ -2334,7 +2259,7 @@ class _ScanScreenState extends State<ScanScreen> {
     }
     return const StatusBanner(
       kind: StatusKind.info,
-      message: '画像解釈の確認: あがり牌は上の牌画像の枠の下にある◀▶ボタンで選べます',
+      message: 'あがり牌は牌の列の下にある「和了牌 ◀ ▶」で選べます',
     );
   }
 
@@ -2411,39 +2336,46 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  /// Camera and detection overlay a photo, so they stay dark; condition
-  /// entry and results follow the light app theme.
-  bool get _showsCameraSurface =>
-      _phase == _ScanPhase.camera ||
-      (_phase == _ScanPhase.detecting && !_usesWinConditionWizard);
-
-  // These read this State's context, which sits above the local camera
-  // Theme applied in build(): they always return the light app theme. In the
-  // camera and detecting phases, pass an explicit camera color (`_colors`
-  // camera tokens) rather than relying on a `_scheme`/`_text` default.
   ColorScheme get _scheme => Theme.of(context).colorScheme;
   TextTheme get _text => Theme.of(context).textTheme;
   AppColors get _colors => context.appColors;
 
   @override
   Widget build(BuildContext context) {
-    final scaffold = Scaffold(
-      backgroundColor: _showsCameraSurface ? _colors.cameraBackground : null,
-      // No AppBar: its only job would have been a back button, which
-      // duplicated "撮り直す" (retake stays within this screen, keeping the
-      // camera controller alive; a real back button would instead pop the
-      // whole screen back to Home). Resolved by dropping the AppBar rather
-      // than keeping both — see FEZ-191 follow-up.
+    return Scaffold(
       body: switch (_phase) {
         _ScanPhase.camera => _buildCameraPhase(),
         _ScanPhase.detecting => _buildDetectingPhase(),
         _ScanPhase.results => _buildResultsPhase(),
       },
     );
-    return _showsCameraSurface
-        ? Theme(data: AppTheme.camera(), child: scaffold)
-        : scaffold;
   }
+
+  /// Number of tiles with an identified type, for progress labels.
+  int get _identifiedCount => _identifiedIndices.length;
+
+  /// Deep-green rounded frame that holds a photo or the camera preview.
+  Widget _photoFrame({required Widget child, double radius = AppRadius.hero}) =>
+      ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(colors: _colors.photoGradient),
+          ),
+          child: child,
+        ),
+      );
+
+  /// Translucent pill drawn over the camera preview.
+  Widget _overlayPill({required List<Widget> children}) => Container(
+    constraints: const BoxConstraints(minHeight: 30),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+    decoration: BoxDecoration(
+      color: _colors.cameraScrim,
+      borderRadius: BorderRadius.circular(AppRadius.iconTile),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: children),
+  );
 
   // ════════════════════════════════════════
   // Phase: Detecting (automatic tile detection)
@@ -2452,29 +2384,36 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget _buildDetectingPhase() {
     if (_usesWinConditionWizard) return _buildWinConditionPhase();
     return SafeArea(
-      child: Stack(
-        fit: StackFit.expand,
+      child: Column(
         children: [
-          if (_capturedBytes != null)
-            Opacity(
-              opacity: 0.4,
-              child: Image.memory(
-                _capturedBytes!,
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-              ),
+          ScreenHeader(
+            title: '認識中',
+            subtitle: _purpose.label,
+            backLabel: '撮り直す',
+            onBack: _backToCamera,
+            trailing: HeaderHomeButton(
+              onPressed: () => Navigator.maybePop(context),
             ),
-          Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(AppSpacing.l),
               children: [
-                CircularProgressIndicator(color: _colors.detectionBox),
-                const SizedBox(height: AppSpacing.m),
-                Text(
-                  '牌を検出中...',
-                  style: _text.bodyMedium?.copyWith(
-                    color: _colors.cameraOnSurfaceVariant,
+                if (_capturedBytes != null)
+                  _photoFrame(
+                    child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: Image.memory(
+                        _capturedBytes!,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                      ),
+                    ),
                   ),
+                const SizedBox(height: AppSpacing.m),
+                _recognitionStatusCard(
+                  title: '牌を識別しています',
+                  subtitle: '完了すると結果を自動で表示します',
                 ),
               ],
             ),
@@ -2484,55 +2423,88 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  Widget _recognitionStatusCard({
+    required String title,
+    required String subtitle,
+  }) => Container(
+    padding: const EdgeInsets.all(AppSpacing.l),
+    decoration: BoxDecoration(
+      color: _scheme.primary,
+      borderRadius: BorderRadius.circular(AppRadius.xLarge),
+    ),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 36,
+          height: 36,
+          child: CircularProgressIndicator(
+            strokeWidth: 3,
+            color: _colors.onDark,
+            backgroundColor: _colors.onDark.withValues(alpha: 0.25),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.l),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: _text.titleMedium?.copyWith(color: _colors.onDark),
+              ),
+              Text(
+                subtitle,
+                style: _text.bodySmall?.copyWith(color: _colors.onDarkMuted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _buildWinConditionPhase() {
+    final step = _winConditionStep;
+    final (backLabel, onBack) = switch (step) {
+      _WinConditionStep.dora => (
+        '一つ前',
+        () => setState(() => _winConditionStep = _WinConditionStep.riichi),
+      ),
+      _WinConditionStep.uraDora => (
+        '一つ前',
+        () => setState(() => _winConditionStep = _WinConditionStep.dora),
+      ),
+      _ => ('撮り直す', _backToCamera),
+    };
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-            child: Row(
-              children: [
-                TextButton.icon(
-                  onPressed: _backToCamera,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('撮り直す'),
-                ),
-                const Spacer(),
-                if (!_recognitionComplete) ...[
-                  const SizedBox(
-                    width: 15,
-                    height: 15,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 7),
-                  Text('認識中', style: _text.bodyMedium),
-                ] else ...[
-                  Icon(
-                    Icons.check_circle_outline,
-                    size: 18,
-                    color: _colors.success.color,
-                  ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Text(
-                    '認識完了',
-                    style: _text.bodyMedium?.copyWith(
-                      color: _colors.success.color,
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                IconButton(
-                  onPressed: () => Navigator.maybePop(context),
-                  icon: const Icon(Icons.home_outlined),
-                  tooltip: '対局ホーム',
-                ),
-              ],
+          ScreenHeader(
+            title: _purpose.label,
+            subtitle: step == _WinConditionStep.waiting ? '認識中' : '条件入力',
+            backLabel: backLabel,
+            onBack: onBack,
+            trailing: HeaderHomeButton(
+              tooltip: '対局ホーム',
+              onPressed: () => Navigator.maybePop(context),
             ),
           ),
-          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.l,
+              AppSpacing.l,
+              AppSpacing.l,
+              0,
+            ),
+            child: _recognitionProgressCard(),
+          ),
+          if (step != _WinConditionStep.waiting) ...[
+            const SizedBox(height: AppSpacing.l),
+            _stepDots(step),
+          ],
           Expanded(
-            child: switch (_winConditionStep) {
+            child: switch (step) {
               _WinConditionStep.riichi => _buildRiichiStep(),
               _WinConditionStep.dora => _buildDoraStep(ura: false),
               _WinConditionStep.uraDora => _buildDoraStep(ura: true),
@@ -2544,39 +2516,135 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _buildRiichiStep() => Padding(
-    padding: const EdgeInsets.all(20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+  /// Top card of condition entry: the photo thumbnail and recognition state.
+  Widget _recognitionProgressCard() {
+    final total = _visibleSlotCount;
+    return Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: _scheme.surface,
+        border: Border.all(color: _scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(AppRadius.feature),
+      ),
+      child: Row(
+        children: [
+          if (_capturedBytes != null) ...[
+            _photoFrame(
+              radius: AppRadius.iconTile,
+              child: SizedBox(
+                width: 90,
+                height: 58,
+                child: Image.memory(_capturedBytes!, fit: BoxFit.cover),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _recognitionComplete
+                          ? Icons.check_circle
+                          : Icons.circle,
+                      size: _recognitionComplete ? 16 : 10,
+                      color: _colors.detectionBox,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _recognitionComplete ? '認識完了' : '牌を認識中',
+                      style: _text.titleSmall,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _recognitionComplete
+                      ? '条件を入力すると結果を表示します'
+                      : '条件入力と並行して処理しています',
+                  style: _text.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          if (total > 0)
+            Text(
+              '$_identifiedCount / $total',
+              style: _text.titleSmall?.copyWith(color: _scheme.primary),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stepDots(_WinConditionStep current) {
+    const steps = [
+      _WinConditionStep.riichi,
+      _WinConditionStep.dora,
+      _WinConditionStep.uraDora,
+    ];
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
-          '立直しましたか？',
-          textAlign: TextAlign.center,
-          style: _text.headlineSmall,
-        ),
-        const Spacer(),
-        SizedBox(
-          height: 92,
-          child: FilledButton(
-            onPressed: () => _selectRiichiForWinFlow(true),
-            child: Text('はい', style: _text.titleLarge?.copyWith(
-              color: _scheme.onPrimary,
-            )),
+        for (final step in steps)
+          Container(
+            width: step == current ? 32 : 9,
+            height: 9,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            decoration: BoxDecoration(
+              color: step == current ? _scheme.primary : _scheme.outlineVariant,
+              borderRadius: BorderRadius.circular(AppRadius.small),
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
-        SizedBox(
-          height: 92,
-          child: OutlinedButton(
-            onPressed: () => _selectRiichiForWinFlow(false),
-            child: Text('いいえ', style: _text.titleLarge?.copyWith(
-              color: _scheme.primary,
-            )),
-          ),
-        ),
-        const Spacer(),
       ],
-    ),
+    );
+  }
+
+  Widget _stepHeading(String tag, String title) => Column(
+    children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: _colors.soft,
+          borderRadius: BorderRadius.circular(AppRadius.medium),
+        ),
+        child: Text(
+          tag,
+          style: _text.labelSmall?.copyWith(color: _scheme.primary),
+        ),
+      ),
+      const SizedBox(height: AppSpacing.m),
+      Text(title, textAlign: TextAlign.center, style: _text.headlineSmall),
+    ],
+  );
+
+  Widget _buildRiichiStep() => ListView(
+    padding: const EdgeInsets.all(AppSpacing.l),
+    children: [
+      _stepHeading('立直', '立直しましたか？'),
+      const SizedBox(height: AppSpacing.xl),
+      _AnswerCard(
+        label: 'はい',
+        icon: Icons.check,
+        primary: true,
+        onTap: () => _selectRiichiForWinFlow(true),
+      ),
+      const SizedBox(height: AppSpacing.m),
+      _AnswerCard(
+        label: 'いいえ',
+        icon: Icons.remove,
+        primary: false,
+        onTap: () => _selectRiichiForWinFlow(false),
+      ),
+      const SizedBox(height: AppSpacing.xl),
+      Text(
+        '枠と牌の認識結果は、計算結果を表示する前に確認・訂正できます',
+        textAlign: TextAlign.center,
+        style: _text.bodySmall,
+      ),
+    ],
   );
 
   Widget _buildDoraStep({required bool ura}) {
@@ -2584,27 +2652,68 @@ class _ScanScreenState extends State<ScanScreen> {
     final slots = ura
         ? math.max(1, _context.doraIndicators.length)
         : _doraSlotCount;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final label = ura ? '裏ドラ表示牌' : '表ドラ表示牌';
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.l),
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+        _stepHeading(ura ? '裏ドラ' : '表ドラ', ura ? '裏ドラを選択' : '表ドラを選択'),
+        const SizedBox(height: AppSpacing.l),
+        Row(
+          children: [
+            Expanded(child: Text(label, style: _text.titleSmall)),
+            if (ura && _context.doraIndicators.isNotEmpty)
+              _buildReferenceDora()
+            else
+              Text('最大4枚', style: _text.bodySmall),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.s),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _scheme.surface,
+            border: Border.all(color: _scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(AppRadius.card),
+          ),
           child: Row(
             children: [
-              TextButton.icon(
-                onPressed: () => setState(() {
-                  _winConditionStep = ura
-                      ? _WinConditionStep.dora
-                      : _WinConditionStep.riichi;
-                }),
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('一つ前'),
-              ),
-              const Spacer(),
-              Text(
-                ura ? '裏ドラ表示牌' : '表ドラ表示牌',
-                style: _text.titleMedium,
-              ),
+              for (var index = 0; index < slots; index++)
+                Padding(
+                  padding: const EdgeInsets.only(right: AppSpacing.s),
+                  child: GestureDetector(
+                    onTap: index < selected.length
+                        ? () => _removeConditionTile(index, ura: ura)
+                        : null,
+                    child: Container(
+                      width: 48,
+                      height: 62,
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: _scheme.surface,
+                        border: Border.all(
+                          color: index == selected.length
+                              ? _scheme.primary
+                              : _scheme.outlineVariant,
+                          width: index == selected.length ? 2 : 1,
+                        ),
+                        borderRadius: BorderRadius.circular(AppRadius.medium),
+                      ),
+                      child: index < selected.length
+                          ? TileGlyph(tileCode: selected[index])
+                          : Icon(Icons.add, color: _scheme.outline),
+                    ),
+                  ),
+                ),
+              if (!ura && slots < 4)
+                IconButton(
+                  onPressed: () => setState(() => _doraSlotCount += 1),
+                  style: IconButton.styleFrom(
+                    backgroundColor: _colors.soft,
+                    foregroundColor: _scheme.primary,
+                  ),
+                  icon: const Icon(Icons.add),
+                  tooltip: 'ドラ表示牌を追加',
+                ),
               const Spacer(),
               TextButton(
                 onPressed: () => _skipDoraStep(ura: ura),
@@ -2613,44 +2722,11 @@ class _ScanScreenState extends State<ScanScreen> {
             ],
           ),
         ),
-        if (ura && _context.doraIndicators.isNotEmpty) _buildReferenceDora(),
+        const SizedBox(height: AppSpacing.m),
         SizedBox(
-          height: 50,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              for (var index = 0; index < slots; index++) ...[
-                Container(
-                  width: 34,
-                  height: 46,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    color: _scheme.surfaceContainerHighest,
-                    border: Border.all(color: _scheme.outline),
-                    borderRadius: BorderRadius.circular(AppRadius.small),
-                  ),
-                  child: index < selected.length
-                      ? GestureDetector(
-                          onTap: () => _removeConditionTile(index, ura: ura),
-                          child: Padding(
-                            padding: const EdgeInsets.all(2),
-                            child: TileGlyph(tileCode: selected[index]),
-                          ),
-                        )
-                      : const SizedBox.shrink(),
-                ),
-              ],
-              if (!ura && slots < 4)
-                IconButton(
-                  onPressed: () => setState(() => _doraSlotCount += 1),
-                  icon: const Icon(Icons.add_circle_outline),
-                  tooltip: 'ドラ表示牌を追加',
-                ),
-            ],
-          ),
-        ),
-        Expanded(
+          height: 300,
           child: TileImagePicker(
+            showHeader: false,
             onTileSelected: (tile) => _selectConditionTile(tile, ura: ura),
           ),
         ),
@@ -2658,38 +2734,22 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _buildReferenceDora() => Padding(
-    padding: const EdgeInsets.only(right: 16, bottom: 4),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Text('表ドラ', style: _text.labelSmall?.copyWith(
-          color: _scheme.onSurfaceVariant,
-        )),
-        const SizedBox(width: 6),
-        for (final tile in _context.doraIndicators)
-          SizedBox(width: 22, height: 30, child: TileGlyph(tileCode: tile)),
-      ],
-    ),
+  Widget _buildReferenceDora() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text('表ドラ', style: _text.bodySmall),
+      const SizedBox(width: 6),
+      for (final tile in _context.doraIndicators)
+        SizedBox(width: 22, height: 30, child: TileGlyph(tileCode: tile)),
+    ],
   );
 
-  Widget _buildRecognitionWaiting() => Stack(
-    fit: StackFit.expand,
+  Widget _buildRecognitionWaiting() => ListView(
+    padding: const EdgeInsets.all(AppSpacing.l),
     children: [
-      if (_capturedBytes != null)
-        Opacity(
-          opacity: 0.32,
-          child: Image.memory(_capturedBytes!, fit: BoxFit.contain),
-        ),
-      Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: AppSpacing.m),
-            Text('入力完了・認識結果を待っています', style: _text.bodyMedium),
-          ],
-        ),
+      _recognitionStatusCard(
+        title: '牌を識別しています',
+        subtitle: '入力は完了しています。完了すると結果を自動で表示します',
       ),
     ],
   );
@@ -2700,111 +2760,179 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildCameraPhase() {
     if (_cameraInitError != null) return _buildCameraError();
-    if (_controller == null || !_controller!.value.isInitialized) {
-      return Center(
-        child: Text(
-          'カメラ初期化中...',
-          style: _text.bodyMedium?.copyWith(color: _colors.cameraOnSurface),
-        ),
-      );
-    }
-
+    final count = _liveDetectorResult?.tileCount ?? 0;
+    final isReady = _expectedTileCount == null
+        ? count >= 13 && count <= 18
+        : count == _expectedTileCount;
+    final expectedLabel = _expectedTileCount?.toString() ?? '自動';
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          AspectRatio(
-            aspectRatio:
-                captureFrameAspectRatio *
-                captureGuideWidthFactor /
-                captureGuideHeightFactor,
-            child: Stack(
-              fit: StackFit.expand,
+          ScreenHeader(
+            title: _purpose.label,
+            subtitle: '手牌を読み取り',
+            trailing: HeaderHomeButton(
+              onPressed: () => Navigator.maybePop(context),
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(AppSpacing.l),
               children: [
-                _buildCaptureAreaPreview(),
-                Positioned(
-                  left: 8,
-                  right: 8,
-                  top: 8,
-                  child: Row(
-                    children: [
-                      IconButton.filledTonal(
-                        onPressed: () => Navigator.maybePop(context),
-                        icon: const Icon(Icons.arrow_back),
-                        tooltip: '戻る',
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Container(
-                          constraints: const BoxConstraints(minHeight: 44),
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: _colors.cameraScrim,
-                            borderRadius: BorderRadius.circular(
-                              AppRadius.xLarge,
+                _photoFrame(
+                  child: AspectRatio(
+                    aspectRatio:
+                        captureFrameAspectRatio *
+                        captureGuideWidthFactor /
+                        captureGuideHeightFactor,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (_controller != null &&
+                            _controller!.value.isInitialized)
+                          _buildCaptureAreaPreview()
+                        else
+                          Center(
+                            child: Text(
+                              'カメラ初期化中...',
+                              style: _text.bodyMedium?.copyWith(
+                                color: _colors.onDark,
+                              ),
                             ),
                           ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                        Positioned(
+                          left: AppSpacing.m,
+                          top: AppSpacing.m,
+                          child: _overlayPill(
                             children: [
-                              Flexible(
-                                child: Text(
-                                  _purpose.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: _text.titleSmall?.copyWith(
-                                    color: _colors.cameraOnSurface,
-                                  ),
-                                ),
+                              Icon(
+                                Icons.circle,
+                                size: 9,
+                                color: _colors.detectionBox,
                               ),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                child: Text(
-                                  _cameraStatusLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: _text.bodySmall?.copyWith(
-                                    color: _colors.cameraOnSurfaceVariant,
-                                  ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _cameraStatusLabel,
+                                style: _text.labelMedium?.copyWith(
+                                  color: _colors.onDark,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filledTonal(
-                        onPressed: () => Navigator.maybePop(context),
-                        icon: const Icon(Icons.home_outlined),
-                        tooltip: 'ホーム',
-                      ),
-                    ],
+                        Positioned(
+                          right: AppSpacing.m,
+                          top: AppSpacing.m,
+                          child: _overlayPill(
+                            children: [
+                              Text(
+                                '$count / $expectedLabel枚',
+                                style: _text.labelMedium?.copyWith(
+                                  color: _colors.onDark,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                Positioned(
-                  right: 12,
-                  bottom: 8,
-                  child: _buildLiveTileCountBadge(),
+                const SizedBox(height: AppSpacing.m),
+                _detectionStatusCard(isReady: isReady, count: count),
+                const SizedBox(height: AppSpacing.l),
+                Row(
+                  children: [
+                    Expanded(child: Text('想定枚数', style: _text.titleSmall)),
+                    Text('違う場合だけ変更', style: _text.bodySmall),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.s),
+                _buildExpectedTileCountSelector(),
+                const SizedBox(height: AppSpacing.s),
+                Text(
+                  '${_purpose.label}では${_purpose.defaultTileCount}枚を初期選択しています',
+                  style: _text.bodySmall,
+                ),
+                const SizedBox(height: AppSpacing.l),
+                OutlinedButton(
+                  onPressed: _isCapturing ? null : _capture,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(50),
+                    foregroundColor: _scheme.onSurfaceVariant,
+                  ),
+                  child: Text(
+                    _isCapturing
+                        ? '撮影中...'
+                        : _autoCaptureEnabled
+                        ? '自動確定しない場合は手動で確定'
+                        : '手動で確定',
+                  ),
+                ),
+                Center(
+                  child: TextButton(
+                    onPressed: _toggleAutoCapture,
+                    child: Text(
+                      _autoCaptureEnabled ? '自動確定をオフにする' : '自動確定をオンにする',
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detectionStatusCard({required bool isReady, required int count}) {
+    final tint = _colors.tsumoCard;
+    final (title, subtitle) = _isCapturing
+        ? ('撮影しています', '少しそのままお待ちください')
+        : isReady
+        ? (
+            '$count枚を検出しました',
+            _autoCaptureEnabled ? 'この状態が続くと自動で確定します' : '手動で確定してください',
+          )
+        : ('牌を検出中', '想定枚数と一致すると自動で確定します');
+    return Container(
+      constraints: const BoxConstraints(minHeight: 70),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: tint.container,
+        border: Border.all(color: tint.border),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: isReady ? _scheme.primary : _scheme.surface,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              isReady ? Icons.check : Icons.search,
+              size: 20,
+              color: isReady ? _scheme.onPrimary : _scheme.primary,
+            ),
+          ),
+          const SizedBox(width: 10),
           Expanded(
-            child: Container(
-              color: _colors.cameraBackground,
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-              child: Column(
-                children: [
-                  _buildExpectedTileCountSelector(),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _buildAutoCaptureToggle(),
-                  ),
-                  const Spacer(),
-                  _buildCaptureButton(),
-                ],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: _text.titleSmall?.copyWith(color: tint.onContainer),
+                ),
+                Text(
+                  subtitle,
+                  style: _text.bodySmall?.copyWith(color: tint.onContainer),
+                ),
+              ],
             ),
           ),
         ],
@@ -2815,51 +2943,32 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget _buildCameraError() => SafeArea(
     child: Column(
       children: [
-        Row(
-          children: [
-            IconButton(
-              onPressed: () => Navigator.maybePop(context),
-              icon: const Icon(Icons.arrow_back),
-              tooltip: '戻る',
-            ),
-            Expanded(
-              child: Text(
-                'カメラを開始できません',
-                textAlign: TextAlign.center,
-                style: _text.titleMedium?.copyWith(
-                  color: _colors.cameraOnSurface,
-                ),
-              ),
-            ),
-            IconButton(
-              onPressed: () => Navigator.maybePop(context),
-              icon: const Icon(Icons.home_outlined),
-              tooltip: 'ホーム',
-            ),
-          ],
+        ScreenHeader(
+          title: 'カメラを開始できません',
+          trailing: HeaderHomeButton(
+            onPressed: () => Navigator.maybePop(context),
+          ),
         ),
         Expanded(
           child: Center(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(AppSpacing.xl),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
                     Icons.no_photography_outlined,
-                    color: _colors.cameraOnSurfaceVariant,
+                    color: _scheme.onSurfaceVariant,
                     size: 48,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.l),
                   Text(
                     _cameraInitError!,
                     textAlign: TextAlign.center,
-                    style: _text.bodyMedium?.copyWith(
-                      color: _colors.cameraOnSurfaceVariant,
-                    ),
+                    style: _text.bodyMedium,
                   ),
                   if (widget.cameras.isNotEmpty) ...[
-                    const SizedBox(height: 20),
+                    const SizedBox(height: AppSpacing.l),
                     FilledButton.icon(
                       onPressed: _initCamera,
                       icon: const Icon(Icons.refresh),
@@ -2912,40 +3021,6 @@ class _ScanScreenState extends State<ScanScreen> {
     },
   );
 
-  Widget _buildCaptureButton() {
-    return Semantics(
-      button: true,
-      label: '撮影',
-      child: GestureDetector(
-        onTap: _isCapturing ? null : _capture,
-        child: Container(
-          width: 72,
-          height: 72,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: _colors.cameraOnSurface, width: 4),
-            color: _isCapturing
-                ? _colors.cameraOnSurfaceVariant
-                : _colors.cameraOnSurface.withValues(alpha: 0.18),
-          ),
-          child: _isCapturing
-              ? Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: CircularProgressIndicator(
-                    color: _colors.cameraOnSurface,
-                    strokeWidth: 3,
-                  ),
-                )
-              : Icon(
-                  Icons.camera_alt,
-                  color: _colors.cameraOnSurface,
-                  size: 32,
-                ),
-        ),
-      ),
-    );
-  }
-
   String get _cameraStatusLabel {
     if (_isCapturing) return '撮影中';
     final count = _liveDetectorResult?.tileCount ?? 0;
@@ -2954,40 +3029,6 @@ class _ScanScreenState extends State<ScanScreen> {
         : count == _expectedTileCount;
     if (isReady) return _autoCaptureEnabled ? '安定待ち' : '撮影可能';
     return '牌を検出中';
-  }
-
-  Widget _buildLiveTileCountBadge() {
-    final count = _liveDetectorResult?.tileCount ?? 0;
-    final isReady = _expectedTileCount == null
-        ? count >= 13 && count <= 18
-        : count == _expectedTileCount;
-    final expectedLabel = _expectedTileCount?.toString() ?? '自動';
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: isReady ? _colors.success.color : _colors.cameraScrim,
-        borderRadius: BorderRadius.circular(AppRadius.xLarge),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isReady ? Icons.check_circle : Icons.search,
-            color: _colors.cameraOnSurface,
-            size: 16,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '$count / $expectedLabel 牌',
-            style: _text.labelLarge?.copyWith(
-              color: _colors.cameraOnSurface,
-              fontWeight: isReady ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
@@ -3005,42 +3046,6 @@ class _ScanScreenState extends State<ScanScreen> {
           await _redetectInRegion(_cropRegion);
         }
       },
-    );
-  }
-
-  Widget _buildAutoCaptureToggle() {
-    return GestureDetector(
-      onTap: _toggleAutoCapture,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: _colors.cameraScrim,
-          borderRadius: BorderRadius.circular(AppRadius.xLarge),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              _autoCaptureEnabled
-                  ? Icons.auto_awesome
-                  : Icons.auto_awesome_outlined,
-              color: _autoCaptureEnabled
-                  ? _colors.detectionBoxPending
-                  : _colors.cameraOnSurfaceVariant,
-              size: 16,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              _autoCaptureEnabled ? '自動' : '手動',
-              style: _text.labelMedium?.copyWith(
-                color: _autoCaptureEnabled
-                    ? _colors.detectionBoxPending
-                    : _colors.cameraOnSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -3091,235 +3096,226 @@ class _ScanScreenState extends State<ScanScreen> {
     return _capturedImage!.width / _capturedImage!.height;
   }
 
+  String get _resultsTitle => switch (_purpose) {
+    ScanPurpose.score => '点数計算結果',
+    ScanPurpose.wait => '待ち確認結果',
+    ScanPurpose.discard => '何を切る',
+    ScanPurpose.callAdvice => '鳴き判断',
+  };
+
+  bool get _hasResult =>
+      _analysisResult != null ||
+      _isNotWinning ||
+      _tsumoScoreResult != null ||
+      _ronScoreResult != null;
+
+  Widget _card({required Widget child}) => Container(
+    padding: const EdgeInsets.all(AppSpacing.l),
+    decoration: BoxDecoration(
+      color: _scheme.surface,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      border: Border.all(color: _scheme.outlineVariant),
+    ),
+    child: child,
+  );
+
+  Widget _busyCard(String message) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(
+      horizontal: AppSpacing.m,
+      vertical: AppSpacing.l,
+    ),
+    decoration: BoxDecoration(
+      color: _scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(width: AppSpacing.s),
+        Text(message, style: _text.bodyMedium),
+      ],
+    ),
+  );
+
+  Widget _trainingDataButton() {
+    final busy = _isSendingTraining || _isUndoingTraining;
+    final color = _colors.developer.color;
+    return TextButton.icon(
+      onPressed: busy
+          ? null
+          : _trainingDataSent
+          ? _undoTrainingData
+          : _sendTrainingData,
+      icon: busy
+          ? SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+            )
+          : Icon(
+              _trainingDataSent ? Icons.undo : Icons.school,
+              size: 18,
+              color: color,
+            ),
+      label: Text(
+        _isSendingTraining
+            ? '送信中...'
+            : _isUndoingTraining
+            ? '取り消し中...'
+            : _trainingDataSent
+            ? '取り消す'
+            : '学習データ送信',
+        style: TextStyle(color: color),
+      ),
+    );
+  }
+
+  /// 「認識結果を確認」: the photo with detected-tile markers, the tile-count
+  /// choice, the identified tile row and the あがり牌/副露 controls.
+  Widget _recognitionCard() {
+    final media = MediaQuery.sizeOf(context);
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text('認識結果を確認', style: _text.titleMedium)),
+              if (_cropRegion != null)
+                IconButton(
+                  onPressed: () => _redetectInRegion(null),
+                  icon: const Icon(Icons.undo),
+                  tooltip: '元の範囲に戻す',
+                ),
+              // Trimming sits at the card's top right (decided 2026-09-26).
+              OutlinedButton(
+                onPressed: _cropAndRedetect,
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, AppSizes.tapTarget),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.m,
+                  ),
+                ),
+                child: const Text('トリミング'),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.m),
+          // Tapping a marker opens the full-screen box editor for that tile
+          // (`_openBoxEditor`). The photo is capped in both width and height
+          // so a landscape shot doesn't eat the whole screen.
+          if (_capturedBytes != null) ...[
+            Center(
+              child: RepaintBoundary(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: media.width,
+                    maxHeight: media.height * 0.4,
+                  ),
+                  child: _photoFrame(
+                    radius: AppRadius.card,
+                    child: AspectRatio(
+                      aspectRatio: _displayAspectRatio,
+                      child: InteractiveViewer(
+                        minScale: 1.0,
+                        maxScale: 4.0,
+                        child: _buildTileMarkerOverlay(),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.m),
+          ],
+          _buildExpectedTileCountSelector(redetectOnChange: true),
+          const SizedBox(height: AppSpacing.m),
+          // Each crop paired with its identified tile directly below (or
+          // "?" until classification finishes). Tapping the crop opens the
+          // box editor; tapping the tile opens the tile picker.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const columns = 9;
+              const spacing = 3.0;
+              final available = constraints.maxWidth - spacing * (columns - 1);
+              final cellWidth = math.min(40.0, available / columns);
+              return Wrap(
+                alignment: WrapAlignment.center,
+                spacing: spacing,
+                runSpacing: 8,
+                children: [
+                  for (var index = 0; index < _visibleSlotCount; index++)
+                    _buildResultTile(index, cellWidth),
+                ],
+              );
+            },
+          ),
+          // Gated on every detected box having a tile — before that there's
+          // nothing yet to mark as 副露 or あがり牌.
+          if (_allDetectedTilesReady) ...[
+            const SizedBox(height: AppSpacing.s),
+            _buildTileControlsRow(),
+          ],
+          if (widget.showTrainingDataActions && _trainingTilesReady)
+            Align(
+              alignment: Alignment.centerRight,
+              child: _trainingDataButton(),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildResultsPhase() {
+    final isScore = _operation == HandOperation.score;
+    final asksAi =
+        _purpose == ScanPurpose.discard || _purpose == ScanPurpose.callAdvice;
     return SafeArea(
       child: Column(
         children: [
+          ScreenHeader(
+            title: _resultsTitle,
+            subtitle: isScore ? '認識・条件を変更可能' : '認識結果を変更可能',
+            onBack: _backToCamera,
+            trailing: HeaderHomeButton(
+              onPressed: () => Navigator.maybePop(context),
+            ),
+          ),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSpacing.l),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: _backToCamera,
-                        icon: const Icon(Icons.arrow_back),
-                        tooltip: '撮影画面に戻る',
-                        constraints: const BoxConstraints(
-                          minWidth: 44,
-                          minHeight: 44,
-                        ),
-                        padding: EdgeInsets.zero,
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.maybePop(context),
-                        icon: const Icon(Icons.home_outlined),
-                        tooltip: 'ホーム',
-                        constraints: const BoxConstraints(
-                          minWidth: 44,
-                          minHeight: 44,
-                        ),
-                        padding: EdgeInsets.zero,
-                      ),
-                      Expanded(
-                        child: Text(
-                          '認識結果を確認',
-                          textAlign: TextAlign.center,
-                          style: _text.titleMedium,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: _cropAndRedetect,
-                        icon: const Icon(Icons.crop),
-                        tooltip: 'トリミング',
-                        constraints: const BoxConstraints(
-                          minWidth: 44,
-                          minHeight: 44,
-                        ),
-                        padding: EdgeInsets.zero,
-                      ),
-                      if (_cropRegion != null)
-                        IconButton(
-                          onPressed: () => _redetectInRegion(null),
-                          icon: const Icon(Icons.undo),
-                          tooltip: '元の範囲に戻す',
-                          constraints: const BoxConstraints(
-                            minWidth: 44,
-                            minHeight: 44,
-                          ),
-                          padding: EdgeInsets.zero,
-                        ),
-                    ],
-                  ),
-                  _buildExpectedTileCountSelector(redetectOnChange: true),
-                  if (widget.showTrainingDataActions && _trainingTilesReady)
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: _isSendingTraining || _isUndoingTraining
-                            ? null
-                            : _trainingDataSent
-                            ? _undoTrainingData
-                            : _sendTrainingData,
-                        icon: _isSendingTraining || _isUndoingTraining
-                            ? SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: _scheme.tertiary,
-                                ),
-                              )
-                            : Icon(
-                                _trainingDataSent ? Icons.undo : Icons.school,
-                                size: 18,
-                                color: _scheme.tertiary,
-                              ),
-                        label: Text(
-                          _isSendingTraining
-                              ? '送信中...'
-                              : _isUndoingTraining
-                              ? '取り消し中...'
-                              : _trainingDataSent
-                              ? '取り消す'
-                              : '学習データ送信',
-                          style: TextStyle(color: _scheme.tertiary),
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-
-                  // Full photo with detected-tile markers, capped to a
-                  // fraction of the screen height so it doesn't dominate the
-                  // scroll — `AspectRatio` still fits inside that cap using
-                  // the photo's own aspect ratio. Tapping a marker opens the
-                  // full-screen box editor for that tile (`_openBoxEditor`);
-                  // pinch-zoom is safe to leave on here since nothing on
-                  // this screen does its own dragging anymore (editing
-                  // happens in `TileBoxEditorScreen`, a separate route with
-                  // no zoom of its own).
-                  if (_capturedBytes != null) ...[
-                    // A landscape hand photo (typically ~16:9) genuinely
-                    // cannot both fill this app's wide-but-short landscape
-                    // screen width AND stay a modest fraction of its height
-                    // — filling ~850 logical px of width at 16:9 needs
-                    // ~478px of height, more than this device's entire
-                    // 402px-tall screen. Capping height alone (as an
-                    // earlier version did) left the image pillarboxed
-                    // (narrow, lots of empty width) since AspectRatio still
-                    // has to shrink width to match a short height. Capping
-                    // BOTH width and height to a moderate size and
-                    // centering instead — rather than stretching to the
-                    // column's full width — is the deliberate middle
-                    // ground: bigger than the pillarboxed version, but
-                    // still leaves the controls below reachable without
-                    // this photo alone eating most of the screen.
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        RepaintBoundary(
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: MediaQuery.of(context).size.width,
-                              maxHeight:
-                                  MediaQuery.of(context).size.height * 0.45,
-                            ),
-                            child: AspectRatio(
-                              aspectRatio: _displayAspectRatio,
-                              child: InteractiveViewer(
-                                minScale: 1.0,
-                                maxScale: 4.0,
-                                child: _buildTileMarkerOverlay(),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                  ],
-
-                  // Cropped images preview, each paired with its identified
-                  // tile's illustration directly below (or "?" until
-                  // classification finishes). Tapping the crop opens the box
-                  // editor; tapping the illustration opens the tile picker,
-                  // except while meld selection redirects taps to membership.
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      const columns = 9;
-                      const spacing = 3.0;
-                      final available =
-                          constraints.maxWidth - spacing * (columns - 1);
-                      final cellWidth = math.min(40.0, available / columns);
-                      return Wrap(
-                        spacing: spacing,
-                        runSpacing: 8,
-                        children: [
-                          for (
-                            var index = 0;
-                            index < _visibleSlotCount;
-                            index++
-                          )
-                            _buildResultTile(index, cellWidth),
-                        ],
-                      );
-                    },
-                  ),
-
-                  // Combined 副露 add/reset + あがり牌 ◀/▶ controls, one
-                  // row directly under the thumbnails. Gated on 識別実行
-                  // having produced a tile for every detected box — before
-                  // that there's nothing yet to mark as 副露 or あがり牌.
-                  if (_allDetectedTilesReady) ...[
-                    const SizedBox(height: 4),
-                    _buildTileControlsRow(),
-                    const SizedBox(height: 12),
-                  ],
+                  _recognitionCard(),
+                  const SizedBox(height: AppSpacing.m),
 
                   if (widget.winnerOptions.isNotEmpty) ...[
                     _buildWinnerSelector(),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.m),
                   ],
 
-                  // Round/hand facts stay visible for every operation. The
-                  // analysis API already receives this context and uses it
-                  // for wait-score predictions.
+                  // Winds stay visible for every operation (the analysis API
+                  // uses the context for wait-score predictions); dora only
+                  // for score/wait and win-time chips only for scoring, as in
+                  // the result mockups.
                   GameStatePanel(
                     context_: _context,
                     onChanged: (c) => setState(() => _updateContext(c)),
+                    conditionChips: isScore ? _conditionChips() : const [],
+                    showDora: !asksAi,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.l),
 
                   _buildInlineScoreResult(),
-                  if (_operation != HandOperation.score && _isScoring)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 16,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _scheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(AppRadius.large),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: AppSpacing.s),
-                          Text('結果を更新中...', style: _text.bodyMedium),
-                        ],
-                      ),
-                    ),
-                  if (_operation != HandOperation.score &&
-                      _analysisResult != null) ...[
+                  if (!isScore && _isScoring) _busyCard('結果を更新中...'),
+                  if (!isScore && _analysisResult != null)
                     AnalysisResultPanel(
                       result: _analysisResult!,
                       onAskAiAboutCall: _purpose == ScanPurpose.callAdvice
@@ -3329,169 +3325,169 @@ class _ScanScreenState extends State<ScanScreen> {
                           ? (focus) => _openAiChat(discardFocus: focus)
                           : null,
                     ),
-                    if (_purpose == ScanPurpose.discard ||
-                        _purpose == ScanPurpose.callAdvice) ...[
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () => _openAiChat(),
-                          icon: const Icon(Icons.chat_bubble_outline),
-                          label: Text(
-                            _chatMessages.isEmpty ? 'AIに質問' : 'AIとの会話を続ける',
-                          ),
-                        ),
+                  if (_isScoring || _hasResult)
+                    const SizedBox(height: AppSpacing.l),
+
+                  if (asksAi && _analysisResult != null) ...[
+                    FilledButton.icon(
+                      onPressed: () => _openAiChat(),
+                      icon: const Icon(Icons.chat_bubble_outline),
+                      label: Text(
+                        _chatMessages.isEmpty ? 'AIに質問' : 'AIとの会話を続ける',
                       ),
-                    ],
+                    ),
+                    const SizedBox(height: AppSpacing.s),
                   ],
-                  if (_isScoring ||
-                      _isNotWinning ||
-                      _tsumoScoreResult != null ||
-                      _ronScoreResult != null)
-                    const SizedBox(height: 12),
 
                   // 「別の確認へ」 (UC-01 結果後). Not offered in the match win
                   // flow, whose result is recorded into the round state.
                   if (widget.onScoreConfirmed == null &&
                       !_isScoring &&
-                      (_analysisResult != null ||
-                          _isNotWinning ||
-                          _tsumoScoreResult != null ||
-                          _ronScoreResult != null)) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        key: const ValueKey('switch-purpose-button'),
-                        onPressed: _switchPurpose,
-                        icon: const Icon(Icons.swap_horiz),
-                        label: const Text('別の確認へ'),
-                        style: OutlinedButton.styleFrom(
-                          minimumSize: const Size.fromHeight(48),
-                        ),
-                      ),
+                      _hasResult) ...[
+                    OutlinedButton(
+                      key: const ValueKey('switch-purpose-button'),
+                      onPressed: _switchPurpose,
+                      child: const Text('同じ牌で別の確認をする'),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.m),
                   ],
 
                   if (_interpretation != null) ...[
                     _buildInterpretationConfirmation(),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.m),
                   ],
                 ],
               ),
             ),
           ),
 
-          // Fixed action bar: always reachable without scrolling, unlike
-          // everything above. Left to right: function (HandOperation)
-          // dropdown, quick リーチ(一発) controls + 詳細条件
-          // (score mode only), then the main action — "識別実行" until every
-          // detected tile has a result, then a plain "実行" that runs
-          // `_runInterpretationAndAnalyze` (interpretation + confirm+analyze
-          // in one tap; seealso that method's own doc comment for why it's
-          // not split into two taps anymore). Retake lives in its own bar
-          // above the photo instead — a
-          // "撮り直す" here was only ever reachable once identification
-          // finished, too late to catch an obviously bad photo, and
-          // duplicated in intent with a since-removed AppBar back button.
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            decoration: BoxDecoration(
-              color: _scheme.surface,
-              border: Border(top: BorderSide(color: _scheme.outlineVariant)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  height: 44,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: _scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(AppRadius.medium),
-                  ),
-                  alignment: Alignment.centerLeft,
-                  child: Text(_purpose.label, style: _text.titleSmall),
-                ),
-                if (_operation == HandOperation.score) ...[
-                  const SizedBox(width: 8),
-                  // リーチ(一発) — used on many hands, so
-                  // they sit directly in the bar instead of behind 詳細条件
-                  // (see `_buildQuickWinConditions`). Choices wrap so every
-                  // option remains visible on narrow portrait screens.
-                  _buildQuickWinConditions(),
-                ],
-                const SizedBox(width: 8),
-                IconButton(
-                  // Riichi/ippatsu/haitei etc. only affect score
-                  // calculation, so there's nothing useful to set here in
-                  // tenpai/discard-analysis mode. The rare situational
-                  // flags (海底・河底・嶺上・槍槓・地和・天和) — everything
-                  // except リーチ(一発), which moved to the bar
-                  // itself above — still live behind this icon.
-                  onPressed: _operation == HandOperation.score
-                      ? _showContextDetailsSheet
-                      : null,
-                  icon: const Icon(Icons.tune),
-                  tooltip: '詳細条件',
-                  style: IconButton.styleFrom(
-                    backgroundColor: _scheme.surfaceContainerHighest,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.medium),
+          // Fixed action bar, only until there is a result: "識別実行" until
+          // every detected tile has a type, then "実行", which runs
+          // `_runInterpretationAndAnalyze` (interpretation + confirm+analyze in
+          // one tap). Score results then recalculate automatically on edits.
+          if (!_hasResult)
+            Container(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.l,
+                AppSpacing.s,
+                AppSpacing.l,
+                AppSpacing.s,
+              ),
+              decoration: BoxDecoration(
+                color: _scheme.surface,
+                border: Border(top: BorderSide(color: _scheme.outlineVariant)),
+              ),
+              child: !_allDetectedTilesReady
+                  ? FilledButton.icon(
+                      onPressed:
+                          _croppedImages.any((c) => c != null) &&
+                              !_isRunningFullClassification &&
+                              !_isClassifying.any((value) => value)
+                          ? _runClassification
+                          : null,
+                      icon: _isRunningFullClassification
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.auto_awesome, size: 18),
+                      label: Text(
+                        _isRunningFullClassification ? '識別中...' : '識別実行',
+                      ),
+                    )
+                  : FilledButton.icon(
+                      onPressed: !_isScoring && !_isInterpreting
+                          ? _runInterpretationAndAnalyze
+                          : null,
+                      icon: _isScoring || _isInterpreting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.play_arrow, size: 20),
+                      label: const Text('実行'),
                     ),
-                  ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Large yes/no answer card of the condition-entry steps.
+class _AnswerCard extends StatelessWidget {
+  const _AnswerCard({
+    required this.label,
+    required this.icon,
+    required this.primary,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool primary;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final colors = context.appColors;
+    final text = Theme.of(context).textTheme;
+    final foreground = primary ? colors.onDark : scheme.onSurface;
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      child: Material(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.modal),
+          side: primary
+              ? BorderSide.none
+              : BorderSide(color: scheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
+        color: primary ? null : scheme.surface,
+        child: Ink(
+          decoration: primary
+              ? BoxDecoration(
+                  gradient: LinearGradient(colors: colors.sessionGradient),
+                )
+              : null,
+          child: InkWell(
+            onTap: onTap,
+            child: SizedBox(
+              height: 96,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.l),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: primary
+                            ? colors.onDark.withValues(alpha: 0.18)
+                            : scheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Icon(icon, color: foreground),
+                    ),
+                    const SizedBox(width: AppSpacing.l),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: text.headlineSmall?.copyWith(color: foreground),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: foreground),
+                  ],
                 ),
-                if (!(_operation == HandOperation.score &&
-                    (_isScoring ||
-                        _isNotWinning ||
-                        _tsumoScoreResult != null ||
-                        _ronScoreResult != null))) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: !_allDetectedTilesReady
-                        ? FilledButton.icon(
-                            onPressed:
-                                _croppedImages.any((c) => c != null) &&
-                                    !_isRunningFullClassification &&
-                                    !_isClassifying.any((value) => value)
-                                ? _runClassification
-                                : null,
-                            icon: _isRunningFullClassification
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.auto_awesome, size: 18),
-                            label: Text(
-                              _isRunningFullClassification ? '識別中...' : '識別実行',
-                            ),
-                          )
-                        : FilledButton.icon(
-                            onPressed: !_isScoring && !_isInterpreting
-                                ? _runInterpretationAndAnalyze
-                                : null,
-                            icon: _isScoring || _isInterpreting
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.play_arrow, size: 20),
-                            label: const Text('実行'),
-                          ),
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }

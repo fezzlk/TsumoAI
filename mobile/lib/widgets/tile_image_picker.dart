@@ -4,28 +4,42 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/tile_assets.dart';
 
-/// Image-based tile selection, shown as a BottomSheet — same grid-by-suit
-/// layout as `TileKeyboard`, but each button shows the tile's illustration
-/// (`tileAssetPath`) instead of a text label.
+/// Image-based tile selection: 萬・筒・索 in rows of nine, then the honors
+/// and the red fives as centred rows below, each cell drawn as a tile.
+/// [show] opens it as a bottom sheet with a centred title and a close
+/// button (tile-correction mockup).
 class TileImagePicker extends StatelessWidget {
   final String? currentTile;
   final ValueChanged<String> onTileSelected;
-  final bool showSuitLabels;
   final String title;
+
+  /// Whether the title row is drawn; off when a screen embeds the grid
+  /// under its own heading.
+  final bool showHeader;
+
+  /// Shows a close button in the title row when set.
+  final VoidCallback? onClose;
 
   const TileImagePicker({
     super.key,
     this.currentTile,
     required this.onTileSelected,
-    this.showSuitLabels = false,
     this.title = '牌を選択',
+    this.showHeader = true,
+    this.onClose,
   });
 
-  static const _manRow = ['1m', '2m', '3m', '4m', '5m', '5mr', '6m', '7m', '8m', '9m'];
-  static const _pinRow = ['1p', '2p', '3p', '4p', '5p', '5pr', '6p', '7p', '8p', '9p'];
-  static const _souRow = ['1s', '2s', '3s', '4s', '5s', '5sr', '6s', '7s', '8s', '9s'];
-  static const _honorRow = ['E', 'S', 'W', 'N', 'P', 'F', 'C'];
-  static const _columns = 10;
+  static const _rows = [
+    ['1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m'],
+    ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p'],
+    ['1s', '2s', '3s', '4s', '5s', '6s', '7s', '8s', '9s'],
+    ['E', 'S', 'W', 'N', 'P', 'F', 'C'],
+    ['5mr', '5pr', '5sr'],
+  ];
+  static const _columns = 9;
+  static const _rowSpacing = 4.0;
+  static const _cellGap = 3.0;
+  static const _headerHeight = 48.0;
 
   static Future<String?> show(
     BuildContext context, {
@@ -34,11 +48,14 @@ class TileImagePicker extends StatelessWidget {
   }) {
     return showModalBottomSheet<String>(
       context: context,
-      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.95),
-      builder: (_) => TileImagePicker(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.95,
+      ),
+      builder: (sheetContext) => TileImagePicker(
         currentTile: currentTile,
         title: title,
-        onTileSelected: (tile) => Navigator.pop(context, tile),
+        onTileSelected: (tile) => Navigator.pop(sheetContext, tile),
+        onClose: () => Navigator.pop(sheetContext),
       ),
     );
   }
@@ -46,56 +63,70 @@ class TileImagePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s,
+        AppSpacing.s,
+        AppSpacing.s,
+        AppSpacing.m,
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Cell size is capped by BOTH the available height (fit exactly 4
-          // suit rows without scrolling — there's no fixed footer here,
-          // unlike `MeldTilePicker`, but a picker whose choices scroll out
-          // of view is worse) and the available width (a narrow portrait
-          // screen must not let the row overflow sideways). Whichever is
-          // smaller wins. On this app's short landscape screens the height
-          // cap is normally the binding one, so the header above the grid
-          // and the sheet's own height budget (`show`, above) are kept as
-          // small as they reasonably can be to leave the grid more room.
-          const headerHeight = 4.0 + 8 + 16 + 8; // handle + spacing + label + spacing
-          const rowSpacing = 4.0;
-          final gridHeight = constraints.maxHeight - headerHeight - rowSpacing * 3;
-          final maxHeightPerCell = (gridHeight / 4 - 4);
-          final labelColumnWidth = showSuitLabels ? 20.0 : 0.0;
-          const perCellHorizontalMargin = 2.0; // 1px each side, from _buildRow
+          // Cells are capped by both the available height (every row fits
+          // without scrolling) and the width (a narrow portrait screen
+          // must not push the ninth tile off the edge); the smaller wins.
+          final header = showHeader ? _headerHeight + AppSpacing.s : 0.0;
+          final gridHeight =
+              constraints.maxHeight -
+              header -
+              _rowSpacing * (_rows.length - 1) -
+              AppSpacing.s;
+          final maxHeightPerCell = gridHeight / _rows.length;
           final maxWidthPerCell =
-              (constraints.maxWidth - labelColumnWidth - _columns * perCellHorizontalMargin) /
-                  _columns /
-                  0.75; // convert a width budget to the equivalent height at aspect 0.75
-          final cellHeight = math.min(maxHeightPerCell, maxWidthPerCell).clamp(28.0, 76.0);
+              (constraints.maxWidth - _cellGap * (_columns - 1)) /
+              _columns /
+              0.75;
+          final cellHeight = math
+              .min(maxHeightPerCell, maxWidthPerCell)
+              .clamp(28.0, 76.0);
           final cellWidth = cellHeight * 0.75;
 
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                  borderRadius: BorderRadius.circular(AppRadius.small),
+              if (showHeader) ...[
+                SizedBox(
+                  height: _headerHeight,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 48),
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      if (onClose != null)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: IconButton(
+                            onPressed: onClose,
+                            icon: const Icon(Icons.close),
+                            tooltip: '閉じる',
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              _buildRow(context, '萬', _manRow, cellWidth, cellHeight),
-              const SizedBox(height: rowSpacing),
-              _buildRow(context, '筒', _pinRow, cellWidth, cellHeight),
-              const SizedBox(height: rowSpacing),
-              _buildRow(context, '索', _souRow, cellWidth, cellHeight),
-              const SizedBox(height: rowSpacing),
-              _buildRow(context, '字', _honorRow, cellWidth, cellHeight),
+                const SizedBox(height: AppSpacing.s),
+              ],
+              for (var i = 0; i < _rows.length; i++) ...[
+                if (i == 3) const SizedBox(height: AppSpacing.s),
+                if (i > 0) const SizedBox(height: _rowSpacing),
+                _buildRow(context, _rows[i], cellWidth, cellHeight),
+              ],
             ],
           );
         },
@@ -105,7 +136,6 @@ class TileImagePicker extends StatelessWidget {
 
   Widget _buildRow(
     BuildContext context,
-    String label,
     List<String> tiles,
     double cellWidth,
     double cellHeight,
@@ -114,35 +144,34 @@ class TileImagePicker extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if (showSuitLabels)
-          SizedBox(
-            width: 20,
-            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
-          ),
-        ...tiles.map((tile) => GestureDetector(
-          key: ValueKey('tile_picker_cell_$tile'),
-          onTap: () => onTileSelected(tile),
-          child: Container(
-            width: cellWidth,
-            height: cellHeight,
-            margin: const EdgeInsets.symmetric(horizontal: 1),
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            decoration: BoxDecoration(
-              color: tile == currentTile
-                  ? scheme.primaryContainer
-                  : scheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(AppRadius.small),
-              border: tile == currentTile
-                  ? Border.all(color: scheme.primary, width: 1.5)
-                  : null,
+        for (var i = 0; i < tiles.length; i++) ...[
+          if (i > 0) const SizedBox(width: _cellGap),
+          Semantics(
+            button: true,
+            selected: tiles[i] == currentTile,
+            label: tiles[i],
+            child: GestureDetector(
+              key: ValueKey('tile_picker_cell_${tiles[i]}'),
+              onTap: () => onTileSelected(tiles[i]),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: cellWidth,
+                height: cellHeight,
+                // The tile art carries its own face and edge; only the
+                // current tile gets a frame.
+                decoration: tiles[i] == currentTile
+                    ? BoxDecoration(
+                        color: scheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(AppRadius.small),
+                        border: Border.all(color: scheme.primary, width: 1.5),
+                      )
+                    : null,
+                alignment: Alignment.center,
+                child: _tileImage(tiles[i]),
+              ),
             ),
-            alignment: Alignment.center,
-            child: _tileImage(tile),
           ),
-        )),
-        // Pad honor row to match the suit rows' column count.
-        if (tiles.length < _columns)
-          SizedBox(width: (cellWidth + 2) * (_columns - tiles.length)),
+        ],
       ],
     );
   }

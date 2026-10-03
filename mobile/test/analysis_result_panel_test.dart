@@ -31,8 +31,8 @@ void main() {
       }),
     );
 
-    expect(find.text('シャンテン数: 0'), findsOneWidget);
-    expect(find.text('待ち牌'), findsOneWidget);
+    expect(find.text('テンパイ'), findsOneWidget);
+    expect(find.text('待ち牌は2種類'), findsOneWidget);
     expect(find.byKey(const ValueKey('analysis-wait-2p-0')), findsOneWidget);
     expect(find.byKey(const ValueKey('analysis-wait-5p-1')), findsOneWidget);
     expect(find.text('残り3枚'), findsOneWidget);
@@ -92,9 +92,9 @@ void main() {
       }),
     );
 
-    expect(find.text('牌効率重視の上位3候補'), findsOneWidget);
-    expect(find.text('1位'), findsOneWidget);
-    expect(find.text('3位'), findsOneWidget);
+    expect(find.text('打牌候補 ベスト3'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
     expect(find.byKey(const ValueKey('analysis-discard-4m-3')), findsNothing);
   });
 
@@ -116,7 +116,7 @@ void main() {
         }, onAskAiWithDiscardFocus: (focus) => selectedFocus = focus),
       );
 
-      expect(find.text('牌効率重視の上位3候補'), findsOneWidget);
+      expect(find.text('打牌候補 ベスト3'), findsOneWidget);
       expect(find.text('別の判断基準でAIに相談'), findsOneWidget);
       await tester.tap(find.text('守備考慮'));
 
@@ -167,7 +167,7 @@ void main() {
       }, onAskAiAboutCall: (candidate) => selectedForAi = candidate),
     );
 
-    expect(find.text('シャンテン数: 2'), findsOneWidget);
+    expect(find.text('2 → 1シャンテン'), findsOneWidget);
     expect(find.text('推奨'), findsOneWidget);
     expect(find.text('条件付き'), findsOneWidget);
     expect(find.text('見送り'), findsOneWidget);
