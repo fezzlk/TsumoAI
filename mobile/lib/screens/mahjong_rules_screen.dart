@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../models/score_request.dart';
+import '../theme/app_theme.dart';
+import '../widgets/screen_header.dart';
+import '../widgets/section_list.dart';
+import '../widgets/status_banner.dart';
 
 class MahjongRulesScreen extends StatefulWidget {
   const MahjongRulesScreen({
@@ -30,116 +34,115 @@ class _MahjongRulesScreenState extends State<MahjongRulesScreen> {
     widget.onChanged(settings);
   }
 
-  void _updateRules(RuleSet rules) =>
-      _update(_settings.copyWith(rules: rules));
+  void _updateRules(RuleSet rules) => _update(_settings.copyWith(rules: rules));
 
   @override
   Widget build(BuildContext context) {
     final rules = _settings.rules;
+    final text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('麻雀ルール')),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
+        child: Column(
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(8, 0, 8, 12),
-              child: Text('ここで選んだルールを、点数計算と対局に使用します。'),
-            ),
-            _sectionLabel('計算ルール'),
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
+            const ScreenHeader(title: '麻雀ルール'),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.l,
+                  AppSpacing.l,
+                  AppSpacing.l,
+                  AppSpacing.xl,
+                ),
                 children: [
-                  SwitchListTile(
-                    title: const Text('赤牌'),
-                    value: rules.akaAri,
-                    onChanged: (value) =>
-                        _updateRules(rules.copyWith(akaAri: value)),
+                  Text('ここで選んだルールを、点数計算と対局に使用します。', style: text.bodySmall),
+                  const SectionLabel('計算ルール'),
+                  SectionGroup(
+                    children: [
+                      _choiceRow<bool>(
+                        '赤牌',
+                        rules.akaAri,
+                        const [(true, 'あり'), (false, 'なし')],
+                        (value) => _updateRules(rules.copyWith(akaAri: value)),
+                      ),
+                      _choiceRow<bool>(
+                        '喰いタン',
+                        rules.kuitanAri,
+                        const [(true, 'あり'), (false, 'なし')],
+                        (value) =>
+                            _updateRules(rules.copyWith(kuitanAri: value)),
+                      ),
+                      _choiceRow<bool>(
+                        'ダブル役満',
+                        rules.doubleYakumanAri,
+                        const [(true, 'あり'), (false, 'なし')],
+                        (value) => _updateRules(
+                          rules.copyWith(doubleYakumanAri: value),
+                        ),
+                      ),
+                      _choiceRow<bool>(
+                        '数え役満',
+                        rules.kazoeYakumanAri,
+                        const [(true, 'あり'), (false, 'なし')],
+                        (value) => _updateRules(
+                          rules.copyWith(kazoeYakumanAri: value),
+                        ),
+                      ),
+                      _choiceRow<int>(
+                        '連風牌の雀頭',
+                        rules.renpuFu,
+                        const [(4, '4符'), (2, '2符')],
+                        (value) => _updateRules(rules.copyWith(renpuFu: value)),
+                      ),
+                    ],
                   ),
-                  SwitchListTile(
-                    title: const Text('喰いタン'),
-                    value: rules.kuitanAri,
-                    onChanged: (value) =>
-                        _updateRules(rules.copyWith(kuitanAri: value)),
-                  ),
-                  SwitchListTile(
-                    title: const Text('ダブル役満'),
-                    value: rules.doubleYakumanAri,
-                    onChanged: (value) => _updateRules(
-                      rules.copyWith(doubleYakumanAri: value),
-                    ),
-                  ),
-                  SwitchListTile(
-                    title: const Text('数え役満'),
-                    value: rules.kazoeYakumanAri,
-                    onChanged: (value) => _updateRules(
-                      rules.copyWith(kazoeYakumanAri: value),
-                    ),
-                  ),
-                  ListTile(
-                    title: const Text('連風牌の雀頭'),
-                    trailing: SegmentedButton<int>(
-                      segments: const [
-                        ButtonSegment(value: 4, label: Text('4符')),
-                        ButtonSegment(value: 2, label: Text('2符')),
+                  const SectionLabel('対局・精算'),
+                  SectionGroup(
+                    children: [
+                      _switchRow(
+                        'トビ終了',
+                        '持ち点がマイナスで終了。0点は続行',
+                        _settings.tobiEnd,
+                        (value) => _update(_settings.copyWith(tobiEnd: value)),
+                      ),
+                      _switchRow(
+                        'チップ',
+                        '点棒とは別にチップ点を計算',
+                        _settings.chipsEnabled,
+                        (value) =>
+                            _update(_settings.copyWith(chipsEnabled: value)),
+                      ),
+                      if (_settings.chipsEnabled) ...[
+                        _switchRow(
+                          '副露ありでも有効',
+                          '副露した和了も赤牌・オールスターを加算',
+                          _settings.openHandChipsEnabled,
+                          (value) => _update(
+                            _settings.copyWith(openHandChipsEnabled: value),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            AppSpacing.l,
+                            AppSpacing.s,
+                            AppSpacing.l,
+                            AppSpacing.l,
+                          ),
+                          child: Text(
+                            '赤牌・裏ドラは1枚につき1、一発は1、赤牌3枚のオールスターは追加2。'
+                            '1チップ点は素点1,000点相当です。',
+                            style: text.bodySmall,
+                          ),
+                        ),
                       ],
-                      selected: {rules.renpuFu},
-                      onSelectionChanged: (values) => _updateRules(
-                        rules.copyWith(renpuFu: values.first),
-                      ),
-                    ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.l),
+                  const StatusBanner(
+                    kind: StatusKind.success,
+                    message: '変更は自動で保存されます。ログイン中はアカウントにも同期します',
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 16),
-            _sectionLabel('対局・精算'),
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  SwitchListTile(
-                    title: const Text('トビ終了'),
-                    subtitle: const Text('持ち点がマイナスで終了。0点は続行します'),
-                    value: _settings.tobiEnd,
-                    onChanged: (value) =>
-                        _update(_settings.copyWith(tobiEnd: value)),
-                  ),
-                  SwitchListTile(
-                    title: const Text('チップ'),
-                    subtitle: const Text('点棒とは別にチップ点を計算します'),
-                    value: _settings.chipsEnabled,
-                    onChanged: (value) =>
-                        _update(_settings.copyWith(chipsEnabled: value)),
-                  ),
-                  if (_settings.chipsEnabled) ...[
-                    SwitchListTile(
-                      contentPadding: const EdgeInsets.only(left: 32, right: 16),
-                      title: const Text('副露ありでも有効'),
-                      subtitle: const Text('副露した和了も赤牌・オールスターを加算'),
-                      value: _settings.openHandChipsEnabled,
-                      onChanged: (value) => _update(
-                        _settings.copyWith(openHandChipsEnabled: value),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
-                      child: Text(
-                        '赤牌・裏ドラは1枚につき1、一発は1、赤牌3枚のオールスターは追加2。'
-                        '1チップ点は素点1,000点相当です。',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            const ListTile(
-              leading: Icon(Icons.cloud_done_outlined),
-              title: Text('自動保存'),
-              subtitle: Text('ログイン中はアカウントにも同期します'),
             ),
           ],
         ),
@@ -147,11 +150,93 @@ class _MahjongRulesScreenState extends State<MahjongRulesScreen> {
     );
   }
 
-  Widget _sectionLabel(String label) => Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.labelLarge,
+  Widget _choiceRow<T>(
+    String title,
+    T value,
+    List<(T, String)> options,
+    ValueChanged<T> onChanged,
+  ) => Padding(
+    padding: const EdgeInsets.symmetric(
+      horizontal: AppSpacing.l,
+      vertical: AppSpacing.m,
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.titleSmall),
         ),
-      );
+        _Segmented<T>(value: value, options: options, onChanged: onChanged),
+      ],
+    ),
+  );
+
+  Widget _switchRow(
+    String title,
+    String subtitle,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) => SwitchListTile(
+    contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.l),
+    title: Text(title),
+    subtitle: Text(subtitle),
+    value: value,
+    onChanged: onChanged,
+  );
+}
+
+/// Two-choice control from the rules design: soft track, filled selection.
+class _Segmented<T> extends StatelessWidget {
+  const _Segmented({
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final T value;
+  final List<(T, String)> options;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xs),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadius.large),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final (option, label) in options)
+            Semantics(
+              button: true,
+              selected: option == value,
+              child: Material(
+                color: option == value ? scheme.primary : Colors.transparent,
+                borderRadius: BorderRadius.circular(AppRadius.iconTile),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppRadius.iconTile),
+                  onTap: () => onChanged(option),
+                  child: SizedBox(
+                    width: 64,
+                    height: 44,
+                    child: Center(
+                      child: Text(
+                        label,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: option == value
+                              ? scheme.onPrimary
+                              : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

@@ -24,7 +24,9 @@ import 'package:tsumoai_mobile/models/scan_purpose.dart';
 import 'package:tsumoai_mobile/models/score_request.dart';
 import 'package:tsumoai_mobile/models/score_result.dart';
 import 'package:tsumoai_mobile/screens/ai_usage_screen.dart';
+import 'package:tsumoai_mobile/screens/help_screen.dart';
 import 'package:tsumoai_mobile/screens/history_screen.dart';
+import 'package:tsumoai_mobile/screens/mahjong_rules_screen.dart';
 import 'package:tsumoai_mobile/screens/match_home_screen.dart';
 import 'package:tsumoai_mobile/screens/settings_screen.dart';
 import 'package:tsumoai_mobile/services/history_service.dart';
@@ -109,7 +111,32 @@ Future<void> _capture(
 
 class _SampleHistoryService extends HistoryService {
   @override
-  Future<List<HistoryEntry>> loadLocal() async => [];
+  Future<List<HistoryEntry>> loadLocal() async {
+    final now = DateTime.now().toUtc();
+    HistoryEntry entry(
+      int minutesAgo,
+      String purpose,
+      String title,
+      String summary, [
+      String? round,
+    ]) => HistoryEntry(
+      id: '$purpose-$minutesAgo',
+      createdAt: now.subtract(Duration(minutes: minutesAgo)),
+      updatedAt: now.subtract(Duration(minutes: minutesAgo)),
+      purpose: purpose,
+      title: title,
+      summary: summary,
+      roundLabel: round,
+      details: const {},
+    );
+    return [
+      entry(20, 'score', '点数計算', 'ツモ 2,000 / 3,900', '東2局・子'),
+      entry(90, 'call_advice', '鳴き判断', '白はポン推奨・候補5種類'),
+      entry(1500, 'wait', '待ち確認', '二筒・五筒'),
+      entry(1560, 'discard', '何切る', '第一候補 五筒'),
+      entry(1700, 'score', '点数計算', 'ロン 7,700'),
+    ];
+  }
 }
 
 class _MemoryTemplateService extends QuestionTemplateService {
@@ -210,6 +237,15 @@ void main() {
       tester,
       '04_history',
       HistoryScreen(service: _SampleHistoryService()),
+    );
+    await _capture(tester, '04b_help', HelpScreen(onContact: () {}));
+    await _capture(
+      tester,
+      '04c_rules',
+      MahjongRulesScreen(
+        settings: const MahjongRuleSettings(),
+        onChanged: (_) {},
+      ),
     );
     await _capture(
       tester,

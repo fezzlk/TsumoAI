@@ -13,6 +13,7 @@ import 'package:tsumoai_mobile/widgets/score_result_panel.dart';
 import 'package:tsumoai_mobile/widgets/tile_count_selector.dart';
 import 'package:tsumoai_mobile/widgets/tile_image_picker.dart';
 import 'package:tsumoai_mobile/widgets/purpose_switch_dialogs.dart';
+import 'package:tsumoai_mobile/widgets/section_list.dart';
 import 'package:tsumoai_mobile/models/scan_purpose.dart';
 
 import 'test_utils/landscape_surface.dart';
@@ -72,9 +73,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('待ち牌・有効牌'), findsOneWidget);
-    expect(find.text('待ち牌・残り枚数'), findsNothing);
-    expect(find.text('実際の対局進行に合わせて点数計算を行う'), findsOneWidget);
+    expect(find.text('待ち牌を確認'), findsOneWidget);
+    expect(find.textContaining('残り枚数'), findsNothing);
+    expect(find.text('実際の対局進行に合わせて\n点数計算を行う'), findsOneWidget);
     expectNoOverflow(tester);
   });
 
@@ -93,11 +94,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('点数計算'), findsOneWidget);
-    expect(find.text('実際の対局進行に合わせて点数計算を行う'), findsOneWidget);
+    expect(find.text('実際の対局進行に合わせて\n点数計算を行う'), findsOneWidget);
     expectNoOverflow(tester);
   });
 
-  testWidgets('home header keeps help, login and settings on screen', (
+  testWidgets('home header keeps login and settings on screen', (
     tester,
   ) async {
     tester.platformDispatcher.textScaleFactorTestValue = 1.3;
@@ -111,20 +112,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    for (final finder in [
-      find.byTooltip('使い方'),
-      find.text('ログイン'),
-      find.byTooltip('設定'),
-    ]) {
+    for (final finder in [find.text('ログイン'), find.byTooltip('設定')]) {
       expect(finder, findsOneWidget);
       expect(tester.getRect(finder).right, lessThanOrEqualTo(320));
     }
+    // 使い方 lives in Settings only (decided 2026-09-26).
+    expect(find.byTooltip('使い方'), findsNothing);
     expectNoOverflow(tester);
-
-    await tester.tap(find.byTooltip('使い方'));
-    await tester.pumpAndSettle();
-
-    expect(find.widgetWithText(AlertDialog, '使い方'), findsOneWidget);
   });
 
   testWidgets('tile count choices stay visible on a narrow portrait screen', (
@@ -178,7 +172,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    for (final label in ['すべて', '点数', '待ち', 'AI相談']) {
+    for (final label in ['すべて', '点数', '待ち', '何切る', '鳴き']) {
       expect(find.text(label), findsOneWidget);
     }
     expectNoOverflow(tester);
@@ -240,8 +234,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('プライバシーポリシー'), findsOneWidget);
     for (final label in ['利用規約', 'プライバシーポリシー', '問い合わせ']) {
-      final tile = tester.widget<ListTile>(
-        find.widgetWithText(ListTile, label),
+      final tile = tester.widget<SectionTile>(
+        find.widgetWithText(SectionTile, label),
       );
       expect(tile.onTap, isNotNull, reason: '$label must not be a dead end');
     }

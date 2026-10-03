@@ -46,7 +46,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byType(NavigationBar), findsOneWidget);
+      // Category tabs sit at the bottom of the screen.
+      final tabTop = tester.getTopLeft(find.text('すべて')).dy;
+      expect(tabTop, greaterThan(tester.getTopLeft(find.text('鳴き判断')).dy));
       expect(find.text('鳴き判断'), findsOneWidget);
 
       await tester.tap(find.text('鳴き判断'));

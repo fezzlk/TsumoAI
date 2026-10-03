@@ -16,7 +16,10 @@ void main() {
     );
 
     expect(find.text('副露ありでも有効'), findsNothing);
-    await tester.tap(find.widgetWithText(SwitchListTile, 'チップ'));
+    final chips = find.widgetWithText(SwitchListTile, 'チップ');
+    await tester.ensureVisible(chips);
+    await tester.pumpAndSettle();
+    await tester.tap(chips);
     await tester.pump();
 
     expect(settings.chipsEnabled, isTrue);
@@ -36,7 +39,8 @@ void main() {
       ),
     );
 
-    await tester.tap(find.widgetWithText(SwitchListTile, '赤牌'));
+    // 赤牌 defaults to あり; its なし is the first なし on the screen.
+    await tester.tap(find.text('なし').first);
     await tester.pump();
 
     expect(settings.rules.akaAri, isFalse);

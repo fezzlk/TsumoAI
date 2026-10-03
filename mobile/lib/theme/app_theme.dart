@@ -2,15 +2,28 @@ import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
 
-/// Corner radii: tile images, chips/inputs, cards/buttons, dialogs/sheets.
+/// Corner radii from the design system: tiles, chips, buttons, cards,
+/// modals.
 abstract final class AppRadius {
   static const small = 4.0;
   static const medium = 8.0;
+  static const chip = 11.0;
   static const large = 12.0;
-  static const xLarge = 16.0;
+  static const button = 14.0;
+  static const card = 16.0;
+  static const xLarge = 20.0;
+  static const modal = 24.0;
+
+  /// Home: 發 mark, login pill, feature cards, match card.
+  static const iconTile = 10.0;
+  static const brandMark = 13.0;
+  static const pill = 15.0;
+  static const feature = 18.0;
+  static const hero = 22.0;
 }
 
-/// Spacing scale; use these instead of arbitrary paddings.
+/// Spacing scale (4px steps); screens use 16 side padding and 12 between
+/// cards.
 abstract final class AppSpacing {
   static const xs = 4.0;
   static const s = 8.0;
@@ -19,65 +32,116 @@ abstract final class AppSpacing {
   static const xl = 24.0;
 }
 
+/// Control heights from the design system.
+abstract final class AppSizes {
+  static const primaryButton = 52.0;
+  static const tapTarget = 48.0;
+  static const chip = 40.0;
+}
+
 abstract final class AppTheme {
-  static const _seed = Color(0xFF1B7F4B);
-  static const _background = Color(0xFFF5F7F5);
+  static const _primary = Color(0xFF176B52);
+  static const _background = Color(0xFFF6F8F5);
+  static const _text = Color(0xFF1A3027);
+  // The design system's #718078 is 3.9:1 on the background; this slightly
+  // darker tone keeps the look and meets AA (4.7:1).
+  static const _muted = Color(0xFF63726B);
+  static const _border = Color(0xFFD9E3DD);
 
   // Built once: screens wrap themselves in these on every rebuild (camera
   // frames, handle drags), and ColorScheme.fromSeed is not free.
   static final ThemeData _light = _buildLight();
-  static final ThemeData _camera = _buildCamera();
+  static final ThemeData _editor = _buildEditor();
 
-  /// The app theme: light, with green for primary actions.
+  /// The app theme: light, deep green for primary actions.
   static ThemeData light() => _light;
 
-  /// Dark theme for camera and photo-editing screens only.
-  static ThemeData camera() => _camera;
+  /// Dark theme of the photo-editing screens (crop, box editor).
+  static ThemeData editor() => _editor;
+
+  /// Former name of [editor], kept until the scan screen's camera phase
+  /// moves to the light design.
+  static ThemeData camera() => _editor;
 
   static ThemeData _buildLight() {
-    final scheme = ColorScheme.fromSeed(seedColor: _seed).copyWith(
-      primary: _seed,
+    final colors = AppColors.light;
+    final scheme = ColorScheme.fromSeed(seedColor: _primary).copyWith(
+      primary: _primary,
       onPrimary: Colors.white,
+      primaryContainer: colors.soft,
+      onPrimaryContainer: colors.success.onContainer,
+      secondaryContainer: const Color(0xFFEDF1EE),
+      onSecondaryContainer: _text,
+      tertiary: colors.developer.color,
       surface: Colors.white,
-      onSurface: const Color(0xFF1A1C1A),
-      onSurfaceVariant: const Color(0xFF4A524C),
-      outline: const Color(0xFF8A938C),
-      outlineVariant: const Color(0xFFDDE3DE),
-      error: AppColors.light.error.color,
-      errorContainer: AppColors.light.error.container,
-      onErrorContainer: AppColors.light.error.onContainer,
+      onSurface: _text,
+      onSurfaceVariant: _muted,
+      surfaceContainerLowest: Colors.white,
+      surfaceContainerLow: const Color(0xFFF7F8F5),
+      surfaceContainer: const Color(0xFFF1F4F1),
+      surfaceContainerHigh: const Color(0xFFEEF2EF),
+      surfaceContainerHighest: const Color(0xFFEDF1EE),
+      outline: const Color(0xFFCAD5CF),
+      outlineVariant: _border,
+      error: colors.error.color,
+      errorContainer: colors.error.container,
+      onErrorContainer: colors.error.onContainer,
     );
     return _build(scheme, background: _background);
   }
 
-  static ThemeData _buildCamera() {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: _seed,
-      brightness: Brightness.dark,
-    ).copyWith(surface: AppColors.light.cameraBackground);
-    return _build(scheme, background: AppColors.light.cameraBackground);
+  static ThemeData _buildEditor() {
+    final editor = AppColors.light.editor;
+    final scheme =
+        ColorScheme.fromSeed(
+          seedColor: _primary,
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: editor.accent,
+          onPrimary: editor.onAccent,
+          surface: editor.surface,
+          onSurface: editor.onSurface,
+          onSurfaceVariant: editor.muted,
+          outlineVariant: editor.divider,
+        );
+    return _build(scheme, background: editor.background);
   }
 
   static ThemeData _build(ColorScheme scheme, {required Color background}) {
     final base = ThemeData(colorScheme: scheme, useMaterial3: true);
-    final text = base.textTheme;
-    final textTheme = text.copyWith(
-      headlineMedium: text.headlineMedium?.copyWith(
-        fontWeight: FontWeight.bold,
-      ),
-      headlineSmall: text.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-      titleLarge: text.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-      titleMedium: text.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-      titleSmall: text.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-      bodySmall: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+    final t = base.textTheme;
+    TextStyle? style(TextStyle? s, double size, FontWeight weight) =>
+        s?.copyWith(fontSize: size, fontWeight: weight, height: 1.35);
+    // Design system scale: screen title 17/700, result number 30/800,
+    // section 13/700, body 12/400, caption 10/500.
+    final textTheme = t
+        .copyWith(
+          headlineMedium: style(t.headlineMedium, 30, FontWeight.w800),
+          headlineSmall: style(t.headlineSmall, 22, FontWeight.w800),
+          titleLarge: style(t.titleLarge, 17, FontWeight.w700),
+          titleMedium: style(t.titleMedium, 15, FontWeight.w800),
+          titleSmall: style(t.titleSmall, 13, FontWeight.w700),
+          bodyLarge: style(t.bodyLarge, 13, FontWeight.w400),
+          bodyMedium: style(t.bodyMedium, 12, FontWeight.w400),
+          bodySmall: style(
+            t.bodySmall,
+            10,
+            FontWeight.w500,
+          )?.copyWith(color: scheme.onSurfaceVariant),
+          labelLarge: style(t.labelLarge, 12, FontWeight.w800),
+          labelMedium: style(t.labelMedium, 11, FontWeight.w800),
+          labelSmall: style(t.labelSmall, 10, FontWeight.w700),
+        )
+        .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface);
+    final bodySmall = textTheme.bodySmall?.copyWith(
+      color: scheme.onSurfaceVariant,
     );
     const buttonShape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.all(Radius.circular(AppRadius.large)),
+      borderRadius: BorderRadius.all(Radius.circular(AppRadius.button)),
     );
-    const buttonSize = Size(48, 48);
     return base.copyWith(
       scaffoldBackgroundColor: background,
-      textTheme: textTheme,
+      textTheme: textTheme.copyWith(bodySmall: bodySmall),
       extensions: const [AppColors.light],
       appBarTheme: AppBarTheme(
         backgroundColor: background,
@@ -85,37 +149,47 @@ abstract final class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        titleTextStyle: textTheme.titleLarge?.copyWith(color: scheme.onSurface),
+        centerTitle: true,
+        titleTextStyle: textTheme.titleLarge,
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: buttonSize,
+          minimumSize: const Size(AppSizes.tapTarget, AppSizes.primaryButton),
           shape: buttonShape,
           textStyle: textTheme.labelLarge,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: buttonSize,
+          minimumSize: const Size(AppSizes.tapTarget, AppSizes.tapTarget),
           shape: buttonShape,
-          side: BorderSide(color: scheme.outline),
+          foregroundColor: scheme.primary,
+          backgroundColor: scheme.surface,
+          side: BorderSide(color: scheme.outlineVariant),
           textStyle: textTheme.labelLarge,
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          minimumSize: buttonSize,
+          minimumSize: const Size(AppSizes.tapTarget, AppSizes.primaryButton),
           shape: buttonShape,
           elevation: 0,
           backgroundColor: scheme.primaryContainer,
-          foregroundColor: scheme.onPrimaryContainer,
+          foregroundColor: scheme.primary,
           textStyle: textTheme.labelLarge,
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
+          minimumSize: const Size(AppSizes.tapTarget, AppSizes.tapTarget),
           shape: buttonShape,
+          foregroundColor: scheme.primary,
           textStyle: textTheme.labelLarge,
+        ),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          minimumSize: const Size(AppSizes.tapTarget, AppSizes.tapTarget),
         ),
       ),
       cardTheme: CardThemeData(
@@ -124,64 +198,74 @@ abstract final class AppTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.large),
+          borderRadius: BorderRadius.circular(AppRadius.xLarge),
           side: BorderSide(color: scheme.outlineVariant),
         ),
       ),
       chipTheme: base.chipTheme.copyWith(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
+          borderRadius: BorderRadius.circular(AppRadius.chip),
         ),
         side: BorderSide(color: scheme.outlineVariant),
+        labelStyle: textTheme.labelMedium,
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: scheme.surface,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.xLarge),
+          borderRadius: BorderRadius.circular(AppRadius.modal),
         ),
-        titleTextStyle: textTheme.titleLarge?.copyWith(color: scheme.onSurface),
+        titleTextStyle: textTheme.titleLarge,
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: scheme.surface,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(
-            top: Radius.circular(AppRadius.xLarge),
+            top: Radius.circular(AppRadius.modal),
           ),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
+          borderRadius: BorderRadius.circular(AppRadius.large),
         ),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xEB14221C),
+        contentTextStyle: textTheme.labelLarge?.copyWith(color: Colors.white),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.medium),
+          borderRadius: BorderRadius.circular(AppRadius.large),
         ),
       ),
-      dividerTheme: DividerThemeData(color: scheme.outlineVariant),
-      listTileTheme: ListTileThemeData(iconColor: scheme.onSurfaceVariant),
+      dividerTheme: DividerThemeData(color: scheme.outlineVariant, space: 1),
+      listTileTheme: ListTileThemeData(
+        iconColor: scheme.onSurfaceVariant,
+        titleTextStyle: textTheme.titleSmall,
+        subtitleTextStyle: bodySmall,
+      ),
     );
   }
 }
 
-/// Style for buttons that delete, discard or end something.
+/// Filled style for buttons that delete, discard or end something.
 ButtonStyle destructiveButtonStyle(BuildContext context) {
-  final scheme = Theme.of(context).colorScheme;
+  final colors = context.appColors.error;
   return FilledButton.styleFrom(
-    backgroundColor: scheme.error,
-    foregroundColor: scheme.onError,
+    backgroundColor: colors.color,
+    foregroundColor: Colors.white,
   );
 }
 
-/// Outlined variant of [destructiveButtonStyle] for secondary placement.
+/// Outlined style for destructive actions (対局を終了, ログアウト): red text
+/// and a soft red border on white, as in the design system.
 ButtonStyle destructiveOutlinedButtonStyle(BuildContext context) {
-  final scheme = Theme.of(context).colorScheme;
+  final colors = context.appColors.error;
   return OutlinedButton.styleFrom(
-    foregroundColor: scheme.error,
-    side: BorderSide(color: scheme.error),
+    foregroundColor: colors.color,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    side: const BorderSide(color: Color(0xFFDCA8A8)),
+    minimumSize: const Size(AppSizes.tapTarget, AppSizes.primaryButton),
   );
 }

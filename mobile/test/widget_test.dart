@@ -58,7 +58,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('端末内履歴'), findsOneWidget);
+    expect(find.text('この端末の履歴'), findsOneWidget);
     expect(find.text('履歴はまだありません'), findsOneWidget);
     expect(find.text('ログイン'), findsOneWidget);
   });

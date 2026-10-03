@@ -22,8 +22,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('残り 2回'), findsOneWidget);
-    expect(find.text('今月 1 / 3回利用'), findsOneWidget);
-    expect(find.textContaining('2026年11月1日'), findsOneWidget);
+    expect(find.text('あと2回'), findsOneWidget);
+    expect(find.text('1 / 3 回利用'), findsOneWidget);
+    expect(find.text('11月1日'), findsOneWidget);
   });
 }
