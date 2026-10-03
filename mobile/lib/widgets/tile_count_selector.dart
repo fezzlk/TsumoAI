@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
+/// 自動・13〜18 tile-count choice. Large white chips with the selection
+/// filled green; 17 and 18 are rare, so they sit past the right edge and
+/// are reached by scrolling (decided 2026-09-26).
 class TileCountSelector extends StatelessWidget {
   const TileCountSelector({
     super.key,
@@ -17,35 +20,19 @@ class TileCountSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final options = <int?>[null, ...counts];
-    final scheme = Theme.of(context).colorScheme;
-    // Follows the surrounding theme: dark on the camera, light on results.
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(AppRadius.large),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
+      child: Row(
         children: [
-          Text('想定牌数', style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              for (var index = 0; index < options.length; index++) ...[
-                if (index > 0) const SizedBox(width: 3),
-                Expanded(
-                  child: _CountButton(
-                    count: options[index],
-                    selected: options[index] == selectedCount,
-                    onPressed: () => onChanged(options[index]),
-                  ),
-                ),
-              ],
-            ],
-          ),
+          for (var index = 0; index < options.length; index++) ...[
+            if (index > 0) const SizedBox(width: AppSpacing.s),
+            _CountButton(
+              count: options[index],
+              selected: options[index] == selectedCount,
+              onPressed: () => onChanged(options[index]),
+            ),
+          ],
         ],
       ),
     );
@@ -72,12 +59,22 @@ class _CountButton extends StatelessWidget {
       selected: selected,
       label: count == null ? '牌数を自動推定' : '想定牌数$count枚',
       child: SizedBox(
-        height: 44,
+        width: count == null ? 88 : 60,
+        height: AppSizes.primaryButton,
         child: Material(
-          color: selected ? scheme.primary : scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(AppRadius.medium),
+          color: selected ? scheme.primary : scheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.button),
+            side: BorderSide(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+            ),
+          ),
+          elevation: selected ? 2 : 0,
+          shadowColor: scheme.primary.withValues(alpha: 0.3),
           child: InkWell(
-            borderRadius: BorderRadius.circular(AppRadius.medium),
+            customBorder: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.button),
+            ),
             onTap: onPressed,
             child: Center(
               child: FittedBox(
@@ -85,9 +82,8 @@ class _CountButton extends StatelessWidget {
                 child: Text(
                   label,
                   maxLines: 1,
-                  style: TextStyle(
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     color: selected ? scheme.onPrimary : scheme.onSurface,
-                    fontWeight: selected ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
               ),
