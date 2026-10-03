@@ -228,11 +228,8 @@ void main() {
       tester.widget<TextField>(find.byType(TextField).last).enabled,
       isFalse,
     );
-    final sendButton = find.ancestor(
-      of: find.byIcon(Icons.send),
-      matching: find.byType(IconButton),
-    );
-    expect(tester.widget<IconButton>(sendButton).onPressed, isNull);
+    final sendButton = find.byKey(const ValueKey('ai-chat-send'));
+    expect(tester.widget<FilledButton>(sendButton).onPressed, isNull);
   });
 
   testWidgets('opens with a selected judgment focus and editable draft', (

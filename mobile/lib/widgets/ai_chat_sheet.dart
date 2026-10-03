@@ -8,8 +8,10 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/question_template_service.dart';
 import '../services/official_ai_chat_template_service.dart';
+import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import 'status_banner.dart';
+import 'toggle_chip.dart';
 
 typedef AIChatSender =
     Future<String> Function({
@@ -93,6 +95,10 @@ class AIChatSheet extends StatefulWidget {
 class _AIChatSheetState extends State<AIChatSheet> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  final _conversationEndKey = GlobalKey();
+
+  /// Shown as the retry card (ai-error mockup) rather than a banner.
+  static const _sendFailedMessage = '回答を取得できませんでした。通信状態を確認して再送してください。';
   late final QuestionTemplateService _templateService;
   late final OfficialAIChatTemplateService _officialTemplateService;
   late List<AIChatMessage> _messages;
@@ -302,7 +308,7 @@ class _AIChatSheetState extends State<AIChatSheet> {
           _messages.removeLast();
         }
         _sending = false;
-        _error = '回答を取得できませんでした。通信状態を確認して再送してください。';
+        _error = _sendFailedMessage;
         _controller.text = text;
       });
       _notifyChanged();
@@ -314,9 +320,11 @@ class _AIChatSheetState extends State<AIChatSheet> {
   );
 
   void _scrollToEnd() => WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (!_scrollController.hasClients) return;
-    _scrollController.animateTo(
-      _scrollController.position.maxScrollExtent,
+    final end = _conversationEndKey.currentContext;
+    if (end == null || !end.mounted) return;
+    Scrollable.ensureVisible(
+      end,
+      alignment: 1,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
     );
@@ -468,203 +476,389 @@ class _AIChatSheetState extends State<AIChatSheet> {
     body.dispose();
   }
 
+  Widget _sectionLabel(String label) => Padding(
+    padding: const EdgeInsets.only(bottom: AppSpacing.s),
+    child: Text(label, style: Theme.of(context).textTheme.titleSmall),
+  );
+
+  /// One of "自分用テンプレート": tap to fill the input, ••• to edit/delete.
+  Widget _templateRow(QuestionTemplate template) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.s),
+      child: Material(
+        color: scheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
+        child: InkWell(
+          customBorder: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.card),
+          ),
+          onTap: () => _controller.text = template.body,
+          child: Padding(
+            padding: const EdgeInsets.only(left: AppSpacing.l),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    template.name,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'テンプレートの操作',
+                  icon: const Icon(Icons.more_horiz),
+                  onSelected: (action) async {
+                    if (action == 'edit') {
+                      await _editTemplate(template);
+                      return;
+                    }
+                    try {
+                      await _templateService.delete(template.id);
+                      await _loadTemplates();
+                    } catch (_) {
+                      _showTemplateMessage('テンプレートを削除できませんでした。');
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('編集')),
+                    PopupMenuItem(value: 'delete', child: Text('削除')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 8, 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                'AIに質問',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-            IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close),
-            ),
-          ],
-        ),
-      ),
-      Expanded(
-        child: ListView(
-          controller: _scrollController,
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          children: [
-            if (!_signedIn) ...[
-              _LoginRequiredNotice(signingIn: _signingIn, onSignIn: _signIn),
-              const SizedBox(height: 12),
-            ],
-            if (_loadingUsage) const LinearProgressIndicator(),
-            if (_usage case final usage?) ...[
-              StatusBanner(
-                kind: usage.exhausted ? StatusKind.warning : StatusKind.info,
-                message: usage.exhausted
-                    ? '今月のAI相談枠を使い切りました。${usage.resetsAt.month}月1日に更新されます。'
-                    : 'AI相談は今月あと${usage.remaining}回利用できます',
-              ),
-              const SizedBox(height: 12),
-            ],
-            Text('状況', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 2,
-              children: [
-                for (final selected in _situationTags.where(
-                  (selected) => !_situationOptions.any(
-                    (option) => option.body == selected,
-                  ),
-                ))
-                  FilterChip(
-                    label: Text(selected),
-                    selected: true,
-                    onSelected: (_) =>
-                        setState(() => _situationTags.remove(selected)),
-                  ),
-                for (final tag in _situationOptions)
-                  FilterChip(
-                    label: Text(tag.label),
-                    selected: _situationTags.contains(tag.body),
-                    onSelected: (selected) => setState(() {
-                      selected
-                          ? _situationTags.add(tag.body)
-                          : _situationTags.remove(tag.body);
-                    }),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final question in _starterQuestions)
-                  ActionChip(
-                    label: Text(question.label),
-                    onPressed: () => _applyQuestion(question),
-                  ),
-                for (final template in _templates)
-                  InputChip(
-                    avatar: Tooltip(
-                      message: '編集',
-                      child: InkWell(
-                        onTap: () => _editTemplate(template),
-                        child: const Icon(Icons.edit_outlined, size: 17),
-                      ),
-                    ),
-                    label: Text(template.name),
-                    onPressed: () => _controller.text = template.body,
-                    onDeleted: () async {
-                      try {
-                        await _templateService.delete(template.id);
-                        await _loadTemplates();
-                      } catch (_) {
-                        _showTemplateMessage('テンプレートを削除できませんでした。');
-                      }
-                    },
-                    deleteIcon: const Icon(Icons.close, size: 17),
-                  ),
-                ActionChip(
-                  avatar: const Icon(Icons.add, size: 18),
-                  label: const Text('自分用を追加'),
-                  onPressed: _addTemplate,
-                ),
-              ],
-            ),
-            if (_templates.any((item) => item.pendingSync)) ...[
-              const SizedBox(height: 8),
-              StatusBanner(
-                kind: StatusKind.warning,
-                message: '未同期のテンプレートがあります',
-                action: TextButton(
-                  onPressed: _syncingTemplates ? null : _retryTemplateSync,
-                  child: Text(_syncingTemplates ? '同期中' : '再試行'),
-                ),
-              ),
-            ],
-            if (_templateLoadFailed) ...[
-              const SizedBox(height: 8),
-              StatusBanner(
-                kind: StatusKind.warning,
-                message: '個人テンプレートを読み込めませんでした。自由入力は利用できます。',
-                action: TextButton(
-                  onPressed: _loadTemplates,
-                  child: const Text('再試行'),
-                ),
-              ),
-            ],
-            const Divider(height: 24),
-            if (_messages.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: Text('質問を選ぶか、自由に入力してください')),
-              ),
-            for (final message in _messages)
-              _MessageBubble(
-                message: message,
-                saved: message.role == 'user' && _isSaved(message.content),
-                onSave: message.role == 'user'
-                    ? () => _saveSentMessage(message.content)
-                    : null,
-              ),
-            if (_sending)
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.all(12),
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.s),
-                child: StatusBanner(kind: StatusKind.error, message: _error!),
-              ),
-          ],
-        ),
-      ),
-      SafeArea(
-        top: false,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            12,
-            8,
-            12,
-            8 + MediaQuery.viewInsetsOf(context).bottom,
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.l,
+            AppSpacing.m,
+            AppSpacing.s,
+            AppSpacing.xs,
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  enabled: _canSend,
-                  maxLength: ApiClient.aiMessageMaxLength,
-                  maxLines: 4,
-                  minLines: 1,
-                  textInputAction: TextInputAction.newline,
-                  decoration: const InputDecoration(hintText: '状況や聞きたいことを入力'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filled(
-                onPressed: _sending || !_canSend ? null : _send,
-                tooltip: '送信',
-                icon: const Icon(Icons.send),
+              Expanded(child: Text('この手牌について質問', style: text.titleLarge)),
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close),
+                tooltip: '閉じる',
               ),
             ],
           ),
         ),
-      ),
-    ],
-  );
+        Expanded(
+          child: ListView(
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.l,
+              AppSpacing.xs,
+              AppSpacing.l,
+              AppSpacing.m,
+            ),
+            children: [
+              if (!_signedIn) ...[
+                _LoginRequiredNotice(signingIn: _signingIn, onSignIn: _signIn),
+                const SizedBox(height: AppSpacing.m),
+              ],
+              if (_loadingUsage) const LinearProgressIndicator(),
+              if (_usage case final usage?) ...[
+                StatusBanner(
+                  kind: usage.exhausted ? StatusKind.warning : StatusKind.info,
+                  message: usage.exhausted
+                      ? '今月のAI相談枠を使い切りました。${usage.resetsAt.month}月1日に更新されます。'
+                      : 'AI相談は今月あと${usage.remaining}回利用できます',
+                ),
+                const SizedBox(height: AppSpacing.m),
+              ],
+              // The conversation comes first (user-question-template
+              // mockup); the chips below compose the next question.
+              if (_messages.isEmpty && _error == null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.l),
+                  child: Center(
+                    child: Text(
+                      '質問を選ぶか、自由に入力してください',
+                      style: text.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              for (final message in _messages)
+                _MessageBubble(
+                  message: message,
+                  saved: message.role == 'user' && _isSaved(message.content),
+                  onSave: message.role == 'user'
+                      ? () => _saveSentMessage(message.content)
+                      : null,
+                ),
+              if (_sending)
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: EdgeInsets.all(AppSpacing.m),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+              if (_error == _sendFailedMessage)
+                _SendFailedCard(
+                  onRetry: _sending || !_canSend ? null : _send,
+                )
+              else if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.s),
+                  child: StatusBanner(kind: StatusKind.error, message: _error!),
+                ),
+              SizedBox(key: _conversationEndKey, height: AppSpacing.l),
+              _sectionLabel('状況を追加'),
+              Wrap(
+                spacing: AppSpacing.s,
+                runSpacing: AppSpacing.s,
+                children: [
+                  for (final selected in _situationTags.where(
+                    (selected) => !_situationOptions.any(
+                      (option) => option.body == selected,
+                    ),
+                  ))
+                    ToggleChip(
+                      label: selected,
+                      selected: true,
+                      onTap: () =>
+                          setState(() => _situationTags.remove(selected)),
+                    ),
+                  for (final tag in _situationOptions)
+                    ToggleChip(
+                      label: tag.label,
+                      selected: _situationTags.contains(tag.body),
+                      onTap: () => setState(() {
+                        _situationTags.contains(tag.body)
+                            ? _situationTags.remove(tag.body)
+                            : _situationTags.add(tag.body);
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.l),
+              _sectionLabel('質問テンプレート'),
+              Wrap(
+                spacing: AppSpacing.s,
+                runSpacing: AppSpacing.s,
+                children: [
+                  for (final question in _starterQuestions)
+                    ToggleChip(
+                      label: question.label,
+                      selected: false,
+                      onTap: () => _applyQuestion(question),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.l),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('自分用テンプレート', style: text.titleSmall),
+                        Text(
+                          '端末とアカウントに保存',
+                          style: text.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: _addTemplate,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('追加'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s),
+              for (final template in _templates) _templateRow(template),
+              if (_templates.any((item) => item.pendingSync)) ...[
+                const SizedBox(height: AppSpacing.s),
+                StatusBanner(
+                  kind: StatusKind.warning,
+                  message: '未同期のテンプレートがあります',
+                  action: TextButton(
+                    onPressed: _syncingTemplates ? null : _retryTemplateSync,
+                    child: Text(_syncingTemplates ? '同期中' : '再試行'),
+                  ),
+                ),
+              ],
+              if (_templateLoadFailed) ...[
+                const SizedBox(height: AppSpacing.s),
+                StatusBanner(
+                  kind: StatusKind.warning,
+                  message: '個人テンプレートを読み込めませんでした。自由入力は利用できます。',
+                  action: TextButton(
+                    onPressed: _loadTemplates,
+                    child: const Text('再試行'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.l,
+              AppSpacing.s,
+              AppSpacing.l,
+              AppSpacing.s + MediaQuery.viewInsetsOf(context).bottom,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    enabled: _canSend,
+                    maxLength: ApiClient.aiMessageMaxLength,
+                    maxLines: 4,
+                    minLines: 1,
+                    textInputAction: TextInputAction.newline,
+                    decoration: const InputDecoration(
+                      hintText: '聞きたいことを入力',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.s),
+                Tooltip(
+                  message: '送信',
+                  child: SizedBox(
+                    height: AppSizes.primaryButton,
+                    child: FilledButton(
+                      key: const ValueKey('ai-chat-send'),
+                      onPressed: _sending || !_canSend ? null : _send,
+                      child: const Text('送信'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A failed answer: what happened, a retry (the question is still in the
+/// input), and a reminder that the calculated result is unaffected.
+class _SendFailedCard extends StatelessWidget {
+  const _SendFailedCard({required this.onRetry});
+
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final colors = context.appColors;
+    final text = Theme.of(context).textTheme;
+    final muted = text.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(AppSpacing.l),
+          decoration: BoxDecoration(
+            color: colors.error.container,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            border: Border.all(color: colors.error.color),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: scheme.surface,
+                    child: Text(
+                      '!',
+                      style: text.titleMedium?.copyWith(
+                        color: colors.error.color,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.m),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'AIの回答を取得できませんでした',
+                          style: text.titleSmall?.copyWith(
+                            color: colors.error.onContainer,
+                          ),
+                        ),
+                        Text('質問内容は保持されています。通信状態を確認してください。', style: muted),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.m),
+              FilledButton(
+                onPressed: onRetry,
+                child: const Text('もう一度試す'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s),
+        Container(
+          padding: const EdgeInsets.all(AppSpacing.m),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 13,
+                backgroundColor: colors.soft,
+                child: Icon(Icons.check, size: 15, color: scheme.primary),
+              ),
+              const SizedBox(width: AppSpacing.m),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('計算結果は利用できます', style: text.titleSmall),
+                    Text('閉じると結果の画面へ戻ります', style: muted),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _LoginRequiredNotice extends StatelessWidget {
@@ -705,39 +899,54 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 340),
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: isUser
-              ? Theme.of(context).colorScheme.primaryContainer
-              : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(AppRadius.large),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(message.content),
-            if (isUser) ...[
-              const SizedBox(height: 4),
-              TextButton.icon(
-                onPressed: saved ? null : onSave,
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                ),
-                icon: Icon(
-                  saved ? Icons.check : Icons.bookmark_add_outlined,
-                  size: 16,
-                ),
-                label: Text(saved ? '保存済み' : 'テンプレートとして保存'),
-              ),
-            ],
-          ],
-        ),
+    final scheme = Theme.of(context).colorScheme;
+    final colors = context.appColors;
+    final text = Theme.of(context).textTheme;
+    final bubble = Container(
+      constraints: const BoxConstraints(maxWidth: 340),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.l,
+        vertical: AppSpacing.m,
+      ),
+      decoration: BoxDecoration(
+        color: isUser ? scheme.primary : colors.soft,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: isUser ? null : Border.all(color: colors.recommended.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!isUser)
+            Text(
+              'AI',
+              style: text.labelMedium?.copyWith(color: scheme.primary),
+            ),
+          Text(
+            message.content,
+            style: text.bodyMedium?.copyWith(
+              color: isUser ? scheme.onPrimary : scheme.onSurface,
+              fontWeight: isUser ? FontWeight.w700 : null,
+            ),
+          ),
+        ],
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.m),
+      child: Column(
+        crossAxisAlignment: isUser
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          bubble,
+          if (isUser)
+            TextButton.icon(
+              onPressed: saved ? null : onSave,
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              icon: Icon(saved ? Icons.check : Icons.add, size: 16),
+              label: Text(saved ? '保存済み' : 'テンプレートとして保存'),
+            ),
+        ],
       ),
     );
   }

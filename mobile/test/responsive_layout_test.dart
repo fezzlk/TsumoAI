@@ -214,7 +214,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('和了者を選択'), findsOneWidget);
-    expect(find.text('対局終了'), findsOneWidget);
+    expect(find.byKey(const ValueKey('end-match-button')), findsOneWidget);
     expectNoOverflow(tester);
   });
 

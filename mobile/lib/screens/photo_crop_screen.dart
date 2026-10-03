@@ -109,7 +109,11 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
     _rebase();
   }
 
-  void _onPointerMove(_CropHandle handle, PointerMoveEvent event, double scale) {
+  void _onPointerMove(
+    _CropHandle handle,
+    PointerMoveEvent event,
+    double scale,
+  ) {
     if (_activePointers[handle] != event.pointer) return;
     _lastKnownPosition[handle] = event.position;
     setState(() => _region = _computeRegion(scale));
@@ -220,173 +224,280 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
     return Rect.fromLTRB(left, top, right, bottom);
   }
 
+  /// Moves the region to [region] outside any drag (buttons only).
+  void _setRegion(Rect region) {
+    if (_activePointers.isNotEmpty) return;
+    setState(() {
+      _region = region;
+      _baseline = region;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colors = context.appColors;
-    // Photo editing stays dark like the camera.
+    final editor = context.appColors.editor;
+    final text = Theme.of(context).textTheme;
+    // Photo editing stays dark (crop mockup): mint actions on near-black.
     return Theme(
-      data: AppTheme.camera(),
+      data: AppTheme.editor(),
       child: Scaffold(
-      appBar: AppBar(
-        title: const Text('範囲を切り抜いて再検出'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, _region),
-            child: const Text('確定'),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final viewW = constraints.maxWidth;
-              final viewH = constraints.maxHeight;
-              final photoAspect = widget.rawWidth / widget.rawHeight;
-              final viewAspect = viewW / viewH;
-
-              late final double dispW, dispH;
-              if (photoAspect > viewAspect) {
-                dispW = viewW;
-                dispH = viewW / photoAspect;
-              } else {
-                dispH = viewH;
-                dispW = viewH * photoAspect;
-              }
-              final dispLeft = (viewW - dispW) / 2;
-              final dispTop = (viewH - dispH) / 2;
-              final scale = dispW / widget.rawWidth;
-
-              Offset toScreen(Offset p) =>
-                  Offset(dispLeft + p.dx * scale, dispTop + p.dy * scale);
-
-              Widget handle(_CropHandle h, Offset point) {
-                final sp = toScreen(point);
-                return Positioned(
-                  key: ValueKey('crop-handle-${h.name}'),
-                  left: sp.dx - _handleSize / 2,
-                  top: sp.dy - _handleSize / 2,
-                  width: _handleSize,
-                  height: _handleSize,
-                  child: Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: (event) => _onPointerDown(h, event),
-                    onPointerMove: (event) => _onPointerMove(h, event, scale),
-                    onPointerUp: (event) => _onPointerEnd(h, event),
-                    onPointerCancel: (event) => _onPointerEnd(h, event),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: colors.detectionBox,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: colors.cameraScrim, width: 2),
-                      ),
-                    ),
-                  ),
-                );
-              }
-
-              final regionScreenRect = Rect.fromLTWH(
-                toScreen(_region.topLeft).dx,
-                toScreen(_region.topLeft).dy,
-                _region.width * scale,
-                _region.height * scale,
-              );
-
-              return ClipRect(
-                child: Stack(
+        backgroundColor: editor.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Container(
+                height: 62,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s),
+                decoration: BoxDecoration(
+                  color: editor.surface,
+                  border: Border(bottom: BorderSide(color: editor.divider)),
+                ),
+                child: Row(
                   children: [
-                    Positioned(
-                      left: dispLeft,
-                      top: dispTop,
-                      width: dispW,
-                      height: dispH,
-                      child: Image.memory(
-                        widget.rawImageBytes,
-                        fit: BoxFit.fill,
-                        gaplessPlayback: true,
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('キャンセル'),
+                    ),
+                    Expanded(
+                      child: Text(
+                        '認識範囲を調整',
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.titleLarge?.copyWith(color: editor.onSurface),
                       ),
                     ),
-                    // Dims everything outside the selected region so it's
-                    // visually obvious what will (and won't) be fed to
-                    // re-detection.
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: _CropMaskPainter(
-                            regionRect: regionScreenRect,
-                          ),
+                    TextButton(
+                      onPressed: () => _setRegion(widget.initialRegion),
+                      child: const Text('リセット'),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.l),
+                  child: _buildEditor(context),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.l,
+                  0,
+                  AppSpacing.l,
+                  AppSpacing.l,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '牌が写っている範囲を指定してください',
+                      textAlign: TextAlign.center,
+                      style: text.bodySmall?.copyWith(color: editor.muted),
+                    ),
+                    TextButton(
+                      onPressed: () => _setRegion(
+                        Rect.fromLTWH(
+                          0,
+                          0,
+                          widget.rawWidth.toDouble(),
+                          widget.rawHeight.toDouble(),
                         ),
                       ),
-                    ),
-                    Positioned(
-                      key: const ValueKey('crop-handle-body'),
-                      left: regionScreenRect.left,
-                      top: regionScreenRect.top,
-                      width: regionScreenRect.width,
-                      height: regionScreenRect.height,
-                      child: Listener(
-                        behavior: HitTestBehavior.opaque,
-                        onPointerDown: (event) =>
-                            _onPointerDown(_CropHandle.body, event),
-                        onPointerMove: (event) =>
-                            _onPointerMove(_CropHandle.body, event, scale),
-                        onPointerUp: (event) =>
-                            _onPointerEnd(_CropHandle.body, event),
-                        onPointerCancel: (event) =>
-                            _onPointerEnd(_CropHandle.body, event),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color: colors.detectionBoxPending,
-                              width: 2.5,
-                            ),
-                          ),
-                        ),
+                      style: TextButton.styleFrom(
+                        foregroundColor: editor.muted,
                       ),
+                      child: const Text('元画像の範囲に戻す'),
                     ),
-                    handle(_CropHandle.topLeft, _region.topLeft),
-                    handle(_CropHandle.topRight, _region.topRight),
-                    handle(_CropHandle.bottomLeft, _region.bottomLeft),
-                    handle(_CropHandle.bottomRight, _region.bottomRight),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 8,
-                      child: IgnorePointer(
-                        child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: colors.cameraScrim,
-                              borderRadius: BorderRadius.circular(
-                                AppRadius.medium,
-                              ),
-                            ),
-                            child: Text(
-                              '牌が写っている範囲を指定してください',
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: colors.cameraOnSurfaceVariant,
-                                  ),
-                            ),
-                          ),
-                        ),
+                    const SizedBox(height: AppSpacing.xs),
+                    SizedBox(
+                      height: AppSizes.primaryButton,
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(context, _region),
+                        child: const Text('この範囲で再検出'),
                       ),
                     ),
                   ],
                 ),
-              );
-            },
+              ),
+            ],
           ),
         ),
       ),
-    ),
     );
   }
+
+  Widget _buildEditor(BuildContext context) {
+    final editor = context.appColors.editor;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewW = constraints.maxWidth;
+        final viewH = constraints.maxHeight;
+        final photoAspect = widget.rawWidth / widget.rawHeight;
+        final viewAspect = viewW / viewH;
+
+        late final double dispW, dispH;
+        if (photoAspect > viewAspect) {
+          dispW = viewW;
+          dispH = viewW / photoAspect;
+        } else {
+          dispH = viewH;
+          dispW = viewH * photoAspect;
+        }
+        final dispLeft = (viewW - dispW) / 2;
+        // Wide photos sit at the top, as in the mockup.
+        final dispTop = photoAspect > viewAspect ? 0.0 : (viewH - dispH) / 2;
+        final scale = dispW / widget.rawWidth;
+
+        Offset toScreen(Offset p) =>
+            Offset(dispLeft + p.dx * scale, dispTop + p.dy * scale);
+
+        // Invisible touch targets; the corner brackets are painted.
+        Widget handle(_CropHandle h, Offset point) {
+          final sp = toScreen(point);
+          return Positioned(
+            key: ValueKey('crop-handle-${h.name}'),
+            left: sp.dx - _handleSize / 2,
+            top: sp.dy - _handleSize / 2,
+            width: _handleSize,
+            height: _handleSize,
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (event) => _onPointerDown(h, event),
+              onPointerMove: (event) => _onPointerMove(h, event, scale),
+              onPointerUp: (event) => _onPointerEnd(h, event),
+              onPointerCancel: (event) => _onPointerEnd(h, event),
+            ),
+          );
+        }
+
+        final regionScreenRect = Rect.fromLTWH(
+          toScreen(_region.topLeft).dx,
+          toScreen(_region.topLeft).dy,
+          _region.width * scale,
+          _region.height * scale,
+        );
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: dispLeft,
+              top: dispTop,
+              width: dispW,
+              height: dispH,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.small),
+                child: Image.memory(
+                  widget.rawImageBytes,
+                  fit: BoxFit.fill,
+                  gaplessPlayback: true,
+                ),
+              ),
+            ),
+            // Dims the photo outside the region so it's obvious what will
+            // (and won't) be fed to re-detection, then draws the frame.
+            Positioned(
+              left: dispLeft,
+              top: dispTop,
+              width: dispW,
+              height: dispH,
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _CropMaskPainter(
+                    regionRect: regionScreenRect.shift(
+                      Offset(-dispLeft, -dispTop),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fromRect(
+              rect: regionScreenRect,
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _CropFramePainter(color: editor.selection),
+                ),
+              ),
+            ),
+            Positioned(
+              key: const ValueKey('crop-handle-body'),
+              left: regionScreenRect.left,
+              top: regionScreenRect.top,
+              width: regionScreenRect.width,
+              height: regionScreenRect.height,
+              child: Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (event) =>
+                    _onPointerDown(_CropHandle.body, event),
+                onPointerMove: (event) =>
+                    _onPointerMove(_CropHandle.body, event, scale),
+                onPointerUp: (event) => _onPointerEnd(_CropHandle.body, event),
+                onPointerCancel: (event) =>
+                    _onPointerEnd(_CropHandle.body, event),
+              ),
+            ),
+            handle(_CropHandle.topLeft, _region.topLeft),
+            handle(_CropHandle.topRight, _region.topRight),
+            handle(_CropHandle.bottomLeft, _region.bottomLeft),
+            handle(_CropHandle.bottomRight, _region.bottomRight),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Region frame: thin border, rule-of-thirds grid and thick corner
+/// brackets drawn just outside the corners.
+class _CropFramePainter extends CustomPainter {
+  _CropFramePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final line = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(rect, line);
+    final grid = Paint()
+      ..color = color.withValues(alpha: 0.45)
+      ..strokeWidth = 1;
+    for (var i = 1; i < 3; i++) {
+      final x = size.width * i / 3;
+      final y = size.height * i / 3;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    final bracket = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.square;
+    const arm = 16.0;
+    const out = 5.0;
+    for (final (cx, cy, dx, dy) in [
+      (-out, -out, 1.0, 1.0),
+      (size.width + out, -out, -1.0, 1.0),
+      (-out, size.height + out, 1.0, -1.0),
+      (size.width + out, size.height + out, -1.0, -1.0),
+    ]) {
+      canvas.drawPath(
+        Path()
+          ..moveTo(cx, cy + dy * arm)
+          ..lineTo(cx, cy)
+          ..lineTo(cx + dx * arm, cy),
+        bracket,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CropFramePainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _CropMaskPainter extends CustomPainter {

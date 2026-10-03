@@ -59,10 +59,6 @@ abstract final class AppTheme {
   /// Dark theme of the photo-editing screens (crop, box editor).
   static ThemeData editor() => _editor;
 
-  /// Former name of [editor], kept until the scan screen's camera phase
-  /// moves to the light design.
-  static ThemeData camera() => _editor;
-
   static ThemeData _buildLight() {
     final colors = AppColors.light;
     final scheme = ColorScheme.fromSeed(seedColor: _primary).copyWith(

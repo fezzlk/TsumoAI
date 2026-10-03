@@ -14,19 +14,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:tsumoai_mobile/main.dart';
 import 'package:tsumoai_mobile/models/ai_chat_message.dart';
 import 'package:tsumoai_mobile/models/ai_usage_status.dart';
 import 'package:tsumoai_mobile/models/history_entry.dart';
+import 'package:tsumoai_mobile/models/match_state.dart';
 import 'package:tsumoai_mobile/models/official_ai_chat_template.dart';
 import 'package:tsumoai_mobile/models/question_template.dart';
 import 'package:tsumoai_mobile/models/scan_purpose.dart';
 import 'package:tsumoai_mobile/models/score_request.dart';
 import 'package:tsumoai_mobile/models/score_result.dart';
+import 'package:tsumoai_mobile/models/tile_quad.dart';
+import 'package:tsumoai_mobile/screens/ai_chat_template_admin_screen.dart';
 import 'package:tsumoai_mobile/screens/ai_usage_screen.dart';
 import 'package:tsumoai_mobile/screens/help_screen.dart';
 import 'package:tsumoai_mobile/screens/history_screen.dart';
 import 'package:tsumoai_mobile/screens/mahjong_rules_screen.dart';
+import 'package:tsumoai_mobile/screens/photo_crop_screen.dart';
+import 'package:tsumoai_mobile/screens/tile_box_editor_screen.dart';
 import 'package:tsumoai_mobile/screens/match_home_screen.dart';
 import 'package:tsumoai_mobile/screens/settings_screen.dart';
 import 'package:tsumoai_mobile/services/history_service.dart';
@@ -201,6 +207,23 @@ ScoreResponse _score(String winType) => ScoreResponse.fromJson({
   'warnings': [],
 });
 
+/// A stand-in table photo: green felt with a row of fourteen white tiles.
+final _tablePhoto = () {
+  final photo = img.Image(width: 1200, height: 675)
+    ..clear(img.ColorRgb8(18, 92, 58));
+  for (var i = 0; i < 14; i++) {
+    img.fillRect(
+      photo,
+      x1: 150 + i * 64,
+      y1: 270,
+      x2: 150 + i * 64 + 58,
+      y2: 350,
+      color: img.ColorRgb8(240, 238, 228),
+    );
+  }
+  return img.encodePng(photo);
+}();
+
 Widget _panelHost(Widget panel) => Scaffold(
   backgroundColor: screenshotResultBackground(),
   body: SafeArea(
@@ -235,6 +258,32 @@ void main() {
         autoClassify: false,
         showTrainingDataActions: false,
       ),
+    );
+    await _capture(
+      tester,
+      '02b_match_end',
+      MatchHomeScreen(
+        cameras: const [],
+        autoClassify: false,
+        showTrainingDataActions: false,
+        matchState: MatchState()..recordWin(TableSeat.right),
+      ),
+      interact: (tester) async {
+        final end = find.byKey(const ValueKey('end-match-button'));
+        await tester.ensureVisible(end);
+        await tester.pumpAndSettle();
+        await tester.tap(end);
+      },
+    );
+    await _capture(
+      tester,
+      '02_match_home',
+      const MatchHomeScreen(
+        cameras: [],
+        autoClassify: false,
+        showTrainingDataActions: false,
+      ),
+      size: _narrow,
     );
     await _capture(
       tester,
@@ -407,6 +456,59 @@ void main() {
         ),
       ),
       interact: (tester) => tester.tap(find.text('open')),
+    );
+    await _capture(
+      tester,
+      '06b_ai_error',
+      Scaffold(
+        body: SafeArea(
+          child: AIChatSheet(
+            purpose: 'call_advice',
+            tiles: const ['1m', '2m', '3m'],
+            roundContext: const {},
+            analysis: const {'calls': []},
+            templateService: _MemoryTemplateService(),
+            officialTemplateService: _OfficialTemplates(),
+            isSignedIn: () => true,
+            usageLoader: () async => _usage(),
+            sender:
+                ({
+                  required message,
+                  required conversation,
+                  required situationTags,
+                }) async => throw Exception('offline'),
+          ),
+        ),
+      ),
+      interact: (tester) async {
+        await tester.enterText(find.byType(TextField).last, '親リーチ中でも白はポンするべき？');
+        await tester.tap(find.byKey(const ValueKey('ai-chat-send')));
+      },
+    );
+    await _capture(
+      tester,
+      '16_ai_templates',
+      AIChatTemplateAdminScreen(service: _OfficialTemplates()),
+    );
+    await _capture(
+      tester,
+      '14_crop',
+      PhotoCropScreen(
+        rawImageBytes: _tablePhoto,
+        rawWidth: 1200,
+        rawHeight: 675,
+        initialRegion: const Rect.fromLTWH(120, 240, 960, 140),
+      ),
+    );
+    await _capture(
+      tester,
+      '15_box_editor',
+      TileBoxEditorScreen(
+        rawImageBytes: _tablePhoto,
+        rawWidth: 1200,
+        rawHeight: 675,
+        initialQuad: TileQuad.fromRect(const Rect.fromLTWH(342, 270, 58, 80)),
+      ),
     );
     await _capture(
       tester,
