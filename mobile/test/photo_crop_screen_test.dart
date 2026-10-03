@@ -44,6 +44,18 @@ Future<Rect? Function()> openCropScreen(WidgetTester tester) async {
   return () => result;
 }
 
+/// Screen pixels per photo pixel, measured from the corner handles, so
+/// gestures below are given in photo pixels whatever the layout.
+double _cropScale(WidgetTester tester) {
+  final left = tester.getCenter(
+    find.byKey(const ValueKey('crop-handle-topLeft')),
+  );
+  final right = tester.getCenter(
+    find.byKey(const ValueKey('crop-handle-topRight')),
+  );
+  return (right.dx - left.dx) / _initialRegion.width;
+}
+
 void main() {
   // Regression test for FEZ-93: topLeft and bottomLeft both own the
   // region's `left` edge. Dragging both simultaneously (two fingers, same
@@ -65,7 +77,7 @@ void main() {
       final gestureBottomLeft = await tester.startGesture(bottomLeftCenter);
       await tester.pump();
 
-      const moveBy = Offset(-30, 0);
+      final moveBy = const Offset(-30, 0) * _cropScale(tester);
       await gestureTopLeft.moveBy(moveBy);
       await gestureBottomLeft.moveBy(moveBy);
       await tester.pump();
@@ -74,7 +86,7 @@ void main() {
       await gestureBottomLeft.up();
       await tester.pump();
 
-      await tester.tap(find.text('確定'));
+      await tester.tap(find.text('この範囲で再検出'));
       await tester.pumpAndSettle();
 
       final region = getResult();
@@ -116,16 +128,18 @@ void main() {
       // Same direction (both up), slightly different magnitudes — as two
       // independent fingers always are in practice, even when the user
       // intends one single synchronized motion.
-      await gestureBottomLeft.moveBy(const Offset(0, -20));
+      await gestureBottomLeft.moveBy(const Offset(0, -20) * _cropScale(tester));
       await tester.pump();
-      await gestureBottomRight.moveBy(const Offset(0, -24));
+      await gestureBottomRight.moveBy(
+        const Offset(0, -24) * _cropScale(tester),
+      );
       await tester.pump();
 
       await gestureBottomLeft.up();
       await gestureBottomRight.up();
       await tester.pump();
 
-      await tester.tap(find.text('確定'));
+      await tester.tap(find.text('この範囲で再検出'));
       await tester.pumpAndSettle();
 
       final region = getResult();
@@ -166,20 +180,20 @@ void main() {
       // move a further 10.
       var gestureBottomLeft = await tester.startGesture(bottomLeftCenter);
       await tester.pump();
-      await gestureBottomLeft.moveBy(const Offset(0, -30));
+      await gestureBottomLeft.moveBy(const Offset(0, -30) * _cropScale(tester));
       await tester.pump();
       await gestureBottomLeft.up();
       await tester.pump();
 
       gestureBottomLeft = await tester.startGesture(bottomLeftCenter);
       await tester.pump();
-      await gestureBottomLeft.moveBy(const Offset(0, -10));
+      await gestureBottomLeft.moveBy(const Offset(0, -10) * _cropScale(tester));
       await tester.pump();
       await gestureBottomLeft.up();
       await gestureBottomRight.up();
       await tester.pump();
 
-      await tester.tap(find.text('確定'));
+      await tester.tap(find.text('この範囲で再検出'));
       await tester.pumpAndSettle();
 
       final region = getResult();

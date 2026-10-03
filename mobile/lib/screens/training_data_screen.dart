@@ -10,6 +10,7 @@ import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import '../services/training_data_client.dart';
 import '../services/gesture_transform.dart';
+import '../widgets/screen_header.dart';
 import '../widgets/tile_glyph.dart';
 import '../widgets/tile_image_picker.dart';
 import '../services/tile_assets.dart';
@@ -249,84 +250,209 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
 
   AppColors get _colors => context.appColors;
 
+  ColorScheme get _scheme => Theme.of(context).colorScheme;
+  TextTheme get _text => Theme.of(context).textTheme;
+
   @override
   Widget build(BuildContext context) {
-    // Every phase here works on a photo, so the screen stays dark.
-    return Theme(
-      data: AppTheme.camera(),
-      child: Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _pendingSends > 0
-              ? '学習データ作成 ($_sentCount枚送信済み・送信中$_pendingSends件)'
-              : '学習データ作成 ($_sentCount枚送信済み)',
+    // Light screen with the photo in a deep-green frame (training-capture
+    // mockup): step 1 撮影 covers capture and alignment, step 2 正解確認.
+    final subtitle = switch (_phase) {
+      _TDPhase.camera => '牌を1枚撮影',
+      _TDPhase.align => '枠に合わせて切り出し',
+      _TDPhase.label => '正解の牌を選択',
+    };
+    final sent = _pendingSends > 0
+        ? '$_sentCount枚送信済み・送信中$_pendingSends件'
+        : '$_sentCount枚送信済み';
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children: [
+            ScreenHeader(
+              title: '学習データ作成',
+              subtitle: '$subtitle・$sent',
+              trailing: const HeaderHomeButton(),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.l,
+                AppSpacing.m,
+                AppSpacing.l,
+                AppSpacing.m,
+              ),
+              child: _stepPills(),
+            ),
+            Expanded(
+              child: switch (_phase) {
+                _TDPhase.camera => _buildCamera(),
+                _TDPhase.align => _buildAlign(),
+                _TDPhase.label => _buildLabel(),
+              },
+            ),
+          ],
         ),
       ),
-      body: SafeArea(
-        child: switch (_phase) {
-          _TDPhase.camera => _buildCamera(),
-          _TDPhase.align => _buildAlign(),
-          _TDPhase.label => _buildLabel(),
-        },
-      ),
-    ),
     );
   }
 
-  Widget _buildCamera() {
-    if (_controller == null || !_controller!.value.isInitialized) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    return Stack(
-      fit: StackFit.expand,
+  Widget _stepPills() {
+    Widget pill(int number, String label, bool active) => Expanded(
+      child: Container(
+        height: 32,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: active ? _scheme.primary : _scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+        ),
+        child: Text(
+          '$number  $label',
+          style: _text.labelMedium?.copyWith(
+            color: active ? _scheme.onPrimary : _scheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+    final labeling = _phase == _TDPhase.label;
+    return Row(
       children: [
-        // Centered rather than a direct Stack.expand child, so
-        // CameraPreview's own internal AspectRatio determines its size
-        // instead of being force-stretched to fill — matches
-        // `scan_screen.dart`'s `_buildCameraPhase`.
-        Center(child: CameraPreview(_controller!)),
-        Positioned(
-          top: 20,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: _colors.cameraScrim,
-                borderRadius: BorderRadius.circular(AppRadius.xLarge),
-              ),
-              child: Text(
-                '牌1枚を撮影してください',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(color: _colors.cameraOnSurface),
-              ),
+        pill(1, '撮影', !labeling),
+        SizedBox(
+          width: AppSpacing.xl,
+          child: Divider(color: _scheme.outlineVariant),
+        ),
+        pill(2, '正解確認', labeling),
+      ],
+    );
+  }
+
+  /// Deep-green rounded frame holding the camera preview or photo.
+  Widget _photoFrame(Widget child) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.l),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.hero),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: _colors.photoGradient,
+          ),
+        ),
+        child: child,
+      ),
+    ),
+  );
+
+  Widget _buildCamera() {
+    final ready = _controller != null && _controller!.value.isInitialized;
+    return Column(
+      children: [
+        Expanded(
+          child: _photoFrame(
+            Stack(
+              fit: StackFit.expand,
+              children: [
+                if (!ready)
+                  Center(
+                    child: CircularProgressIndicator(color: _colors.onDark),
+                  )
+                else
+                  // Centered so CameraPreview keeps its own aspect ratio.
+                  Center(child: CameraPreview(_controller!)),
+                IgnorePointer(
+                  child: Center(
+                    child: FractionallySizedBox(
+                      widthFactor: 0.38,
+                      child: AspectRatio(
+                        aspectRatio: 0.72,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: _colors.cameraGuide,
+                              width: 2,
+                            ),
+                            borderRadius: BorderRadius.circular(
+                              AppRadius.card,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: AppSpacing.l,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.m,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _colors.cameraScrim,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Text(
+                        '牌を中央に置いてください',
+                        style: _text.labelMedium?.copyWith(
+                          color: _colors.cameraOnSurface,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
-        Positioned(
-          bottom: 40,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: GestureDetector(
-              onTap: _capture,
-              child: Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: _colors.cameraOnSurface, width: 4),
-                  color: _colors.cameraOnSurface.withValues(alpha: 0.18),
-                ),
-                child: Icon(
-                  Icons.camera_alt,
-                  color: _colors.cameraOnSurface,
-                  size: 32,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.l,
+            AppSpacing.m,
+            AppSpacing.l,
+            AppSpacing.l,
+          ),
+          child: Column(
+            children: [
+              Text(
+                '学習に使う牌を1枚だけ、正面から大きく写します。',
+                textAlign: TextAlign.center,
+                style: _text.bodySmall?.copyWith(
+                  color: _scheme.onSurfaceVariant,
                 ),
               ),
-            ),
+              const SizedBox(height: AppSpacing.m),
+              Semantics(
+                button: true,
+                label: '撮影',
+                excludeSemantics: true,
+                child: GestureDetector(
+                  onTap: ready ? _capture : null,
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _scheme.primary, width: 3),
+                    ),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: ready
+                            ? _scheme.primary
+                            : _scheme.surfaceContainerHigh,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text('撮影', style: _text.labelMedium),
+            ],
           ),
         ),
       ],
@@ -334,7 +460,10 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
   }
 
   Widget _buildAlign() {
-    return LayoutBuilder(
+    // Geometry of the last layout, read by the buttons below the frame.
+    late Rect slotRect;
+    late double baseLeft, baseTop, baseW, baseH;
+    final editor = LayoutBuilder(
       builder: (context, constraints) {
         final viewW = constraints.maxWidth;
         final viewH = constraints.maxHeight;
@@ -342,7 +471,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
         // Single tile slot: centered, reasonable size
         final slotW = viewW * 0.3;
         final slotH = slotW / 0.75;
-        final slotRect = Rect.fromLTWH(
+        slotRect = Rect.fromLTWH(
           (viewW - slotW) / 2,
           (viewH - slotH) / 2,
           slotW,
@@ -352,7 +481,6 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
         final imgW = _capturedImage!.width.toDouble();
         final imgH = _capturedImage!.height.toDouble();
         final imgAspect = imgW / imgH;
-        late final double baseW, baseH;
         if (imgAspect > viewW / viewH) {
           baseW = viewW;
           baseH = viewW / imgAspect;
@@ -360,8 +488,8 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
           baseH = viewH;
           baseW = viewH * imgAspect;
         }
-        final baseLeft = (viewW - baseW) / 2;
-        final baseTop = (viewH - baseH) / 2;
+        baseLeft = (viewW - baseW) / 2;
+        baseTop = (viewH - baseH) / 2;
         final origin = Offset(baseLeft, baseTop);
 
         return Stack(
@@ -440,47 +568,45 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
               ),
             ),
 
-            // Bottom buttons
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                color: _colors.cameraScrim,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => setState(() {
-                          _phase = _TDPhase.camera;
-                          _capturedBytes = null;
-                        }),
-                        child: const Text('撮り直す'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: FilledButton.icon(
-                        onPressed: () => _cropAndSelectLabel(
-                          slotRect,
-                          baseLeft,
-                          baseTop,
-                          baseW,
-                          baseH,
-                        ),
-                        icon: const Icon(Icons.crop, size: 20),
-                        label: const Text('切り出し'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
           ],
         );
       },
+    );
+    return Column(
+      children: [
+        Expanded(child: _photoFrame(editor)),
+        Padding(
+          padding: const EdgeInsets.all(AppSpacing.l),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => setState(() {
+                    _phase = _TDPhase.camera;
+                    _capturedBytes = null;
+                  }),
+                  child: const Text('撮り直す'),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.m),
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  onPressed: () => _cropAndSelectLabel(
+                    slotRect,
+                    baseLeft,
+                    baseTop,
+                    baseW,
+                    baseH,
+                  ),
+                  icon: const Icon(Icons.crop, size: 20),
+                  label: const Text('切り出し'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -506,11 +632,11 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
             Container(
               height: 160,
               decoration: BoxDecoration(
-                border: Border.all(color: _colors.cameraOnSurfaceVariant),
-                borderRadius: BorderRadius.circular(AppRadius.medium),
+                color: _colors.cameraBackground,
+                borderRadius: BorderRadius.circular(AppRadius.card),
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.medium),
+                borderRadius: BorderRadius.circular(AppRadius.card),
                 child: Image.memory(jpgBytes, fit: BoxFit.contain),
               ),
             ),
@@ -528,12 +654,12 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               decoration: BoxDecoration(
-                color: _colors.cameraOnSurface.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(AppRadius.medium),
+                color: _scheme.surface,
+                borderRadius: BorderRadius.circular(AppRadius.card),
                 border: Border.all(
                   color: _selectedTileCode != null
-                      ? _colors.detectionBox
-                      : _colors.cameraOnSurfaceVariant,
+                      ? _scheme.primary
+                      : _scheme.outlineVariant,
                 ),
               ),
               child: Row(
@@ -557,14 +683,14 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
                         : tileDisplayName(_selectedTileCode!),
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       color: _selectedTileCode != null
-                          ? _colors.detectionBox
-                          : _colors.cameraOnSurfaceVariant,
+                          ? _scheme.primary
+                          : _scheme.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Icon(
                     Icons.touch_app,
-                    color: _colors.cameraOnSurfaceVariant,
+                    color: _scheme.onSurfaceVariant,
                     size: 20,
                   ),
                 ],

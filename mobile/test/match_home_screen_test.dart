@@ -23,14 +23,14 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('tile_picker_cell_4m')));
     await tester.pumpAndSettle();
 
-    expect(find.byType(TileGlyph), findsOneWidget);
-    expect(tester.widget<TileGlyph>(find.byType(TileGlyph)).tileCode, '4m');
+    // In the dora panel and in the carried-over summary.
+    expect(find.byType(TileGlyph), findsNWidgets(2));
+    expect(tester.widget<TileGlyph>(find.byType(TileGlyph).first).tileCode, '4m');
 
-    await tester.tap(find.text('表ドラ表示牌'));
+    await tester.tap(find.text('ドラ牌'));
     await tester.pump();
 
-    expect(find.text('表ドラ牌'), findsOneWidget);
-    expect(tester.widget<TileGlyph>(find.byType(TileGlyph)).tileCode, '5m');
+    expect(tester.widget<TileGlyph>(find.byType(TileGlyph).first).tileCode, '5m');
   });
 
   testWidgets('match home exposes all four quick checks', (tester) async {
@@ -63,7 +63,9 @@ void main() {
       ),
     );
 
-    expect(find.text('東2局\n0本場'), findsOneWidget);
+    expect(find.text('東2局'), findsOneWidget);
+    expect(find.text('0本場'), findsOneWidget);
+    expect(find.text('東二局'), findsOneWidget);
   });
 
   testWidgets('match state is cleared only after end confirmation', (
@@ -81,10 +83,13 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('対局終了'));
+    await tester.ensureVisible(find.byKey(const ValueKey('end-match-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('end-match-button')));
     await tester.pumpAndSettle();
 
     expect(find.text('対局を終了しますか？'), findsOneWidget);
+    expect(find.text('0局'), findsOneWidget);
     expect(find.textContaining('局の進行状況はリセットされます'), findsOneWidget);
     expect(ended, isFalse);
 
@@ -92,9 +97,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(ended, isFalse);
 
-    await tester.tap(find.text('対局終了'));
+    await tester.ensureVisible(find.byKey(const ValueKey('end-match-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('対局を終了'));
+    await tester.tap(find.byKey(const ValueKey('end-match-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('対局を続ける'));
+    await tester.pumpAndSettle();
+    expect(ended, isFalse);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('end-match-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('end-match-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('対局を終了').last);
     await tester.pumpAndSettle();
 
     expect(ended, isTrue);

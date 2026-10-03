@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../models/official_ai_chat_template.dart';
 import '../services/official_ai_chat_template_service.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+import '../widgets/screen_header.dart';
+import '../widgets/status_banner.dart';
 
 class AIChatTemplateAdminScreen extends StatefulWidget {
   const AIChatTemplateAdminScreen({super.key, this.service});
@@ -19,6 +23,9 @@ class _AIChatTemplateAdminScreenState extends State<AIChatTemplateAdminScreen> {
   OfficialAIChatTemplateConfig? _config;
   bool _saving = false;
   String? _error;
+
+  /// Tab shown: 'situation' (状況) or 'question' (質問の型).
+  String _kind = 'situation';
 
   @override
   void initState() {
@@ -193,109 +200,216 @@ class _AIChatTemplateAdminScreenState extends State<AIChatTemplateAdminScreen> {
   @override
   Widget build(BuildContext context) {
     final config = _config;
+    final scheme = Theme.of(context).colorScheme;
+    final colors = context.appColors;
+    final text = Theme.of(context).textTheme;
+    final situation = _kind == 'situation';
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('AIチャットテンプレート'),
-        actions: [
-          if (_saving)
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _saving ? null : () => _edit(),
-        icon: const Icon(Icons.add),
-        label: const Text('追加'),
-      ),
       body: SafeArea(
-        child: config == null
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: const EdgeInsets.only(bottom: 96),
-                children: [
-                  if (_error != null)
-                    MaterialBanner(
-                      content: Text(_error!),
-                      actions: [
-                        TextButton(
-                          onPressed: _load,
-                          child: const Text('再読み込み'),
+        child: Column(
+          children: [
+            ScreenHeader(
+              title: 'AIテンプレート',
+              subtitle: '開発者設定',
+              trailing: config == null
+                  ? null
+                  : Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.s,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.developer.container,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Text(
+                        'v${config.version}',
+                        style: text.labelMedium?.copyWith(
+                          color: colors.developer.onContainer,
+                        ),
+                      ),
+                    ),
+            ),
+            if (_saving) const LinearProgressIndicator(),
+            Expanded(
+              child: config == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView(
+                      padding: const EdgeInsets.all(AppSpacing.l),
+                      children: [
+                        if (_error != null) ...[
+                          StatusBanner(
+                            kind: StatusKind.error,
+                            message: _error!,
+                            action: TextButton(
+                              onPressed: _load,
+                              child: const Text('再読み込み'),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.m),
+                        ],
+                        _kindTabs(),
+                        const SizedBox(height: AppSpacing.l),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    situation ? '状況テンプレート' : '質問の型テンプレート',
+                                    style: text.titleMedium,
+                                  ),
+                                  Text(
+                                    situation
+                                        ? 'AIへ渡す卓況を複数選択できます'
+                                        : 'タップで質問文を入力欄に入れます',
+                                    style: text.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            FilledButton.icon(
+                              onPressed: _saving ? null : () => _edit(),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: const Text('追加'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.m),
+                        ..._rows(_kindItems(_kind)),
+                        const SizedBox(height: AppSpacing.s),
+                        Text(
+                          '並べ替え・表示変更・追加内容は保存時に新しいversionとして公開され、アプリは次回取得時に反映します。',
+                          style: text.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: Text(
-                      '公開バージョン ${config.version}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                  _section('状況', _kindItems('situation')),
-                  _section('質問の型', _kindItems('question')),
-                ],
-              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _section(String title, List<OfficialAIChatTemplate> items) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
-        child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-      ),
-      for (var index = 0; index < items.length; index++)
-        ListTile(
-          title: Text(items[index].label),
-          subtitle: Text(
-            items[index].kind == 'question'
-                ? '${_purposeLabel(items[index].purpose)}・${items[index].body}'
-                : items[index].body,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          leading: Switch(
-            value: items[index].enabled,
-            onChanged: _saving
-                ? null
-                : (enabled) => _publish([
-                    for (final candidate in _config!.items)
-                      candidate.id == items[index].id
-                          ? candidate.copyWith(enabled: enabled)
-                          : candidate,
-                  ]),
-          ),
-          trailing: PopupMenuButton<String>(
-            enabled: !_saving,
-            onSelected: (action) {
-              if (action == 'up') _move(items[index], -1);
-              if (action == 'down') _move(items[index], 1);
-              if (action == 'edit') _edit(items[index]);
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'up',
-                enabled: index > 0,
-                child: const Text('上へ移動'),
+  Widget _kindTabs() {
+    final scheme = Theme.of(context).colorScheme;
+    Widget tab(String kind, String label) {
+      final selected = _kind == kind;
+      return Expanded(
+        child: Semantics(
+          button: true,
+          selected: selected,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() => _kind = kind),
+            child: Container(
+              height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: selected ? scheme.surface : null,
+                borderRadius: BorderRadius.circular(AppRadius.large),
               ),
-              PopupMenuItem(
-                value: 'down',
-                enabled: index < items.length - 1,
-                child: const Text('下へ移動'),
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
               ),
-              const PopupMenuItem(value: 'edit', child: Text('編集')),
-            ],
+            ),
           ),
         ),
-    ],
-  );
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xs),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+      ),
+      child: Row(children: [tab('situation', '状況'), tab('question', '質問の型')]),
+    );
+  }
+
+  List<Widget> _rows(List<OfficialAIChatTemplate> items) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return [
+      for (var index = 0; index < items.length; index++)
+        Padding(
+          padding: const EdgeInsets.only(bottom: AppSpacing.s),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              border: Border.all(color: scheme.outlineVariant),
+            ),
+            child: Row(
+              children: [
+                PopupMenuButton<int>(
+                  enabled: !_saving,
+                  tooltip: '並べ替え',
+                  icon: Icon(Icons.drag_handle, color: scheme.onSurfaceVariant),
+                  onSelected: (delta) => _move(items[index], delta),
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: -1,
+                      enabled: index > 0,
+                      child: const Text('上へ移動'),
+                    ),
+                    PopupMenuItem(
+                      value: 1,
+                      enabled: index < items.length - 1,
+                      child: const Text('下へ移動'),
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(items[index].label, style: text.titleSmall),
+                      Text(
+                        items[index].kind == 'question'
+                            ? '${_purposeLabel(items[index].purpose)}・${items[index].body}'
+                            : items[index].body,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: _saving ? null : () => _edit(items[index]),
+                  child: const Text('編集'),
+                ),
+                Switch(
+                  value: items[index].enabled,
+                  onChanged: _saving
+                      ? null
+                      : (enabled) => _publish([
+                          for (final candidate in _config!.items)
+                            candidate.id == items[index].id
+                                ? candidate.copyWith(enabled: enabled)
+                                : candidate,
+                        ]),
+                ),
+                const SizedBox(width: AppSpacing.s),
+              ],
+            ),
+          ),
+        ),
+    ];
+  }
 }
 
 String _purposeLabel(String value) => switch (value) {

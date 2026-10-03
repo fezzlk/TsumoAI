@@ -105,6 +105,9 @@ class MatchState {
   MatchSnapshot get current => _current;
   bool get canUndo => _history.isNotEmpty;
 
+  /// Hands finished so far (wins and draws), for the end-of-match summary.
+  int get completedHands => _history.length;
+
   void setDoraIndicators(List<String> value) {
     _current = _current.withDoraIndicators(value);
   }

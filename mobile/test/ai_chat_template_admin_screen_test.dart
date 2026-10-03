@@ -43,14 +43,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('公開バージョン 2'), findsOneWidget);
+    expect(find.text('v2'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byType(Switch).first);
     await tester.pumpAndSettle();
 
     expect(service.publishes, 1);
-    expect(find.text('公開バージョン 3'), findsOneWidget);
+    expect(find.text('v3'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
