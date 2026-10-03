@@ -89,6 +89,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('対局を終了しますか？'), findsOneWidget);
+    expect(find.text('終了した局'), findsOneWidget);
+    expect(find.text('計算済み'), findsNothing);
     expect(find.text('0局'), findsOneWidget);
     expect(find.textContaining('局の進行状況はリセットされます'), findsOneWidget);
     expect(ended, isFalse);
