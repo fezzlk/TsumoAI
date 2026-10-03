@@ -19,8 +19,10 @@ import 'services/auth_service.dart';
 import 'services/question_template_service.dart';
 import 'services/rule_settings_service.dart';
 import 'services/official_ai_chat_template_service.dart';
+import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
-import 'widgets/help_dialog.dart';
+import 'widgets/home_cards.dart';
+import 'widgets/screen_header.dart';
 import 'widgets/status_banner.dart';
 
 List<CameraDescription> cameras = const [];
@@ -197,97 +199,68 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.appColors;
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.l,
+            AppSpacing.s,
+            AppSpacing.l,
+            AppSpacing.xl,
+          ),
           children: [
             _buildHeader(context),
-            const SizedBox(height: 16),
             if (startupError != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.s),
               _buildStartupError(),
             ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _purposeCard(
-                    context,
-                    icon: Icons.calculate_outlined,
-                    title: '点数計算',
-                    subtitle: '役・翻・符・支払い',
-                    purpose: ScanPurpose.score,
-                    emphasized: true,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _purposeCard(
-                    context,
-                    icon: Icons.center_focus_strong,
-                    title: '待ち確認',
-                    subtitle: '待ち牌・有効牌',
-                    purpose: ScanPurpose.wait,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _purposeCard(
-                    context,
-                    icon: Icons.swap_horiz,
-                    title: '何切る',
-                    subtitle: '切る牌の候補',
-                    purpose: ScanPurpose.discard,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _purposeCard(
-                    context,
-                    icon: Icons.call_split,
-                    title: '鳴き判断',
-                    subtitle: '鳴ける牌と判断',
-                    purpose: ScanPurpose.callAdvice,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 94),
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.surface,
-                ),
-                onPressed: () => _openMatch(context),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        matchActive ? '対局を再開' : '実際の対局進行に合わせて点数計算を行う',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        matchActive
-                            ? '${matchState.current.roundLabel}から続ける'
-                            : '点数計算できる人がいない場合に、1半荘分の点数計算をサポート',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                    ],
-                  ),
-                ),
+            const SizedBox(height: AppSpacing.s),
+            _featureRow([
+              FeatureCard(
+                colors: colors.score,
+                icon: Icons.calculate_outlined,
+                title: '点数計算',
+                subtitle: '役・翻・符・支払い',
+                onTap: () => _openScan(context, ScanPurpose.score),
               ),
+              FeatureCard(
+                colors: colors.wait,
+                icon: Icons.hourglass_bottom,
+                title: '待ち確認',
+                subtitle: '待ち牌を確認',
+                onTap: () => _openScan(context, ScanPurpose.wait),
+              ),
+            ]),
+            const SizedBox(height: 10),
+            _featureRow([
+              FeatureCard(
+                colors: colors.discard,
+                icon: Icons.swap_horiz,
+                title: '何切る',
+                subtitle: '打牌候補・受け入れ',
+                onTap: () => _openScan(context, ScanPurpose.discard),
+              ),
+              FeatureCard(
+                colors: colors.call,
+                icon: Icons.call_split,
+                title: '鳴き判断',
+                subtitle: '候補牌・おすすめ度',
+                onTap: () => _openScan(context, ScanPurpose.callAdvice),
+              ),
+            ]),
+            const SizedBox(height: AppSpacing.m),
+            SessionCard(
+              playing: matchActive,
+              eyebrow: matchActive
+                  ? '対局中 · ${matchState.current.roundLabel}'
+                  : '半荘を通して使う',
+              title: matchActive ? '対局を再開する' : '実際の対局進行に合わせて\n点数計算を行う',
+              description: matchActive
+                  ? '局情報と登録済みの表ドラを引き継いで続けます'
+                  : '点数計算できる人がいない場合に\n1半荘分の点数計算をサポート',
+              action: matchActive ? '対局ホームへ' : '対局を始める',
+              onTap: () => _openMatch(context),
             ),
             _buildTrainingAction(context),
           ],
@@ -295,6 +268,18 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
+
+  /// Two feature cards side by side, sharing the taller one's height.
+  Widget _featureRow(List<Widget> cards) => IntrinsicHeight(
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: cards[0]),
+        const SizedBox(width: 10),
+        Expanded(child: cards[1]),
+      ],
+    ),
+  );
 
   Widget _buildStartupError() =>
       StatusBanner(kind: StatusKind.error, message: startupError!);
@@ -304,36 +289,75 @@ class HomeScreen extends StatelessWidget {
     initialData: AuthService.currentUser,
     builder: (context, snapshot) {
       final user = snapshot.data;
-      return Row(
-        children: [
-          Expanded(
-            child: Text(
-              'TsumoAI',
-              style: Theme.of(context).textTheme.headlineMedium,
+      final text = Theme.of(context).textTheme;
+      final scheme = Theme.of(context).colorScheme;
+      return SizedBox(
+        height: 70,
+        child: Row(
+          children: [
+            const BrandMark(),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'TsumoAI',
+                    maxLines: 1,
+                    style: text.headlineSmall?.copyWith(
+                      color: context.appColors.primaryDark,
+                      fontWeight: FontWeight.w900,
+                      height: 1.05,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    '実卓麻雀アシスタント',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            onPressed: () => showHelpDialog(context),
-            icon: const Icon(Icons.help_outline),
-            tooltip: '使い方',
-          ),
-          if (user == null)
-            TextButton(
-              onPressed: () => _signIn(context),
-              child: const Text('ログイン'),
-            )
-          else
-            IconButton(
-              onPressed: () => _showAccountMenu(context, user),
-              icon: const Icon(Icons.account_circle_outlined),
-              tooltip: 'アカウント',
+            if (user == null)
+              OutlinedButton(
+                onPressed: () => _signIn(context),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(74, AppSizes.tapTarget),
+                  padding: const EdgeInsets.symmetric(horizontal: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                  ),
+                ),
+                child: const Text('ログイン'),
+              )
+            else
+              IconButton(
+                onPressed: () => _showAccountMenu(context, user),
+                tooltip: 'アカウント',
+                style: IconButton.styleFrom(
+                  backgroundColor: scheme.primary,
+                  foregroundColor: scheme.onPrimary,
+                  fixedSize: const Size(AppSizes.tapTarget, AppSizes.tapTarget),
+                ),
+                icon: Text(
+                  (user.email ?? 'U').characters.first.toUpperCase(),
+                  style: text.titleSmall?.copyWith(color: scheme.onPrimary),
+                ),
+              ),
+            const SizedBox(width: 5),
+            HeaderIconButton(
+              icon: Icons.settings_outlined,
+              tooltip: '設定',
+              onPressed: () => _openSettings(context),
             ),
-          IconButton(
-            onPressed: () => _openSettings(context),
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: '設定',
-          ),
-        ],
+          ],
+        ),
       );
     },
   );
@@ -345,63 +369,20 @@ class HomeScreen extends StatelessWidget {
       builder: (context, snapshot) {
         if (snapshot.data != true) return const SizedBox.shrink();
         return Padding(
-          padding: const EdgeInsets.only(top: 16),
-          child: SizedBox(
-            height: 50,
-            child: OutlinedButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => TrainingDataScreen(cameras: cameras),
-                ),
+          padding: const EdgeInsets.only(top: 10),
+          child: DeveloperShortcutCard(
+            icon: Icons.photo_camera_outlined,
+            title: '学習用の牌を1枚撮影',
+            subtitle: '開発者設定で表示中',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => TrainingDataScreen(cameras: cameras),
               ),
-              icon: const Icon(Icons.school_outlined),
-              label: const Text('学習用の牌を1枚撮影'),
             ),
           ),
         );
       },
-    );
-  }
-
-  Widget _purposeCard(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required ScanPurpose purpose,
-    bool emphasized = false,
-  }) => SizedBox(
-    height: 104,
-    child: emphasized
-        ? ElevatedButton(
-            onPressed: () => _openScan(context, purpose),
-            child: _purposeCardContent(context, icon, title, subtitle),
-          )
-        : OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.surface,
-            ),
-            onPressed: () => _openScan(context, purpose),
-            child: _purposeCardContent(context, icon, title, subtitle),
-          ),
-  );
-
-  Widget _purposeCardContent(
-    BuildContext context,
-    IconData icon,
-    String title,
-    String subtitle,
-  ) {
-    final textTheme = Theme.of(context).textTheme;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(icon),
-        const SizedBox(height: AppSpacing.xs),
-        Text(title, style: textTheme.titleSmall),
-        Text(subtitle, textAlign: TextAlign.center, style: textTheme.labelSmall),
-      ],
     );
   }
 
@@ -457,6 +438,7 @@ class HomeScreen extends StatelessWidget {
           onShowTrainingDataActionsChanged: onShowTrainingDataActionsChanged,
           ruleSettings: ruleSettings,
           onRuleSettingsChanged: onRuleSettingsChanged,
+          onAuthenticationChanged: onAuthenticationChanged,
         ),
       ),
     );

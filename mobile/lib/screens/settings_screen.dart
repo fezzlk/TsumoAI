@@ -5,7 +5,10 @@ import '../config.dart';
 import '../models/score_request.dart';
 import '../services/auth_service.dart';
 import '../services/history_service.dart';
-import '../widgets/help_dialog.dart';
+import '../theme/app_theme.dart';
+import '../widgets/screen_header.dart';
+import '../widgets/section_list.dart';
+import 'help_screen.dart';
 import 'history_screen.dart';
 import 'mahjong_rules_screen.dart';
 import 'ai_chat_template_admin_screen.dart';
@@ -20,6 +23,7 @@ class SettingsScreen extends StatefulWidget {
     required this.onShowTrainingDataActionsChanged,
     required this.ruleSettings,
     required this.onRuleSettingsChanged,
+    this.onAuthenticationChanged,
   });
 
   final bool autoClassify;
@@ -28,6 +32,9 @@ class SettingsScreen extends StatefulWidget {
   final ValueChanged<bool> onShowTrainingDataActionsChanged;
   final MahjongRuleSettings ruleSettings;
   final ValueChanged<MahjongRuleSettings> onRuleSettingsChanged;
+
+  /// Re-synchronizes account-bound settings after signing in or out.
+  final Future<void> Function()? onAuthenticationChanged;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -59,115 +66,250 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('設定')),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
           children: [
-            SwitchListTile(
-              title: const Text('撮影後に自動識別'),
-              subtitle: const Text('位置検出後、そのまま牌の種類を識別します'),
-              value: _autoClassify,
-              onChanged: (value) {
-                setState(() => _autoClassify = value);
-                widget.onAutoClassifyChanged(value);
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.grid_view_outlined),
-              title: const Text('麻雀ルール'),
-              subtitle: const Text('計算・対局・チップのルール'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => MahjongRulesScreen(
-                    settings: widget.ruleSettings,
-                    onChanged: widget.onRuleSettingsChanged,
-                  ),
+            const ScreenHeader(title: '設定'),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.l,
+                  AppSpacing.l,
+                  AppSpacing.l,
+                  AppSpacing.xl,
                 ),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.history),
-              title: const Text('利用履歴'),
-              subtitle: const Text('結果とAIとの会話'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const HistoryScreen()),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('利用履歴を削除'),
-              subtitle: Text(
-                AuthService.currentUser == null
-                    ? 'この端末の結果履歴とAI会話を削除'
-                    : 'このアカウントに紐づく全端末の結果履歴とAI会話を削除',
-              ),
-              onTap: _confirmDeleteHistory,
-            ),
-            ListTile(
-              leading: const Icon(Icons.auto_awesome_outlined),
-              title: const Text('AI利用状況・残り枠'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const AIUsageScreen()),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.help_outline),
-              title: const Text('使い方・ヘルプ'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => showHelpDialog(context),
-            ),
-            ListTile(
-              leading: const Icon(Icons.description_outlined),
-              title: const Text('利用規約'),
-              trailing: const Icon(Icons.open_in_new),
-              onTap: () => _openExternalPage('/terms'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.privacy_tip_outlined),
-              title: const Text('プライバシーポリシー'),
-              trailing: const Icon(Icons.open_in_new),
-              onTap: () => _openExternalPage('/privacy'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.mail_outline),
-              title: const Text('問い合わせ'),
-              trailing: const Icon(Icons.open_in_new),
-              onTap: () => _openExternalPage('/contact'),
-            ),
-            if (_checkingAdmin)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: LinearProgressIndicator(),
-              )
-            else if (_isAdmin) ...[
-              const Divider(),
-              ListTile(
-                leading: const Icon(Icons.developer_mode),
-                title: const Text('開発者設定'),
-                subtitle: const Text('学習データ作成・管理機能'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => DeveloperSettingsScreen(
-                      showTrainingDataActions: _showTrainingDataActions,
-                      onShowTrainingDataActionsChanged: (value) {
-                        setState(() => _showTrainingDataActions = value);
-                        widget.onShowTrainingDataActionsChanged(value);
-                      },
+                children: [
+                  _buildAccountCard(context),
+                  const SectionLabel('利用データ'),
+                  SectionGroup(
+                    children: [
+                      SectionTile(
+                        mark: '履',
+                        title: '利用履歴',
+                        subtitle: '過去の確認結果とAIとの会話',
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const HistoryScreen(),
+                          ),
+                        ),
+                      ),
+                      SectionTile(
+                        mark: 'AI',
+                        title: 'AI利用状況・残り枠',
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const AIUsageScreen(),
+                          ),
+                        ),
+                      ),
+                      SectionTile(
+                        mark: '消',
+                        title: '利用履歴を削除',
+                        subtitle: AuthService.currentUser == null
+                            ? 'この端末の結果履歴とAI会話を削除'
+                            : 'このアカウントに紐づく全端末の結果履歴とAI会話を削除',
+                        destructive: true,
+                        trailing: const SizedBox.shrink(),
+                        onTap: _confirmDeleteHistory,
+                      ),
+                    ],
+                  ),
+                  const SectionLabel('アプリ設定'),
+                  SectionGroup(
+                    children: [
+                      SectionTile(
+                        mark: '識',
+                        title: '撮影後に自動識別',
+                        subtitle: '位置検出後、そのまま牌の種類を識別します',
+                        trailing: Switch(
+                          value: _autoClassify,
+                          onChanged: _setAutoClassify,
+                        ),
+                        onTap: () => _setAutoClassify(!_autoClassify),
+                      ),
+                      SectionTile(
+                        mark: '牌',
+                        title: '麻雀ルール',
+                        subtitle: '計算・対局・チップのルール',
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => MahjongRulesScreen(
+                              settings: widget.ruleSettings,
+                              onChanged: widget.onRuleSettingsChanged,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SectionLabel('サポート'),
+                  SectionGroup(
+                    children: [
+                      SectionTile(
+                        mark: '?',
+                        title: '使い方・ヘルプ',
+                        subtitle: '撮影方法と各機能の使い方',
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => HelpScreen(
+                              onContact: () => _openExternalPage('/contact'),
+                            ),
+                          ),
+                        ),
+                      ),
+                      SectionTile(
+                        mark: '問',
+                        title: '問い合わせ',
+                        onTap: () => _openExternalPage('/contact'),
+                      ),
+                      SectionTile(
+                        mark: '規',
+                        title: '利用規約',
+                        onTap: () => _openExternalPage('/terms'),
+                      ),
+                      SectionTile(
+                        mark: '個',
+                        title: 'プライバシーポリシー',
+                        onTap: () => _openExternalPage('/privacy'),
+                      ),
+                    ],
+                  ),
+                  if (_checkingAdmin)
+                    const Padding(
+                      padding: EdgeInsets.all(AppSpacing.l),
+                      child: LinearProgressIndicator(),
+                    )
+                  else if (_isAdmin) ...[
+                    const SectionLabel('開発者'),
+                    SectionGroup(
+                      children: [
+                        SectionTile(
+                          mark: '開',
+                          title: '開発者設定',
+                          subtitle: '許可されたアカウントにのみ表示',
+                          developer: true,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => DeveloperSettingsScreen(
+                                showTrainingDataActions:
+                                    _showTrainingDataActions,
+                                onShowTrainingDataActionsChanged: (value) {
+                                  setState(
+                                    () => _showTrainingDataActions = value,
+                                  );
+                                  widget.onShowTrainingDataActionsChanged(
+                                    value,
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ),
+                  ],
+                  if (AuthService.currentUser != null) ...[
+                    const SizedBox(height: AppSpacing.xl),
+                    OutlinedButton(
+                      style: destructiveOutlinedButtonStyle(context),
+                      onPressed: _signOut,
+                      child: const Text('ログアウト'),
+                    ),
+                  ],
+                ],
               ),
-            ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  void _setAutoClassify(bool value) {
+    setState(() => _autoClassify = value);
+    widget.onAutoClassifyChanged(value);
+  }
+
+  Widget _buildAccountCard(BuildContext context) {
+    final user = AuthService.currentUser;
+    final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(AppRadius.feature),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 23,
+            backgroundColor: scheme.primary,
+            foregroundColor: scheme.onPrimary,
+            child: user == null
+                ? const Icon(Icons.person_outline)
+                : Text(
+                    (user.email ?? 'U').characters.first.toUpperCase(),
+                    style: text.titleMedium?.copyWith(color: scheme.onPrimary),
+                  ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  user == null ? 'ログインしていません' : 'ログイン中',
+                  style: text.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  user?.email ?? 'ログインすると利用履歴をアカウントに保存し、AI相談を使えます',
+                  style: text.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          if (user == null) ...[
+            const SizedBox(width: AppSpacing.s),
+            OutlinedButton(onPressed: _signIn, child: const Text('ログイン')),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _signIn() async {
+    try {
+      await AuthService.ensureSignedIn();
+      await widget.onAuthenticationChanged?.call();
+      if (!mounted) return;
+      setState(() {});
+      await _loadAdminClaim();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('ログインに失敗しました: $error')));
+    }
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await AuthService.signOut();
+      await widget.onAuthenticationChanged?.call();
+      if (!mounted) return;
+      setState(() => _isAdmin = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('ログアウトしました')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('ログアウトに失敗しました: $error')));
+    }
   }
 
   Future<void> _openExternalPage(String path) async {
@@ -198,6 +340,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('キャンセル'),
           ),
           FilledButton(
+            style: destructiveButtonStyle(context),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('削除'),
           ),

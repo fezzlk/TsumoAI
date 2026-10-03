@@ -8,6 +8,10 @@ import '../services/history_service.dart';
 import '../widgets/analysis_result_panel.dart';
 import '../widgets/tile_glyph.dart';
 import '../widgets/ai_chat_sheet.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
+import '../widgets/screen_header.dart';
+import '../widgets/section_list.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key, this.service});
@@ -64,137 +68,292 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
+  static const _filters = [
+    ('all', 'すべて'),
+    ('score', '点数'),
+    ('wait', '待ち'),
+    ('discard', '何切る'),
+    ('call_advice', '鳴き'),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final entries = _filter == 'all'
         ? _entries
-        : _entries.where((entry) => _filterMatches(entry, _filter)).toList();
+        : _entries.where((entry) => entry.purpose == _filter).toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('利用履歴')),
       body: SafeArea(
         child: Column(
           children: [
-            _accountStatus(),
+            StreamBuilder<User?>(
+              stream: AuthService.authStateChanges(),
+              initialData: AuthService.currentUser,
+              builder: (context, snapshot) => ScreenHeader(
+                title: '利用履歴',
+                subtitle: snapshot.data == null
+                    ? 'この端末の履歴'
+                    : _syncing
+                    ? '同期中…'
+                    : '過去の確認とAI相談',
+                backLabel: '設定',
+                trailing: const HeaderHomeButton(),
+              ),
+            ),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : entries.isEmpty
-                  ? const Center(child: Text('履歴はまだありません'))
                   : RefreshIndicator(
                       onRefresh: _sync,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
-                        itemCount: entries.length,
-                        separatorBuilder: (context, index) => const Divider(),
-                        itemBuilder: (_, index) => _entryTile(entries[index]),
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.l,
+                          AppSpacing.l,
+                          AppSpacing.l,
+                          AppSpacing.xl,
+                        ),
+                        children: [
+                          _signedOutNotice(),
+                          if (entries.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: AppSpacing.xl * 2,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  '履歴はまだありません',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                              ),
+                            )
+                          else
+                            for (final group in _groupByDay(entries)) ...[
+                              SectionLabel(group.$1),
+                              SectionGroup(
+                                children: [
+                                  for (final entry in group.$2)
+                                    _entryTile(entry),
+                                ],
+                              ),
+                            ],
+                        ],
                       ),
                     ),
             ),
-            NavigationBar(
-              selectedIndex: _filterIndex,
-              onDestinationSelected: (index) =>
-                  setState(() => _filter = _filterForIndex(index)),
-              destinations: const [
-                NavigationDestination(icon: Icon(Icons.history), label: 'すべて'),
-                NavigationDestination(
-                  icon: Icon(Icons.calculate_outlined),
-                  label: '点数',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.center_focus_strong),
-                  label: '待ち',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.auto_awesome_outlined),
-                  label: 'AI相談',
-                ),
-              ],
-            ),
+            _filterTabs(),
           ],
         ),
       ),
     );
   }
 
-  Widget _accountStatus() => StreamBuilder<User?>(
+  Widget _signedOutNotice() => StreamBuilder<User?>(
     stream: AuthService.authStateChanges(),
     initialData: AuthService.currentUser,
     builder: (context, snapshot) {
-      final user = snapshot.data;
-      return ListTile(
-        leading: Icon(
-          user == null ? Icons.cloud_off_outlined : Icons.cloud_done_outlined,
+      if (snapshot.data != null) return const SizedBox.shrink();
+      final text = Theme.of(context).textTheme;
+      final colors = context.appColors;
+      return Container(
+        padding: const EdgeInsets.all(AppSpacing.l),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(AppRadius.xLarge),
         ),
-        title: Text(user?.email ?? '端末内履歴'),
-        subtitle: Text(
-          user == null
-              ? 'ログインするとアカウントへ自動同期します'
-              : _syncing
-              ? '同期中…'
-              : '自動同期',
-        ),
-        trailing: user == null
-            ? TextButton(onPressed: _signInAndSync, child: const Text('ログイン'))
-            : IconButton(
-                onPressed: _syncing ? null : _sync,
-                icon: const Icon(Icons.sync),
-                tooltip: '同期',
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: colors.soft,
+                borderRadius: BorderRadius.circular(AppRadius.button),
               ),
+              child: Icon(Icons.cloud_outlined, color: colors.success.color),
+            ),
+            const SizedBox(width: AppSpacing.m),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('現在はこの端末の履歴を表示しています', style: text.titleSmall),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'ログインすると、同じアカウントに紐づく履歴も一覧に表示します。',
+                    style: text.bodySmall,
+                  ),
+                  const SizedBox(height: AppSpacing.m),
+                  FilledButton(
+                    onPressed: _signInAndSync,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(80, AppSizes.tapTarget),
+                    ),
+                    child: const Text('ログイン'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       );
     },
   );
 
-  int get _filterIndex => switch (_filter) {
-    'score' => 1,
-    'wait' => 2,
-    'advice' => 3,
-    _ => 0,
-  };
+  Widget _filterTabs() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.m,
+        AppSpacing.s,
+        AppSpacing.m,
+        AppSpacing.s,
+      ),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: Row(
+        children: [
+          for (final (value, label) in _filters) ...[
+            if (value != 'all') const SizedBox(width: AppSpacing.xs),
+            Expanded(
+              child: _FilterTab(
+                label: label,
+                selected: _filter == value,
+                onTap: () => setState(() => _filter = value),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
-  String _filterForIndex(int index) => switch (index) {
-    1 => 'score',
-    2 => 'wait',
-    3 => 'advice',
-    _ => 'all',
-  };
-
-  Widget _entryTile(HistoryEntry entry) => ListTile(
-    leading: CircleAvatar(child: Icon(_purposeIcon(entry.purpose))),
-    title: Text(entry.title),
-    subtitle: Text(
-      [
-        _dateLabel(entry.createdAt),
+  Widget _entryTile(HistoryEntry entry) {
+    final feature = _featureColors(context, entry.purpose);
+    return SectionTile(
+      mark: _purposeMark(entry.purpose),
+      markColors: StatusColors(
+        color: feature.accent,
+        container: feature.container,
+        onContainer: feature.accent,
+      ),
+      title: entry.title,
+      subtitle: [
         if (entry.roundLabel != null) entry.roundLabel!,
         entry.summary,
       ].join('  '),
-    ),
-    isThreeLine: true,
-    onTap: () => Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => HistoryDetailScreen(entry: entry, service: _service),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _timeLabel(entry.createdAt),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          Icon(
+            Icons.chevron_right,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ],
       ),
-    ),
-  );
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => HistoryDetailScreen(entry: entry, service: _service),
+        ),
+      ),
+    );
+  }
 
-  bool _filterMatches(HistoryEntry entry, String filter) => switch (filter) {
-    'score' => entry.purpose == 'score',
-    'wait' => entry.purpose == 'wait',
-    'advice' => entry.purpose == 'discard' || entry.purpose == 'call_advice',
-    _ => true,
-  };
+  List<(String, List<HistoryEntry>)> _groupByDay(List<HistoryEntry> entries) {
+    final groups = <String, List<HistoryEntry>>{};
+    for (final entry in entries) {
+      groups.putIfAbsent(_dayLabel(entry.createdAt), () => []).add(entry);
+    }
+    return [for (final e in groups.entries) (e.key, e.value)];
+  }
 
-  IconData _purposeIcon(String purpose) => switch (purpose) {
-    'score' => Icons.calculate_outlined,
-    'wait' => Icons.center_focus_strong,
-    'call_advice' => Icons.call_split,
-    _ => Icons.auto_awesome_outlined,
-  };
-
-  String _dateLabel(DateTime value) {
+  String _dayLabel(DateTime value) {
     final local = value.toLocal();
-    return '${local.month}/${local.day} '
-        '${local.hour.toString().padLeft(2, '0')}:'
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(local.year, local.month, local.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) return '今日';
+    if (diff == 1) return '昨日';
+    return '${local.month}月${local.day}日';
+  }
+
+  String _timeLabel(DateTime value) {
+    final local = value.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:'
         '${local.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+String _purposeMark(String purpose) => switch (purpose) {
+  'score' => '点',
+  'wait' => '待',
+  'discard' => '切',
+  'call_advice' => '鳴',
+  _ => '他',
+};
+
+FeatureColors _featureColors(BuildContext context, String purpose) {
+  final colors = context.appColors;
+  return switch (purpose) {
+    'wait' => colors.wait,
+    'discard' => colors.discard,
+    'call_advice' => colors.call,
+    _ => colors.score,
+  };
+}
+
+class _FilterTab extends StatelessWidget {
+  const _FilterTab({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected ? scheme.primary : scheme.surface,
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: SizedBox(
+            height: AppSizes.tapTarget,
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
