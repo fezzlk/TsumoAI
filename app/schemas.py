@@ -241,16 +241,59 @@ class WaitAnalysis(BaseModel):
     score_error: str | None = None
 
 
+class TenpaiWaitAnalysis(WaitAnalysis):
+    ron_score: ScoreResult | None = None
+    ron_score_error: str | None = None
+    tsumo_score: ScoreResult | None = None
+    tsumo_score_error: str | None = None
+
+
+class CallYakuProspect(BaseModel):
+    name: str
+    han: int
+    condition: str
+
+
+class CallScoreEstimate(BaseModel):
+    min_points: int
+    max_points: int
+    basis: str
+    win_type: Literal["ron", "tsumo"] = "ron"
+
+
+class CallWinningTile(BaseModel):
+    tile: TileCode
+    yaku: list[str]
+    han: int
+    fu: int
+    ron_points: int | None = None
+    win_type: Literal["ron", "tsumo"] = "ron"
+    tsumo_dealer_pay: int | None = None
+    tsumo_non_dealer_pay: int | None = None
+
+
+class CallOutlook(BaseModel):
+    status: Literal["available", "conditional", "no_yaku", "unknown"]
+    summary: str
+    yaku: list[CallYakuProspect] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    score_estimate: CallScoreEstimate | None = None
+    winning_tiles: list[CallWinningTile] = Field(default_factory=list)
+    no_yaku_tiles: list[TileCode] = Field(default_factory=list)
+
+
 class DiscardAnalysisResult(BaseModel):
     discard: TileCode
     shanten: int
     improving_tiles: list[WaitAnalysis] = Field(default_factory=list)
     total_remaining: conint(ge=0) = 0
+    call_outlook: CallOutlook | None = None
 
 
 class TenpaiAnalysisResponse(BaseModel):
     shanten: int
-    improving_tiles: list[WaitAnalysis] = Field(default_factory=list)
+    improving_tiles: list[TenpaiWaitAnalysis] = Field(default_factory=list)
+    score_conditions: list[str] = Field(default_factory=list)
 
 
 class DiscardAnalysisResponse(BaseModel):
@@ -269,6 +312,7 @@ class CallAnalysisResult(BaseModel):
     shanten_after_call: int
     recommendation: Literal["improves", "keeps", "worsens"]
     possible_yaku: list[str] = Field(default_factory=list)
+    outlook: CallOutlook | None = None
     discards: list[DiscardAnalysisResult] = Field(default_factory=list)
     replacement_tiles: list[WaitAnalysis] = Field(default_factory=list)
 

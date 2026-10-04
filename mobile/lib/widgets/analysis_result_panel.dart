@@ -4,6 +4,7 @@ import '../services/tile_assets.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import 'tile_glyph.dart';
+import 'wait_score_details.dart';
 
 /// Displays wait / discard / call analysis as in the result mockups: large
 /// tile illustrations with the numbers that matter next to them.
@@ -32,7 +33,14 @@ class AnalysisResultPanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (result.containsKey('improving_tiles') && discards.isEmpty)
-          _WaitResult(shanten: shanten, tiles: improvingTiles),
+          _WaitResult(
+            shanten: shanten,
+            tiles: improvingTiles,
+            scoreConditions:
+                (result['score_conditions'] as List<dynamic>? ?? const [])
+                    .map((value) => value.toString())
+                    .toList(),
+          ),
         if (discards.isNotEmpty) ...[
           if (onAskAiWithDiscardFocus != null) ...[
             _FocusChips(onAsk: onAskAiWithDiscardFocus!),
@@ -59,7 +67,7 @@ class AnalysisResultPanel extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.s),
           Text(
-            'チーは上家から出た場合だけ可能です。役・守備・点数状況は含まない牌効率上の候補です。',
+            'チーは上家から出た場合だけ可能です。役と打点は表示した条件での見通しです。フリテン・喰い替え・他家の捨て牌・守備は判定していません。',
             style: text.bodySmall,
           ),
         ] else if (result.containsKey('calls')) ...[
@@ -166,10 +174,15 @@ class _FocusChips extends StatelessWidget {
 }
 
 class _WaitResult extends StatelessWidget {
-  const _WaitResult({required this.shanten, required this.tiles});
+  const _WaitResult({
+    required this.shanten,
+    required this.tiles,
+    required this.scoreConditions,
+  });
 
   final int shanten;
   final List<Map<String, dynamic>> tiles;
+  final List<String> scoreConditions;
 
   @override
   Widget build(BuildContext context) {
@@ -204,40 +217,57 @@ class _WaitResult extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.xs),
         Text(
-          tenpai ? 'どれかの牌で和了できます' : '引くと向聴数が進む牌です',
+          tenpai ? '和了形になる牌です。役の有無はロン・ツモ別に確認してください。' : '引くと向聴数が進む牌です',
           textAlign: TextAlign.center,
           style: text.bodySmall,
         ),
-        const SizedBox(height: AppSpacing.l),
-        for (var i = 0; i < tiles.length; i += 2) ...[
-          if (i > 0) const SizedBox(height: 10),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: _WaitCard(tile: tiles[i], index: i),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: i + 1 < tiles.length
-                      ? _WaitCard(tile: tiles[i + 1], index: i + 1)
-                      : const SizedBox.shrink(),
-                ),
-              ],
-            ),
-          ),
+        if (tenpai) ...[
+          const SizedBox(height: AppSpacing.xs),
+          if (scoreConditions.isNotEmpty)
+            Text(scoreConditions.join('・'), style: text.bodySmall),
+          Text('現在の入力条件・ドラで計算。本場・供託は別記。フリテンは未判定です。', style: text.bodySmall),
         ],
+        const SizedBox(height: AppSpacing.l),
+        if (tenpai)
+          for (var i = 0; i < tiles.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            _WaitCard(tile: tiles[i], index: i, showScores: true),
+          ],
+        if (!tenpai)
+          for (var i = 0; i < tiles.length; i += 2) ...[
+            if (i > 0) const SizedBox(height: 10),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _WaitCard(tile: tiles[i], index: i),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: i + 1 < tiles.length
+                        ? _WaitCard(tile: tiles[i + 1], index: i + 1)
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ),
+          ],
       ],
     );
   }
 }
 
 class _WaitCard extends StatelessWidget {
-  const _WaitCard({required this.tile, required this.index});
+  const _WaitCard({
+    required this.tile,
+    required this.index,
+    this.showScores = false,
+  });
 
   final Map<String, dynamic> tile;
   final int index;
+  final bool showScores;
 
   @override
   Widget build(BuildContext context) {
@@ -251,31 +281,40 @@ class _WaitCard extends StatelessWidget {
         border: Border.all(color: tint.border),
         borderRadius: BorderRadius.circular(AppRadius.xLarge),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _TileImage(
-            tileCode: code,
-            semanticPrefix: '待ち牌',
-            tileKey: ValueKey('analysis-wait-$code-$index'),
-            width: 40,
-            height: 54,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  tileDisplayName(code),
-                  style: text.titleSmall?.copyWith(color: tint.onContainer),
+          Row(
+            children: [
+              _TileImage(
+                tileCode: code,
+                semanticPrefix: '待ち牌',
+                tileKey: ValueKey('analysis-wait-$code-$index'),
+                width: 40,
+                height: 54,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tileDisplayName(code),
+                      style: text.titleSmall?.copyWith(color: tint.onContainer),
+                    ),
+                    Text(
+                      '残り${_asInt(tile['remaining'])}枚',
+                      style: text.bodySmall?.copyWith(color: tint.onContainer),
+                    ),
+                  ],
                 ),
-                Text(
-                  '残り${_asInt(tile['remaining'])}枚',
-                  style: text.bodySmall?.copyWith(color: tint.onContainer),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
+          if (showScores) ...[
+            const SizedBox(height: 10),
+            WaitScoreDetails(tile: tile),
+          ],
         ],
       ),
     );
@@ -283,6 +322,39 @@ class _WaitCard extends StatelessWidget {
 }
 
 enum _CallRecommendation { recommended, conditional, skip }
+
+class _CallCandidateGroup {
+  _CallCandidateGroup(this.index);
+
+  final int index;
+  final List<Map<String, dynamic>> variants = [];
+  final Set<String> shapes = {};
+  Map<String, dynamic> get item => variants.first;
+
+  void add(Map<String, dynamic> candidate) {
+    final consumed =
+        (candidate['consumed_tiles'] as List<dynamic>? ?? const [])
+            .map((tile) => tile.toString())
+            .toList()
+          ..sort();
+    if (!shapes.add(consumed.join(','))) return;
+    // The list shows one concrete shape, never a blend of different shapes'
+    // yaku or points. Prefer the safer recommendation, then tile efficiency.
+    if (variants.isNotEmpty) {
+      final comparison = _recommendationOf(
+        candidate,
+      ).index.compareTo(_recommendationOf(item).index);
+      if (comparison < 0 ||
+          (comparison == 0 &&
+              _asInt(candidate['shanten_after_call']) <
+                  _asInt(item['shanten_after_call']))) {
+        variants.insert(0, candidate);
+        return;
+      }
+    }
+    variants.add(candidate);
+  }
+}
 
 class _CallResults extends StatelessWidget {
   const _CallResults({
@@ -297,15 +369,17 @@ class _CallResults extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final grouped =
-        <_CallRecommendation, List<({Map<String, dynamic> item, int index})>>{
-          for (final value in _CallRecommendation.values) value: [],
-        };
+    final candidates = <String, _CallCandidateGroup>{};
     for (var index = 0; index < calls.length; index++) {
-      grouped[_recommendationOf(calls[index])]!.add((
-        item: calls[index],
-        index: index,
-      ));
+      final item = calls[index];
+      final key = '${item['call_type']}:${item['call_tile']}';
+      (candidates[key] ??= _CallCandidateGroup(index)).add(item);
+    }
+    final grouped = <_CallRecommendation, List<_CallCandidateGroup>>{
+      for (final value in _CallRecommendation.values) value: [],
+    };
+    for (final candidate in candidates.values) {
+      grouped[_recommendationOf(candidate.item)]!.add(candidate);
     }
 
     return Column(
@@ -336,7 +410,7 @@ class _CallRecommendationGroup extends StatelessWidget {
   });
 
   final _CallRecommendation recommendation;
-  final List<({Map<String, dynamic> item, int index})> entries;
+  final List<_CallCandidateGroup> entries;
   final int currentShanten;
   final ValueChanged<Map<String, dynamic>>? onAskAi;
 
@@ -385,6 +459,7 @@ class _CallRecommendationGroup extends StatelessWidget {
             if (i > 0) Divider(height: AppSpacing.l, color: border),
             _CallCandidateRow(
               item: entries[i].item,
+              variants: entries[i].variants,
               index: entries[i].index,
               currentShanten: currentShanten,
               recommendation: recommendation,
@@ -400,6 +475,7 @@ class _CallRecommendationGroup extends StatelessWidget {
 class _CallCandidateRow extends StatelessWidget {
   const _CallCandidateRow({
     required this.item,
+    required this.variants,
     required this.index,
     required this.currentShanten,
     required this.recommendation,
@@ -407,6 +483,7 @@ class _CallCandidateRow extends StatelessWidget {
   });
 
   final Map<String, dynamic> item;
+  final List<Map<String, dynamic>> variants;
   final int index;
   final int currentShanten;
   final _CallRecommendation recommendation;
@@ -431,7 +508,7 @@ class _CallCandidateRow extends StatelessWidget {
         onTap: () => showDialog<void>(
           context: context,
           builder: (_) => _CallDetailDialog(
-            item: item,
+            variants: variants,
             index: index,
             currentShanten: currentShanten,
             onAskAi: onAskAi,
@@ -452,7 +529,7 @@ class _CallCandidateRow extends StatelessWidget {
                     height: 62,
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  Text(type, style: text.labelMedium),
+                  _CallTypeBadge(callType: item['call_type']),
                 ],
               ),
               const SizedBox(width: AppSpacing.m),
@@ -460,6 +537,35 @@ class _CallCandidateRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (item['outlook'] is Map) ...[
+                      _CallOutlookView(outlook: _outlookMap(item['outlook'])),
+                      const SizedBox(height: AppSpacing.s),
+                    ],
+                    if (variants.length > 1) ...[
+                      Text(
+                        '使う手牌は${variants.length}通り（詳細で比較）',
+                        style: text.labelLarge,
+                      ),
+                      Text('表示は次の手牌を使う場合の評価です。', style: text.bodySmall),
+                      Wrap(
+                        spacing: 4,
+                        children: [
+                          for (final (tileIndex, tile)
+                              in (item['consumed_tiles'] as List<dynamic>)
+                                  .indexed)
+                            _TileImage(
+                              tileCode: tile.toString(),
+                              semanticPrefix: '表示中の使用牌',
+                              tileKey: ValueKey(
+                                'analysis-call-$index-summary-consumed-$tileIndex',
+                              ),
+                              width: 26,
+                              height: 36,
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                    ],
                     Text(
                       '$currentShanten → $afterシャンテン',
                       style: text.titleMedium,
@@ -467,8 +573,9 @@ class _CallCandidateRow extends StatelessWidget {
                     const SizedBox(height: AppSpacing.xs),
                     Text(
                       [
-                        _callReason(recommendation),
-                        if (yaku.isNotEmpty) '狙える役: ${yaku.join('・')}',
+                        _callReason(item, recommendation),
+                        if (item['outlook'] is! Map && yaku.isNotEmpty)
+                          '狙える役: ${yaku.join('・')}',
                       ].join(' '),
                       style: text.bodyMedium,
                     ),
@@ -490,28 +597,173 @@ class _CallCandidateRow extends StatelessWidget {
   }
 }
 
-String _callReason(_CallRecommendation recommendation) =>
-    switch (recommendation) {
-      _CallRecommendation.recommended => '向聴数が進むため、牌効率では有力な候補です。',
-      _CallRecommendation.conditional => '向聴数は変わりません。受け入れ・役・打点で判断します。',
-      _CallRecommendation.skip => '向聴数が戻るため、通常は見送ります。',
-    };
+String _callReason(
+  Map<String, dynamic> item,
+  _CallRecommendation recommendation,
+) {
+  final status = _outlookMap(item['outlook'])['status'];
+  if (status == 'no_yaku') return '向聴数が進んでも、今の待ちでは役がありません。';
+  if (status == 'conditional') return '狙う役の条件を満たせるか確認してから鳴きます。';
+  if (status == 'unknown') return '役を確認できていないため、牌効率だけで鳴く判断はできません。';
+  return switch (recommendation) {
+    _CallRecommendation.recommended => '向聴数が進むため、牌効率では有力な候補です。',
+    _CallRecommendation.conditional => '向聴数は変わりません。受け入れ・役・打点で判断します。',
+    _CallRecommendation.skip => '向聴数が戻るため、通常は見送ります。',
+  };
+}
 
-class _CallDetailDialog extends StatelessWidget {
+Map<String, dynamic> _outlookMap(Object? value) =>
+    value is Map ? Map<String, dynamic>.from(value) : const {};
+
+String _callWaitPayment(Map<String, dynamic> wait) {
+  if (wait['win_type'] == 'tsumo') {
+    final dealer = wait['tsumo_dealer_pay'];
+    final nonDealer = wait['tsumo_non_dealer_pay'];
+    if (dealer == null || nonDealer == null) return '';
+    return dealer == nonDealer
+        ? ' / $dealer点オール'
+        : ' / 子$nonDealer・親$dealer点払い';
+  }
+  return wait['ron_points'] == null ? '' : ' / ${wait['ron_points']}点';
+}
+
+class _CallOutlookView extends StatelessWidget {
+  const _CallOutlookView({required this.outlook, this.detailed = false});
+
+  final Map<String, dynamic> outlook;
+  final bool detailed;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final yaku = _maps(outlook['yaku']);
+    final estimate = _outlookMap(outlook['score_estimate']);
+    final warnings = (outlook['warnings'] as List<dynamic>? ?? const []).map(
+      (value) => value.toString(),
+    );
+    final winning = _maps(outlook['winning_tiles']);
+    final noYaku = (outlook['no_yaku_tiles'] as List<dynamic>? ?? const [])
+        .map((value) => value.toString())
+        .toList();
+    final isReference = outlook['status'] == 'conditional';
+    final minimum = _asInt(estimate['min_points']);
+    final maximum = _asInt(estimate['max_points']);
+    final paymentLabel = estimate['win_type'] == 'tsumo' ? 'ツモ合計' : 'ロン';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          outlook['summary']?.toString() ?? '役・打点は未確認です',
+          style: text.titleSmall?.copyWith(
+            color: outlook['status'] == 'no_yaku'
+                ? Theme.of(context).colorScheme.error
+                : null,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          estimate.isEmpty
+              ? '打点: 未算定'
+              : '${isReference ? '条件成立時の参考打点' : '打点の目安'}: '
+                    '${minimum == maximum ? '$minimum' : '$minimum〜$maximum'}点（$paymentLabel）',
+          style: text.bodyMedium,
+        ),
+        if (detailed && estimate.isNotEmpty)
+          Text(estimate['basis']?.toString() ?? '', style: text.bodySmall),
+        if (!detailed && isReference && estimate.isNotEmpty)
+          Text('各役が単独で成立・30〜40符・ドラなしの参考値', style: text.bodySmall),
+        if (yaku.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          if (detailed) ...[
+            Text('役と成立条件', style: text.titleSmall),
+            for (final item in yaku)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '${item['name']}（${item['han']}翻）: ${item['condition']}',
+                ),
+              ),
+          ] else
+            Text(
+              '狙える役: ${yaku.map((item) => '${item['name']} ${item['han']}翻').toSet().join('・')}',
+            ),
+        ],
+        for (final warning in detailed ? warnings : warnings.take(2)) ...[
+          const SizedBox(height: 4),
+          Text(warning, style: text.bodySmall),
+        ],
+        if (detailed && winning.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('役が付く待ち', style: text.titleSmall),
+          for (final wait in winning)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  _TileImage(
+                    tileCode: wait['tile'].toString(),
+                    semanticPrefix: '役ありの待ち',
+                    tileKey: ValueKey('call-winning-${wait['tile']}'),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${wait['win_type'] == 'tsumo' ? 'ツモ' : 'ロン'}: '
+                      '${(wait['yaku'] as List<dynamic>? ?? const []).join('・')} '
+                      '${wait['han']}翻${wait['fu']}符'
+                      '${_callWaitPayment(wait)}',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+        if (detailed && noYaku.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('この待ちは役なし', style: text.titleSmall),
+          Wrap(
+            spacing: 4,
+            children: [
+              for (final tile in noYaku)
+                _TileImage(
+                  tileCode: tile,
+                  semanticPrefix: '役なしの待ち',
+                  tileKey: ValueKey('call-no-yaku-$tile'),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _CallDetailDialog extends StatefulWidget {
   const _CallDetailDialog({
-    required this.item,
+    required this.variants,
     required this.index,
     required this.currentShanten,
     this.onAskAi,
   });
 
-  final Map<String, dynamic> item;
+  final List<Map<String, dynamic>> variants;
   final int index;
   final int currentShanten;
   final ValueChanged<Map<String, dynamic>>? onAskAi;
 
   @override
+  State<_CallDetailDialog> createState() => _CallDetailDialogState();
+}
+
+class _CallDetailDialogState extends State<_CallDetailDialog> {
+  int _selectedVariant = 0;
+
+  @override
   Widget build(BuildContext context) {
+    final item = widget.variants[_selectedVariant];
+    final index = widget.index;
+    final currentShanten = widget.currentShanten;
+    final onAskAi = widget.onAskAi;
     final callTile = item['call_tile']?.toString() ?? '?';
     final type = _callTypeLabel(item['call_type']);
     final consumed = (item['consumed_tiles'] as List<dynamic>? ?? const [])
@@ -524,11 +776,7 @@ class _CallDetailDialog extends StatelessWidget {
         .toList(growable: false);
     final recommendation = _recommendationOf(item);
     final after = _asInt(item['shanten_after_call']);
-    final reason = switch (recommendation) {
-      _CallRecommendation.recommended => '向聴数が進むため、牌効率では有力な候補です。',
-      _CallRecommendation.conditional => '向聴数は変わりません。受け入れ、成立する役、打点を確認して選びます。',
-      _CallRecommendation.skip => '向聴数が戻るため、通常は見送ります。役や打点など明確な目的がある場合は再検討できます。',
-    };
+    final reason = _callReason(item, recommendation);
 
     return AlertDialog(
       title: Text('$typeの詳細'),
@@ -539,6 +787,59 @@ class _CallDetailDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (widget.variants.length > 1) ...[
+                Text(
+                  '使う手牌を選択（${widget.variants.length}通り）',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (
+                      var variantIndex = 0;
+                      variantIndex < widget.variants.length;
+                      variantIndex++
+                    )
+                      ChoiceChip(
+                        key: ValueKey('analysis-call-variant-$variantIndex'),
+                        selected: _selectedVariant == variantIndex,
+                        onSelected: (_) =>
+                            setState(() => _selectedVariant = variantIndex),
+                        label: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final (tileIndex, tile)
+                                in (widget.variants[variantIndex]['consumed_tiles']
+                                        as List<dynamic>)
+                                    .indexed)
+                              _TileImage(
+                                tileCode: tile.toString(),
+                                semanticPrefix: '選択する使用牌',
+                                tileKey: ValueKey(
+                                  'analysis-call-$index-variant-$variantIndex-tile-$tileIndex',
+                                ),
+                                width: 26,
+                                height: 36,
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (item['outlook'] is Map) ...[
+                _CallOutlookView(
+                  outlook: _outlookMap(item['outlook']),
+                  detailed: true,
+                ),
+                const SizedBox(height: 14),
+              ] else ...[
+                const Text('役・打点の詳しい判定はありません。再解析すると確認できます。'),
+                const SizedBox(height: 14),
+              ],
               Text('鳴く形', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 6),
               Wrap(
@@ -563,7 +864,7 @@ class _CallDetailDialog extends StatelessWidget {
               Text('向聴数: $currentShanten → $after'),
               const SizedBox(height: 6),
               Text(reason),
-              if (possibleYaku.isNotEmpty) ...[
+              if (item['outlook'] is! Map && possibleYaku.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Text('成立可能役', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 4),
@@ -615,7 +916,7 @@ class _CallDetailDialog extends StatelessWidget {
           TextButton.icon(
             onPressed: () {
               Navigator.of(context).pop();
-              onAskAi!(item);
+              onAskAi(item);
             },
             icon: const Icon(Icons.chat_bubble_outline),
             label: const Text('この候補をAIに質問'),
@@ -664,6 +965,13 @@ class _CallDiscardDetail extends StatelessWidget {
             if (total > 0) Text('受け入れ $total枚'),
           ],
         ),
+        if (item['call_outlook'] is Map) ...[
+          const SizedBox(height: 6),
+          _CallOutlookView(
+            outlook: _outlookMap(item['call_outlook']),
+            detailed: true,
+          ),
+        ],
         if (improving.isNotEmpty) ...[
           const SizedBox(height: 6),
           _ImprovingTiles(
@@ -677,12 +985,58 @@ class _CallDiscardDetail extends StatelessWidget {
   }
 }
 
-_CallRecommendation _recommendationOf(Map<String, dynamic> item) =>
-    switch (item['recommendation']) {
-      'improves' => _CallRecommendation.recommended,
-      'keeps' => _CallRecommendation.conditional,
-      _ => _CallRecommendation.skip,
+_CallRecommendation _recommendationOf(Map<String, dynamic> item) {
+  final status = _outlookMap(item['outlook'])['status'];
+  if (status == 'no_yaku' || item['recommendation'] == 'worsens') {
+    return _CallRecommendation.skip;
+  }
+  if (status == 'conditional' || status == 'unknown') {
+    return _CallRecommendation.conditional;
+  }
+  return switch (item['recommendation']) {
+    'improves' => _CallRecommendation.recommended,
+    'keeps' => _CallRecommendation.conditional,
+    _ => _CallRecommendation.skip,
+  };
+}
+
+/// チー・ポン・カン as a solid colored pill (blue / amber / purple) so the
+/// call kind reads at a glance; the label still names it for color-blind
+/// users.
+class _CallTypeBadge extends StatelessWidget {
+  const _CallTypeBadge({required this.callType});
+
+  final Object? callType;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    final background = switch (callType) {
+      'chi' => colors.wait.accent,
+      'pon' => colors.discard.accent,
+      'kan' => colors.call.accent,
+      _ => Theme.of(context).colorScheme.onSurfaceVariant,
     };
+    return Container(
+      constraints: const BoxConstraints(minWidth: 46),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s,
+        vertical: 3,
+      ),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+      ),
+      child: Text(
+        _callTypeLabel(callType),
+        textAlign: TextAlign.center,
+        style: Theme.of(
+          context,
+        ).textTheme.labelMedium?.copyWith(color: colors.onDark),
+      ),
+    );
+  }
+}
 
 String _callTypeLabel(Object? value) => switch (value) {
   'chi' => 'チー',
