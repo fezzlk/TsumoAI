@@ -193,7 +193,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('和了者を選択'), findsOneWidget);
+    expect(find.text('和了した人の座席をタップ'), findsOneWidget);
     expectNoOverflow(tester);
   });
 
@@ -213,7 +213,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('和了者を選択'), findsOneWidget);
+    expect(find.text('和了した人の座席をタップ'), findsOneWidget);
     expect(find.byKey(const ValueKey('end-match-button')), findsOneWidget);
     expectNoOverflow(tester);
   });

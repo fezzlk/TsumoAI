@@ -165,11 +165,6 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _sectionHeading(
-                      Text('和了者を選択', style: text.headlineSmall),
-                      Text('和了した人の座席をタップ', style: muted),
-                    ),
-                    const SizedBox(height: AppSpacing.m),
                     _tableCard(state),
                     const SizedBox(height: AppSpacing.l),
                     _sectionHeading(
@@ -250,6 +245,30 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
                 height: height,
                 child: Stack(
                   children: [
+                    // The instruction takes the corner the round badge used
+                    // to hold (the separate heading above the card is gone).
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      width: width * 0.58,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.touch_app_outlined,
+                            size: 20,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Expanded(
+                            child: Text(
+                              '和了した人の座席をタップ',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     Positioned(
                       right: 0,
                       top: 0,
