@@ -23,3 +23,6 @@ ml/kaggle_mahjong/
 data/eval_images/
 data/eval_images_cropped/
 data/eval_images_tilted/
+
+# scripts/evaluate_red_five.py image cache
+.cache/

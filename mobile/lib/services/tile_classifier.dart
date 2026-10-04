@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 import 'model_updater.dart';
+import 'red_five_detector.dart';
 
 /// On-device mahjong tile classifier using TFLite (MobileNetV2).
 ///
@@ -157,7 +158,19 @@ class TileClassifier {
       ));
     }
     results.sort((a, b) => b.confidence.compareTo(a.confidence));
-    return results.take(topK).toList();
+    final top = results.take(topK).toList();
+    // The model has no red-five classes; a five whose ink is almost all red
+    // is reported as the red five instead (see red_five_detector.dart).
+    if (!top.any((result) => mayBeRedFive(result.tileCode))) return top;
+    final redShare = await compute(redInkShare, tileImage);
+    return [
+      for (final result in top)
+        TileClassification(
+          label: result.label,
+          tileCode: refineRedFive(result.tileCode, redShare),
+          confidence: result.confidence,
+        ),
+    ];
   }
 
   static String _labelToTileCode(String label) {
