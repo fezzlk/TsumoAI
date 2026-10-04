@@ -87,12 +87,17 @@ class GameStatePanel extends StatelessWidget {
                 if (showUraDora) ...[
                   const SizedBox(width: AppSpacing.s),
                   Expanded(
+                    // Greyed out without 立直 (裏ドラ only counts then) but
+                    // still editable, so it can be filled in either order.
                     child: _indicatorField(
                       context,
                       '裏ドラ表示牌',
                       context_.uraDoraIndicators,
                       (list) =>
                           onChanged(context_.copyWith(uraDoraIndicators: list)),
+                      inactiveNote: context_.riichi || context_.doubleRiichi
+                          ? null
+                          : '立直時のみ有効',
                     ),
                   ),
                 ],
@@ -186,8 +191,9 @@ class GameStatePanel extends StatelessWidget {
     BuildContext context,
     String label,
     List<String> indicators,
-    ValueChanged<List<String>> onListChanged,
-  ) {
+    ValueChanged<List<String>> onListChanged, {
+    String? inactiveNote,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     Widget tileBox({required Widget child, VoidCallback? onTap, String? tip}) {
@@ -208,7 +214,8 @@ class GameStatePanel extends StatelessWidget {
       return tip == null ? box : Tooltip(message: tip, child: box);
     }
 
-    return Container(
+    final inactive = inactiveNote != null;
+    final field = Container(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.m,
         AppSpacing.s,
@@ -216,7 +223,7 @@ class GameStatePanel extends StatelessWidget {
         AppSpacing.s,
       ),
       decoration: BoxDecoration(
-        color: scheme.surface,
+        color: inactive ? scheme.surfaceContainerHighest : scheme.surface,
         borderRadius: BorderRadius.circular(AppRadius.large),
       ),
       child: Row(
@@ -226,10 +233,26 @@ class GameStatePanel extends StatelessWidget {
             child: FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
-              child: Text(
-                label,
-                maxLines: 1,
-                style: text.labelSmall?.copyWith(fontWeight: FontWeight.w700),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    style: text.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (inactive)
+                    Text(
+                      inactiveNote,
+                      maxLines: 1,
+                      style: text.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -267,5 +290,11 @@ class GameStatePanel extends StatelessWidget {
         ],
       ),
     );
+    return inactive
+        ? Semantics(
+            label: '$label（$inactiveNote）',
+            child: Opacity(opacity: 0.5, child: field),
+          )
+        : field;
   }
 }
