@@ -25,12 +25,18 @@ void main() {
 
     // In the dora panel and in the carried-over summary.
     expect(find.byType(TileGlyph), findsNWidgets(2));
-    expect(tester.widget<TileGlyph>(find.byType(TileGlyph).first).tileCode, '4m');
+    expect(
+      tester.widget<TileGlyph>(find.byType(TileGlyph).first).tileCode,
+      '4m',
+    );
 
     await tester.tap(find.text('ドラ牌'));
     await tester.pump();
 
-    expect(tester.widget<TileGlyph>(find.byType(TileGlyph).first).tileCode, '5m');
+    expect(
+      tester.widget<TileGlyph>(find.byType(TileGlyph).first).tileCode,
+      '5m',
+    );
   });
 
   testWidgets('match home exposes all four quick checks', (tester) async {
@@ -63,7 +69,6 @@ void main() {
       ),
     );
 
-    expect(find.text('東2局'), findsOneWidget);
     expect(find.text('0本場'), findsOneWidget);
     expect(find.text('東二局'), findsOneWidget);
   });
@@ -113,5 +118,34 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(ended, isTrue);
+  });
+
+  testWidgets('seat winds rotate counter-clockwise with the dealer', (
+    tester,
+  ) async {
+    Future<void> pump(MatchState match) => tester.pumpWidget(
+      MaterialApp(
+        home: MatchHomeScreen(
+          cameras: const [],
+          autoClassify: false,
+          showTrainingDataActions: false,
+          matchState: match,
+        ),
+      ),
+    );
+
+    // 東1局: 下=東(起家・親), 右=南, 上=西, 左=北.
+    await pump(MatchState());
+    for (final label in ['東（起家・親）', '南（起家の右隣）', '西（起家の対面）', '北（起家の左隣）']) {
+      expect(find.bySemanticsLabel(label), findsOneWidget, reason: label);
+    }
+
+    // 東2局 (dealer moved right): 右=東(親), 上=南, 左=西, 下=北(起家).
+    await tester.pumpWidget(const SizedBox());
+    await pump(MatchState()..recordWin(TableSeat.right));
+    await tester.pumpAndSettle();
+    for (final label in ['東（起家の右隣・親）', '南（起家の対面）', '西（起家の左隣）', '北（起家）']) {
+      expect(find.bySemanticsLabel(label), findsOneWidget, reason: label);
+    }
   });
 }

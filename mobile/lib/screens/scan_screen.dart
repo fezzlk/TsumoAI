@@ -3124,15 +3124,13 @@ class _ScanScreenState extends State<ScanScreen> {
                     const SizedBox(height: AppSpacing.m),
                   ],
 
-                  // Winds stay visible for every operation (the analysis API
-                  // uses the context for wait-score predictions); dora only
-                  // for score/wait and win-time chips only for scoring, as in
-                  // the result mockups.
+                  // Winds and 表ドラ for every check (the analysis API uses the
+                  // context); 裏ドラ and the win-time chips only for scoring.
                   GameStatePanel(
                     context_: _context,
                     onChanged: (c) => setState(() => _updateContext(c)),
                     conditionChips: isScore ? _conditionChips() : const [],
-                    showDora: !asksAi,
+                    showUraDora: isScore,
                   ),
                   const SizedBox(height: AppSpacing.l),
 

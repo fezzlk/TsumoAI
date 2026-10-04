@@ -16,16 +16,16 @@ class GameStatePanel extends StatelessWidget {
   /// Win-time condition chips shown after the wind pills (score only).
   final List<Widget> conditionChips;
 
-  /// Whether the dora fields are shown. Without them (discard / call
-  /// advice) only the wind pills remain, outside any card.
-  final bool showDora;
+  /// Whether the 裏ドラ field is shown next to 表ドラ. Only scoring uses
+  /// 裏ドラ; the other checks take 表ドラ alone (decided 2026-10-04).
+  final bool showUraDora;
 
   const GameStatePanel({
     super.key,
     required this.context_,
     required this.onChanged,
     this.conditionChips = const [],
-    this.showDora = true,
+    this.showUraDora = true,
   });
 
   @override
@@ -57,7 +57,6 @@ class GameStatePanel extends StatelessWidget {
         ],
       ),
     );
-    if (!showDora) return pillRow;
     return Container(
       padding: const EdgeInsets.all(AppSpacing.m),
       decoration: BoxDecoration(
@@ -70,8 +69,8 @@ class GameStatePanel extends StatelessWidget {
         children: [
           pillRow,
           const SizedBox(height: AppSpacing.s),
-          // 裏ドラ is always shown (not just with riichi): it is a table fact
-          // from the photo like ドラ表示牌 itself.
+          // When shown, 裏ドラ is there regardless of riichi: it is a table
+          // fact from the photo like ドラ表示牌 itself.
           IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -85,16 +84,18 @@ class GameStatePanel extends StatelessWidget {
                         onChanged(context_.copyWith(doraIndicators: list)),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.s),
-                Expanded(
-                  child: _indicatorField(
-                    context,
-                    '裏ドラ表示牌',
-                    context_.uraDoraIndicators,
-                    (list) =>
-                        onChanged(context_.copyWith(uraDoraIndicators: list)),
+                if (showUraDora) ...[
+                  const SizedBox(width: AppSpacing.s),
+                  Expanded(
+                    child: _indicatorField(
+                      context,
+                      '裏ドラ表示牌',
+                      context_.uraDoraIndicators,
+                      (list) =>
+                          onChanged(context_.copyWith(uraDoraIndicators: list)),
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
