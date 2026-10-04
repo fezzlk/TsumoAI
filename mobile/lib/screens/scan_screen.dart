@@ -241,29 +241,16 @@ class _ScanScreenState extends State<ScanScreen> {
       if (_tiles[index] != null) index,
   ];
 
-  /// The current あがり牌's position within `_identifiedIndices`, or null
-  /// if none is set yet — drives the ◀/▶ controls' enabled state.
-  int? get _winningTilePosition {
-    final currentIndex = _confirmedWinningTileId == null
-        ? null
-        : int.tryParse(_confirmedWinningTileId!.split('-').last);
-    if (currentIndex == null) return null;
-    final position = _identifiedIndices.indexOf(currentIndex);
-    return position == -1 ? null : position;
-  }
+  /// While true, tapping a tile in the result row makes it the あがり牌
+  /// instead of opening the tile picker (device check 2026-10-04: ◀/▶
+  /// stepping was hard to follow once the row scrolls sideways).
+  bool _selectingWinningTile = false;
 
-  void _moveWinningTile(int delta) {
-    final indices = _identifiedIndices;
-    if (indices.isEmpty) return;
-    final position = _winningTilePosition;
-    final nextPosition = (position == null ? 0 : position + delta).clamp(
-      0,
-      indices.length - 1,
-    );
+  void _setWinningTile(int index) {
     setState(() {
-      _confirmedWinningTileId =
-          'tile-${indices[nextPosition].toString().padLeft(3, '0')}';
+      _confirmedWinningTileId = 'tile-${index.toString().padLeft(3, '0')}';
       _winningTileManuallySet = true;
+      _selectingWinningTile = false;
       _invalidateAnalysisAndMaybeRecalculate();
     });
   }
@@ -1515,6 +1502,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _sentTrainingEntryIds = [];
       _resumeWinConditionsAfterRetake = preserveWinConditions;
       _recognitionDetailsExpanded = null;
+      _selectingWinningTile = false;
       if (!preserveWinConditions) {
         _winConditionStep = _WinConditionStep.riichi;
         _winConditionsComplete = false;
@@ -1775,8 +1763,13 @@ class _ScanScreenState extends State<ScanScreen> {
     final showMeldFrame = _isConfirmedMeldMember(index);
     final cropHeight = cellWidth * 1.4;
 
+    final picking = _selectingWinningTile && canBeWinningTile;
     final cropImage = GestureDetector(
-      onTap: thumb == null ? null : () => _openBoxEditor(index),
+      onTap: picking
+          ? () => _setWinningTile(index)
+          : thumb == null
+          ? null
+          : () => _openBoxEditor(index),
       child: SizedBox(
         width: cellWidth,
         height: cropHeight,
@@ -1792,7 +1785,11 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final glyphCore = GestureDetector(
       // A tile added by 「別の確認へ」 has no crop but is still correctable.
-      onTap: thumb == null && tile == null ? null : () => _onSlotTap(index),
+      onTap: picking
+          ? () => _setWinningTile(index)
+          : thumb == null && tile == null
+          ? null
+          : () => _onSlotTap(index),
       child: Container(
         width: cellWidth,
         height: cellWidth,
@@ -1827,6 +1824,17 @@ class _ScanScreenState extends State<ScanScreen> {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   border: Border.all(color: _colors.winningTile, width: 2),
+                  borderRadius: BorderRadius.circular(AppRadius.small),
+                ),
+              ),
+            ),
+          ),
+        if (picking && !isWinningTile)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: _scheme.primary, width: 1.5),
                   borderRadius: BorderRadius.circular(AppRadius.small),
                 ),
               ),
@@ -1873,12 +1881,9 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// あがり牌 ◀/▶ stepping through `_identifiedIndices` (left; the arrow
-  /// under the tile marks the current one) and 副露 add/reset (right),
-  /// directly below the tile row.
+  /// 「和了牌を選ぶ」 (left; the arrow under the tile marks the current one)
+  /// and 副露 add/reset (right), directly below the tile row.
   Widget _buildTileControlsRow() {
-    final position = _winningTilePosition;
-    final lastPosition = _identifiedIndices.length - 1;
     final hasWinningTileControls =
         _operation == HandOperation.score && _identifiedIndices.isNotEmpty;
 
@@ -1898,28 +1903,18 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       ],
     );
-    final winningControls = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text('和了牌', style: _text.labelMedium),
-        IconButton(
-          tooltip: '和了牌を左へ',
-          onPressed: position == null || position > 0
-              ? () => _moveWinningTile(-1)
-              : null,
-          icon: const Icon(Icons.chevron_left),
-          color: _colors.winningTile,
-        ),
-        IconButton(
-          tooltip: '和了牌を右へ',
-          onPressed: position == null || position < lastPosition
-              ? () => _moveWinningTile(1)
-              : null,
-          icon: const Icon(Icons.chevron_right),
-          color: _colors.winningTile,
-        ),
-      ],
-    );
+    final winningControls = _selectingWinningTile
+        ? TextButton(
+            key: const ValueKey('select-winning-tile'),
+            onPressed: () => setState(() => _selectingWinningTile = false),
+            child: const Text('選ぶのをやめる'),
+          )
+        : OutlinedButton.icon(
+            key: const ValueKey('select-winning-tile'),
+            onPressed: () => setState(() => _selectingWinningTile = true),
+            icon: Icon(Icons.touch_app_outlined, color: _colors.winningTile),
+            label: const Text('和了牌を選ぶ'),
+          );
 
     return Row(
       children: [
@@ -2130,7 +2125,7 @@ class _ScanScreenState extends State<ScanScreen> {
     }
     return const StatusBanner(
       kind: StatusKind.info,
-      message: 'あがり牌は牌の列の下にある「和了牌 ◀ ▶」で選べます',
+      message: 'あがり牌は牌の列の下の「和了牌を選ぶ」で選べます',
     );
   }
 
@@ -3054,6 +3049,13 @@ class _ScanScreenState extends State<ScanScreen> {
           // "?" until classification finishes), in one row that scrolls
           // sideways. Tapping the crop opens the box editor; tapping the
           // tile opens the tile picker.
+          if (_selectingWinningTile) ...[
+            const StatusBanner(
+              kind: StatusKind.info,
+              message: '和了牌をタップしてください',
+            ),
+            const SizedBox(height: AppSpacing.s),
+          ],
           SingleChildScrollView(
             key: const ValueKey('recognized-tile-row'),
             scrollDirection: Axis.horizontal,
