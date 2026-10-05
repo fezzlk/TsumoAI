@@ -231,7 +231,7 @@ void main() {
     await tester.tap(find.byTooltip('設定'));
     await tester.pumpAndSettle();
 
-    expect(find.text('利用履歴'), findsOneWidget);
+    expect(find.text('AI利用状況・残り枠'), findsOneWidget);
     await tester.drag(find.byType(ListView).last, const Offset(0, -360));
     await tester.pumpAndSettle();
     expect(find.text('プライバシーポリシー'), findsOneWidget);

@@ -9,7 +9,6 @@ import '../theme/app_theme.dart';
 import '../widgets/screen_header.dart';
 import '../widgets/section_list.dart';
 import 'help_screen.dart';
-import 'history_screen.dart';
 import 'mahjong_rules_screen.dart';
 import 'ai_chat_template_admin_screen.dart';
 import 'ai_usage_screen.dart';
@@ -83,16 +82,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SectionLabel('利用データ'),
                   SectionGroup(
                     children: [
-                      SectionTile(
-                        mark: '履',
-                        title: '利用履歴',
-                        subtitle: '過去の確認結果とAIとの会話',
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const HistoryScreen(),
-                          ),
-                        ),
-                      ),
                       SectionTile(
                         mark: 'AI',
                         title: 'AI利用状況・残り枠',
