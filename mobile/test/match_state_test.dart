@@ -43,14 +43,19 @@ void main() {
     expect(match.current.roundLabel, '東4局 0本場');
   });
 
-  test('draw follows the selected dealer continuation rule', () {
+  test('a draw adds 本場 whether the dealer continues or passes', () {
     final match = MatchState();
 
     match.recordDraw(dealerContinues: true);
     expect(match.current.roundLabel, '東1局 1本場');
 
     match.recordDraw(dealerContinues: false);
-    expect(match.current.roundLabel, '東2局 0本場');
+    expect(match.current.roundLabel, '東2局 2本場');
+    expect(match.current.dealerSeat, TableSeat.right);
+
+    // A non-dealer win then clears 本場.
+    match.recordWin(TableSeat.opposite);
+    expect(match.current.roundLabel, '東3局 0本場');
   });
 
   test('dora is shared in the current hand, cleared next hand, and restored', () {
