@@ -63,16 +63,18 @@ void main() {
     expect(find.text('ログイン'), findsOneWidget);
   });
 
-  testWidgets('settings centralizes history and hides developer controls', (
+  testWidgets('history opens from home; settings keeps only its deletion', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const TsumoAIApp());
+
+    expect(find.text('利用履歴'), findsOneWidget);
 
     await tester.tap(find.byTooltip('設定'));
     await tester.pumpAndSettle();
 
     expect(find.text('設定'), findsOneWidget);
-    expect(find.text('利用履歴'), findsOneWidget);
+    expect(find.text('利用履歴'), findsNothing);
     expect(find.text('利用履歴を削除'), findsOneWidget);
     expect(find.text('使い方・ヘルプ'), findsOneWidget);
     expect(find.text('開発者設定'), findsNothing);

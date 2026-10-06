@@ -9,7 +9,6 @@ import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import '../services/tile_classifier.dart';
 import '../services/api_client.dart';
-import '../services/tile_detector.dart';
 import '../models/score_request.dart';
 import '../models/score_result.dart';
 import '../models/history_entry.dart';
@@ -157,27 +156,13 @@ class _ScanScreenState extends State<ScanScreen> {
   // is null (the full original photo is shown, uncompressed a second time).
   Uint8List? _cropDisplayBytes;
 
-  // Live auto-shutter detection (FEZ-96): runs TileDetector against the
-  // camera preview stream and captures automatically once a full 14-tile
-  // detection has stayed stable for a few frames in a row, instead of
-  // requiring the user to judge readiness and tap the shutter themselves.
-  // The manual shutter remains available as the recovery path when live
-  // detection cannot reach a stable count.
-  bool _autoCaptureEnabled = true;
-  bool _isLiveStreamActive = false;
-  bool _isAnalyzingFrame = false;
-  CameraImage? _latestFrame;
-  Timer? _analysisTimer;
+  // Capture is manual only (decided 2026-10-04): the live auto-shutter of
+  // FEZ-96 counted stray candidates (often ~100) before capture, which read
+  // as poor accuracy, so there is no detection until the shutter is tapped.
   Timer? _scoreRecalculationTimer;
   PerformanceTrace? _performanceTrace;
-  TileDetectorResult? _liveDetectorResult;
-  int _stableDetectionStreak = 0;
   int? _expectedTileCount;
   int? _autoDetectedTileCount;
-  int? _stableCandidateCount;
-  TileDetectorResult? _stableCandidateGeometry;
-  static const int _requiredStableFrames = 2;
-  static const Duration _analysisInterval = Duration(seconds: 1);
 
   bool _isCapturing = false;
   bool _isRunningFullClassification = false;
@@ -256,31 +241,68 @@ class _ScanScreenState extends State<ScanScreen> {
       if (_tiles[index] != null) index,
   ];
 
-  /// The current あがり牌's position within `_identifiedIndices`, or null
-  /// if none is set yet — drives the ◀/▶ controls' enabled state.
-  int? get _winningTilePosition {
-    final currentIndex = _confirmedWinningTileId == null
-        ? null
-        : int.tryParse(_confirmedWinningTileId!.split('-').last);
-    if (currentIndex == null) return null;
-    final position = _identifiedIndices.indexOf(currentIndex);
-    return position == -1 ? null : position;
-  }
-
-  void _moveWinningTile(int delta) {
-    final indices = _identifiedIndices;
-    if (indices.isEmpty) return;
-    final position = _winningTilePosition;
-    final nextPosition = (position == null ? 0 : position + delta).clamp(
-      0,
-      indices.length - 1,
-    );
+  void _setWinningTile(int index) {
     setState(() {
-      _confirmedWinningTileId =
-          'tile-${indices[nextPosition].toString().padLeft(3, '0')}';
+      _confirmedWinningTileId = 'tile-${index.toString().padLeft(3, '0')}';
       _winningTileManuallySet = true;
       _invalidateAnalysisAndMaybeRecalculate();
     });
+  }
+
+  /// Picks the あがり牌 from the identified tiles, opened by tapping the
+  /// 「↑ 和了牌」 mark (device check 2026-10-04: ◀/▶ stepping was hard to
+  /// follow once the tile row scrolls sideways).
+  Future<void> _showWinningTileDialog() async {
+    final current = _confirmedWinningTileId == null
+        ? null
+        : int.tryParse(_confirmedWinningTileId!.split('-').last);
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            const Expanded(child: Text('和了牌を選択')),
+            CloseButton(onPressed: () => Navigator.pop(dialogContext)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final index in _identifiedIndices)
+                Semantics(
+                  button: true,
+                  selected: index == current,
+                  label: '${_tiles[index]}を和了牌にする',
+                  excludeSemantics: true,
+                  child: GestureDetector(
+                    key: ValueKey('winning-choice-$index'),
+                    onTap: () => Navigator.pop(dialogContext, index),
+                    child: Container(
+                      width: 44,
+                      height: 58,
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: index == current ? _colors.soft : null,
+                        borderRadius: BorderRadius.circular(AppRadius.small),
+                        border: Border.all(
+                          color: index == current
+                              ? _colors.winningTile
+                              : _scheme.outlineVariant,
+                          width: index == current ? 2 : 1,
+                        ),
+                      ),
+                      child: TileGlyph(tileCode: _tiles[index]!),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected != null && mounted) _setWinningTile(selected);
   }
 
   void _invalidateAnalysis() {
@@ -333,10 +355,14 @@ class _ScanScreenState extends State<ScanScreen> {
     _purpose = widget.purpose;
     _operation = _purpose.operation;
     _expectedTileCount = _purpose.defaultTileCount;
-    _autoCaptureEnabled = true;
     _context =
         widget.initialContext ??
-        ContextInput(roundWind: widget.initialRoundWind);
+        // Single checks start as 東家 (親); a match passes the seat's own.
+        ContextInput(
+          roundWind: widget.initialRoundWind,
+          seatWind: 'E',
+          isDealer: true,
+        );
     _selectedWinnerIndex = widget.initialWinnerIndex;
     _initCamera();
     _classifierInitialization = _initClassifier();
@@ -375,13 +401,11 @@ class _ScanScreenState extends State<ScanScreen> {
     final selectedCamera = camera ?? _preferredCamera();
     final previousController = _controller;
     if (previousController != null) {
-      await _stopLiveDetection();
       await previousController.dispose();
     }
     if (mounted) {
       setState(() {
         _controller = null;
-        _liveDetectorResult = null;
         _cameraInitError = null;
       });
     }
@@ -396,9 +420,8 @@ class _ScanScreenState extends State<ScanScreen> {
       // the plugin to fall back on devices that cannot provide it.
       ResolutionPreset.ultraHigh,
       enableAudio: false,
-      // Needed for startImageStream()'s live auto-detect (see below) to get
-      // a predictable YUV plane layout on both Android and iOS; takePicture()
-      // (still JPEG) is unaffected.
+      // A predictable YUV plane layout on both Android and iOS;
+      // takePicture() (still JPEG) is unaffected.
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
     _controller = controller;
@@ -418,7 +441,6 @@ class _ScanScreenState extends State<ScanScreen> {
         return;
       }
       if (mounted) setState(() {});
-      await _startLiveDetection();
     } catch (e) {
       debugPrint('Camera init error: $e');
       await controller.dispose();
@@ -430,103 +452,8 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  Future<void> _startLiveDetection() async {
-    await _stopLiveDetection();
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    try {
-      await _controller!.startImageStream((image) => _latestFrame = image);
-      _isLiveStreamActive = true;
-    } catch (e) {
-      debugPrint('Live detection stream start error: $e');
-      return;
-    }
-    _analysisTimer = Timer.periodic(
-      _analysisInterval,
-      (_) => _analyzeLatestFrame(),
-    );
-  }
-
-  Future<void> _stopLiveDetection() async {
-    _analysisTimer?.cancel();
-    _analysisTimer = null;
-    _latestFrame = null;
-    _stableDetectionStreak = 0;
-    if (_isLiveStreamActive) {
-      try {
-        await _controller?.stopImageStream();
-      } catch (e) {
-        debugPrint('Live detection stream stop error: $e');
-      }
-      _isLiveStreamActive = false;
-    }
-  }
-
-  Future<void> _analyzeLatestFrame() async {
-    if (_isAnalyzingFrame || _isCapturing || _phase != _ScanPhase.camera) {
-      return;
-    }
-    final frame = _latestFrame;
-    if (frame == null) return;
-
-    _isAnalyzingFrame = true;
-    try {
-      final result = await TileDetector.detect(
-        frame,
-        const TileDetectorParams(
-          scanRegionTop: captureGuideTopFactor,
-          scanRegionBottom: captureGuideTopFactor + captureGuideHeightFactor,
-        ),
-      );
-      if (!mounted || _phase != _ScanPhase.camera) return;
-
-      final candidateCount = result.tileCount;
-      final isSupportedCount = candidateCount >= 13 && candidateCount <= 18;
-      final isFullDetection = _expectedTileCount == null
-          ? isSupportedCount
-          : candidateCount == _expectedTileCount;
-      setState(() {
-        _liveDetectorResult = result;
-        if (_expectedTileCount == null && isSupportedCount) {
-          _autoDetectedTileCount = candidateCount;
-        }
-        final geometryStable =
-            _stableCandidateGeometry != null &&
-            detectionsAreStable(_stableCandidateGeometry!, result);
-        if (isFullDetection &&
-            _stableCandidateCount == candidateCount &&
-            geometryStable) {
-          _stableDetectionStreak += 1;
-        } else {
-          _stableCandidateCount = isFullDetection ? candidateCount : null;
-          _stableDetectionStreak = isFullDetection ? 1 : 0;
-        }
-        _stableCandidateGeometry = isFullDetection ? result : null;
-      });
-
-      if (_autoCaptureEnabled &&
-          !_isCapturing &&
-          _stableDetectionStreak >= _requiredStableFrames) {
-        _stableDetectionStreak = 0;
-        await _capture();
-      }
-    } catch (e) {
-      debugPrint('Live tile detection error: $e');
-    } finally {
-      _isAnalyzingFrame = false;
-    }
-  }
-
-  void _toggleAutoCapture() {
-    setState(() {
-      _autoCaptureEnabled = !_autoCaptureEnabled;
-      _stableDetectionStreak = 0;
-      _stableCandidateGeometry = null;
-    });
-  }
-
   @override
   void dispose() {
-    _analysisTimer?.cancel();
     _scoreRecalculationTimer?.cancel();
     _controller?.dispose();
     _classifier.dispose();
@@ -550,27 +477,12 @@ class _ScanScreenState extends State<ScanScreen> {
         'auto_inferred_tile_count': _expectedTileCount == null
             ? _autoDetectedTileCount
             : null,
-        'capture_mode': _autoCaptureEnabled ? 'automatic' : 'manual',
+        'capture_mode': 'manual',
       },
     );
     _performanceTrace = trace;
     trace.mark('captureRequested');
     setState(() => _isCapturing = true);
-    await _stopLiveDetection();
-    trace.mark('imageStreamStopped');
-    // Mirrors CameraScreen's original auto-detect prototype: the native
-    // camera needs a moment to fully release the image stream before
-    // takePicture(), or the capture can fail/stall.
-    await Future.delayed(const Duration(milliseconds: 300));
-    if (!mounted || _controller == null || !_controller!.value.isInitialized) {
-      if (identical(_performanceTrace, trace)) _performanceTrace = null;
-      if (!mounted) return;
-      setState(() => _isCapturing = false);
-      // The stream was stopped above; resume it if the controller has
-      // recovered (a no-op otherwise, and _initCamera restarts it itself).
-      if (_phase == _ScanPhase.camera) await _startLiveDetection();
-      return;
-    }
 
     bool capturedOk = false;
     try {
@@ -638,10 +550,6 @@ class _ScanScreenState extends State<ScanScreen> {
       if (capturedOk) await _classifyBoxesAndFinish(const []);
     } finally {
       if (mounted) setState(() => _isCapturing = false);
-      // takePicture() itself failed (capturedOk stayed false): we're still
-      // on the camera phase, so resume live detection instead of leaving
-      // the preview stuck without it.
-      if (mounted && _phase == _ScanPhase.camera) await _startLiveDetection();
     }
   }
 
@@ -1643,13 +1551,13 @@ class _ScanScreenState extends State<ScanScreen> {
       _isUndoingTraining = false;
       _sentTrainingEntryIds = [];
       _resumeWinConditionsAfterRetake = preserveWinConditions;
+      _recognitionDetailsExpanded = null;
       if (!preserveWinConditions) {
         _winConditionStep = _WinConditionStep.riichi;
         _winConditionsComplete = false;
       }
       _recognitionComplete = false;
     });
-    _startLiveDetection();
   }
 
   bool get _allDetectedTilesReady {
@@ -1981,19 +1889,41 @@ class _ScanScreenState extends State<ScanScreen> {
         cropImage,
         const SizedBox(height: 4),
         glyph,
-        if (canBeWinningTile && isWinningTile) ...[
-          Icon(Icons.arrow_upward, size: 20, color: _colors.winningTile),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              '和了牌',
-              style: _text.labelSmall?.copyWith(
-                color: _colors.winningTile,
-                fontWeight: FontWeight.w700,
+        if (canBeWinningTile && isWinningTile)
+          Semantics(
+            button: true,
+            label: '和了牌を変更',
+            excludeSemantics: true,
+            child: InkWell(
+              key: const ValueKey('winning-tile-mark'),
+              onTap: _showWinningTileDialog,
+              borderRadius: BorderRadius.circular(AppRadius.small),
+              child: SizedBox(
+                width: cellWidth,
+                height: AppSizes.tapTarget,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.arrow_upward,
+                      size: 20,
+                      color: _colors.winningTile,
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        '和了牌',
+                        style: _text.labelSmall?.copyWith(
+                          color: _colors.winningTile,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ],
       ],
     );
     return RepaintBoundary(
@@ -2002,12 +1932,9 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// あがり牌 ◀/▶ stepping through `_identifiedIndices` (left; the arrow
-  /// under the tile marks the current one) and 副露 add/reset (right),
-  /// directly below the tile row.
+  /// 副露 add/reset, directly below the tile row (plus 「和了牌を選択」 while
+  /// no あがり牌 is set; otherwise the mark under that tile opens the choice).
   Widget _buildTileControlsRow() {
-    final position = _winningTilePosition;
-    final lastPosition = _identifiedIndices.length - 1;
     final hasWinningTileControls =
         _operation == HandOperation.score && _identifiedIndices.isNotEmpty;
 
@@ -2027,32 +1954,18 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
       ],
     );
-    final winningControls = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text('和了牌', style: _text.labelMedium),
-        IconButton(
-          tooltip: '和了牌を左へ',
-          onPressed: position == null || position > 0
-              ? () => _moveWinningTile(-1)
-              : null,
-          icon: const Icon(Icons.chevron_left),
-          color: _colors.winningTile,
-        ),
-        IconButton(
-          tooltip: '和了牌を右へ',
-          onPressed: position == null || position < lastPosition
-              ? () => _moveWinningTile(1)
-              : null,
-          icon: const Icon(Icons.chevron_right),
-          color: _colors.winningTile,
-        ),
-      ],
+    // Normally the 「↑ 和了牌」 mark under the tile opens the dialog; this
+    // only covers the case where no winning tile is set yet.
+    final winningControls = TextButton.icon(
+      onPressed: _showWinningTileDialog,
+      icon: Icon(Icons.arrow_upward, color: _colors.winningTile),
+      label: const Text('和了牌を選択'),
     );
 
     return Row(
       children: [
-        if (hasWinningTileControls) winningControls,
+        if (hasWinningTileControls && _confirmedWinningTileId == null)
+          winningControls,
         const SizedBox(width: AppSpacing.xs),
         Expanded(
           child: Align(alignment: Alignment.centerRight, child: meldControls),
@@ -2259,7 +2172,7 @@ class _ScanScreenState extends State<ScanScreen> {
     }
     return const StatusBanner(
       kind: StatusKind.info,
-      message: 'あがり牌は牌の列の下にある「和了牌 ◀ ▶」で選べます',
+      message: 'あがり牌は牌の下の「↑ 和了牌」をタップすると変更できます',
     );
   }
 
@@ -2367,16 +2280,6 @@ class _ScanScreenState extends State<ScanScreen> {
       );
 
   /// Translucent pill drawn over the camera preview.
-  Widget _overlayPill({required List<Widget> children}) => Container(
-    constraints: const BoxConstraints(minHeight: 30),
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-    decoration: BoxDecoration(
-      color: _colors.cameraScrim,
-      borderRadius: BorderRadius.circular(AppRadius.iconTile),
-    ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: children),
-  );
-
   // ════════════════════════════════════════
   // Phase: Detecting (automatic tile detection)
   // ════════════════════════════════════════
@@ -2760,11 +2663,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _buildCameraPhase() {
     if (_cameraInitError != null) return _buildCameraError();
-    final count = _liveDetectorResult?.tileCount ?? 0;
-    final isReady = _expectedTileCount == null
-        ? count >= 13 && count <= 18
-        : count == _expectedTileCount;
-    final expectedLabel = _expectedTileCount?.toString() ?? '自動';
+    final ready = _controller != null && _controller!.value.isInitialized;
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2786,14 +2685,9 @@ class _ScanScreenState extends State<ScanScreen> {
                         captureFrameAspectRatio *
                         captureGuideWidthFactor /
                         captureGuideHeightFactor,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (_controller != null &&
-                            _controller!.value.isInitialized)
-                          _buildCaptureAreaPreview()
-                        else
-                          Center(
+                    child: ready
+                        ? _buildCaptureAreaPreview()
+                        : Center(
                             child: Text(
                               'カメラ初期化中...',
                               style: _text.bodyMedium?.copyWith(
@@ -2801,46 +2695,16 @@ class _ScanScreenState extends State<ScanScreen> {
                               ),
                             ),
                           ),
-                        Positioned(
-                          left: AppSpacing.m,
-                          top: AppSpacing.m,
-                          child: _overlayPill(
-                            children: [
-                              Icon(
-                                Icons.circle,
-                                size: 9,
-                                color: _colors.detectionBox,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                _cameraStatusLabel,
-                                style: _text.labelMedium?.copyWith(
-                                  color: _colors.onDark,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Positioned(
-                          right: AppSpacing.m,
-                          top: AppSpacing.m,
-                          child: _overlayPill(
-                            children: [
-                              Text(
-                                '$count / $expectedLabel枚',
-                                style: _text.labelMedium?.copyWith(
-                                  color: _colors.onDark,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.m),
-                _detectionStatusCard(isReady: isReady, count: count),
+                const SizedBox(height: AppSpacing.s),
+                Text(
+                  '手牌が枠に収まるように撮影してください',
+                  textAlign: TextAlign.center,
+                  style: _text.bodyMedium?.copyWith(
+                    color: _scheme.onSurfaceVariant,
+                  ),
+                ),
                 const SizedBox(height: AppSpacing.l),
                 Row(
                   children: [
@@ -2856,27 +2720,12 @@ class _ScanScreenState extends State<ScanScreen> {
                   style: _text.bodySmall,
                 ),
                 const SizedBox(height: AppSpacing.l),
-                OutlinedButton(
-                  onPressed: _isCapturing ? null : _capture,
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(50),
-                    foregroundColor: _scheme.onSurfaceVariant,
-                  ),
-                  child: Text(
-                    _isCapturing
-                        ? '撮影中...'
-                        : _autoCaptureEnabled
-                        ? '自動確定しない場合は手動で確定'
-                        : '手動で確定',
-                  ),
-                ),
-                Center(
-                  child: TextButton(
-                    onPressed: _toggleAutoCapture,
-                    child: Text(
-                      _autoCaptureEnabled ? '自動確定をオフにする' : '自動確定をオンにする',
-                    ),
-                  ),
+                Center(child: _shutterButton(enabled: ready && !_isCapturing)),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  _isCapturing ? '撮影中...' : '撮影',
+                  textAlign: TextAlign.center,
+                  style: _text.labelMedium,
                 ),
               ],
             ),
@@ -2886,59 +2735,40 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget _detectionStatusCard({required bool isReady, required int count}) {
-    final tint = _colors.tsumoCard;
-    final (title, subtitle) = _isCapturing
-        ? ('撮影しています', '少しそのままお待ちください')
-        : isReady
-        ? (
-            '$count枚を検出しました',
-            _autoCaptureEnabled ? 'この状態が続くと自動で確定します' : '手動で確定してください',
-          )
-        : ('牌を検出中', '想定枚数と一致すると自動で確定します');
-    return Container(
-      constraints: const BoxConstraints(minHeight: 70),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: tint.container,
-        border: Border.all(color: tint.border),
-        borderRadius: BorderRadius.circular(AppRadius.card),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: isReady ? _scheme.primary : _scheme.surface,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              isReady ? Icons.check : Icons.search,
-              size: 20,
-              color: isReady ? _scheme.onPrimary : _scheme.primary,
-            ),
+  Widget _shutterButton({required bool enabled}) => Semantics(
+    button: true,
+    enabled: enabled,
+    label: '撮影',
+    excludeSemantics: true,
+    child: GestureDetector(
+      key: const ValueKey('shutter-button'),
+      onTap: enabled ? _capture : null,
+      child: Container(
+        width: 76,
+        height: 76,
+        padding: const EdgeInsets.all(5),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: _scheme.primary, width: 3),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: enabled ? _scheme.primary : _scheme.surfaceContainerHigh,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: _text.titleSmall?.copyWith(color: tint.onContainer),
-                ),
-                Text(
-                  subtitle,
-                  style: _text.bodySmall?.copyWith(color: tint.onContainer),
-                ),
-              ],
-            ),
-          ),
-        ],
+          child: _isCapturing
+              ? Padding(
+                  padding: const EdgeInsets.all(AppSpacing.l),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: _scheme.onPrimary,
+                  ),
+                )
+              : null,
+        ),
       ),
-    );
-  }
+    ),
+  );
 
   Widget _buildCameraError() => SafeArea(
     child: Column(
@@ -3021,27 +2851,12 @@ class _ScanScreenState extends State<ScanScreen> {
     },
   );
 
-  String get _cameraStatusLabel {
-    if (_isCapturing) return '撮影中';
-    final count = _liveDetectorResult?.tileCount ?? 0;
-    final isReady = _expectedTileCount == null
-        ? count >= 13 && count <= 18
-        : count == _expectedTileCount;
-    if (isReady) return _autoCaptureEnabled ? '安定待ち' : '撮影可能';
-    return '牌を検出中';
-  }
-
   Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
     return TileCountSelector(
       selectedCount: _expectedTileCount,
       counts: _selectableTileCounts,
       onChanged: (selected) async {
-        setState(() {
-          _expectedTileCount = selected;
-          _stableDetectionStreak = 0;
-          _stableCandidateCount = null;
-          _stableCandidateGeometry = null;
-        });
+        setState(() => _expectedTileCount = selected);
         if (redetectOnChange && _capturedImage != null) {
           await _redetectInRegion(_cropRegion);
         }
@@ -3176,10 +2991,34 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  /// 「認識結果を確認」: the photo with detected-tile markers, the tile-count
-  /// choice, the identified tile row and the あがり牌/副露 controls.
+  /// Whether the photo, tile count and trimming are shown in the
+  /// recognition card. Null follows [_recognitionNeedsAttention]; a tap on
+  /// the toggle fixes it until the next photo.
+  bool? _recognitionDetailsExpanded;
+
+  /// Recognition went wrong enough that the photo-side controls are needed:
+  /// nothing detected, a count other than the expected one, or tiles left
+  /// unidentified after classification finished.
+  bool get _recognitionNeedsAttention {
+    final detected = _tileQuads.where((quad) => quad != null).length;
+    if (detected == 0) return true;
+    final expected = _expectedTileCount;
+    if (expected != null ? detected != expected : detected < 13 || detected > 18) {
+      return true;
+    }
+    final classifying =
+        _isRunningFullClassification || _isClassifying.any((value) => value);
+    return !classifying &&
+        _tiles.any((tile) => tile != null) &&
+        !_allDetectedTilesReady;
+  }
+
+  /// 「認識結果を確認」: the identified tile row and the あがり牌/副露
+  /// controls, with the photo, tile count and trimming folded behind a
+  /// toggle (opened automatically when recognition needs attention).
   Widget _recognitionCard() {
     final media = MediaQuery.sizeOf(context);
+    final expanded = _recognitionDetailsExpanded ?? _recognitionNeedsAttention;
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3187,80 +3026,106 @@ class _ScanScreenState extends State<ScanScreen> {
           Row(
             children: [
               Expanded(child: Text('認識結果を確認', style: _text.titleMedium)),
-              if (_cropRegion != null)
-                IconButton(
-                  onPressed: () => _redetectInRegion(null),
-                  icon: const Icon(Icons.undo),
-                  tooltip: '元の範囲に戻す',
+              TextButton.icon(
+                key: const ValueKey('recognition-details-toggle'),
+                onPressed: () => setState(
+                  () => _recognitionDetailsExpanded = !expanded,
                 ),
-              // Trimming sits at the card's top right (decided 2026-09-26).
-              OutlinedButton(
-                onPressed: _cropAndRedetect,
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(0, AppSizes.tapTarget),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.m,
-                  ),
-                ),
-                child: const Text('トリミング'),
+                iconAlignment: IconAlignment.end,
+                icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
+                label: const Text('写真・枚数'),
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.m),
-          // Tapping a marker opens the full-screen box editor for that tile
-          // (`_openBoxEditor`). The photo is capped in both width and height
-          // so a landscape shot doesn't eat the whole screen.
-          if (_capturedBytes != null) ...[
-            Center(
-              child: RepaintBoundary(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: media.width,
-                    maxHeight: media.height * 0.4,
-                  ),
-                  child: _photoFrame(
-                    radius: AppRadius.card,
-                    child: AspectRatio(
-                      aspectRatio: _displayAspectRatio,
-                      child: InteractiveViewer(
-                        minScale: 1.0,
-                        maxScale: 4.0,
-                        child: _buildTileMarkerOverlay(),
+          if (expanded) ...[
+            const SizedBox(height: AppSpacing.s),
+            // Tapping a marker opens the full-screen box editor for that
+            // tile (`_openBoxEditor`). The photo is capped in both width and
+            // height so a landscape shot doesn't eat the whole screen.
+            if (_capturedBytes != null) ...[
+              Center(
+                child: RepaintBoundary(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: media.width,
+                      maxHeight: media.height * 0.4,
+                    ),
+                    child: _photoFrame(
+                      radius: AppRadius.card,
+                      child: AspectRatio(
+                        aspectRatio: _displayAspectRatio,
+                        child: InteractiveViewer(
+                          minScale: 1.0,
+                          maxScale: 4.0,
+                          child: _buildTileMarkerOverlay(),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
+              const SizedBox(height: AppSpacing.m),
+            ],
+            _buildExpectedTileCountSelector(redetectOnChange: true),
+            const SizedBox(height: AppSpacing.s),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (_cropRegion != null)
+                  IconButton(
+                    onPressed: () => _redetectInRegion(null),
+                    icon: const Icon(Icons.undo),
+                    tooltip: '元の範囲に戻す',
+                  ),
+                OutlinedButton(
+                  onPressed: _cropAndRedetect,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, AppSizes.tapTarget),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.m,
+                    ),
+                  ),
+                  child: const Text('トリミング'),
+                ),
+              ],
             ),
-            const SizedBox(height: AppSpacing.m),
-          ],
-          _buildExpectedTileCountSelector(redetectOnChange: true),
-          const SizedBox(height: AppSpacing.m),
+            Divider(height: AppSpacing.xl, color: _scheme.outlineVariant),
+          ] else
+            const SizedBox(height: AppSpacing.s),
           // Each crop paired with its identified tile directly below (or
-          // "?" until classification finishes). Tapping the crop opens the
-          // box editor; tapping the tile opens the tile picker.
-          LayoutBuilder(
-            builder: (context, constraints) {
-              const columns = 9;
-              const spacing = 3.0;
-              final available = constraints.maxWidth - spacing * (columns - 1);
-              final cellWidth = math.min(40.0, available / columns);
-              return Wrap(
-                alignment: WrapAlignment.center,
-                spacing: spacing,
-                runSpacing: 8,
-                children: [
-                  for (var index = 0; index < _visibleSlotCount; index++)
-                    _buildResultTile(index, cellWidth),
+          // "?" until classification finishes), in one row that scrolls
+          // sideways. Tapping the crop opens the box editor; tapping the
+          // tile opens the tile picker.
+          SingleChildScrollView(
+            key: const ValueKey('recognized-tile-row'),
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var index = 0; index < _visibleSlotCount; index++) ...[
+                  if (index > 0) const SizedBox(width: 3),
+                  _buildResultTile(index, 40),
                 ],
-              );
-            },
+              ],
+            ),
           ),
           // Gated on every detected box having a tile — before that there's
           // nothing yet to mark as 副露 or あがり牌.
           if (_allDetectedTilesReady) ...[
             const SizedBox(height: AppSpacing.s),
             _buildTileControlsRow(),
+          ],
+          // Every tile is read but the check hasn't run yet: say what to do
+          // next, since the 実行 button sits apart at the bottom.
+          if (_allDetectedTilesReady &&
+              !_hasResult &&
+              !_isScoring &&
+              !_isInterpreting) ...[
+            const SizedBox(height: AppSpacing.s),
+            const StatusBanner(
+              kind: StatusKind.info,
+              message: '読み取り結果が合っていれば、下の「実行」を押してください。違う牌はタップして直せます。',
+            ),
           ],
           if (widget.showTrainingDataActions && _trainingTilesReady)
             Align(
@@ -3301,15 +3166,13 @@ class _ScanScreenState extends State<ScanScreen> {
                     const SizedBox(height: AppSpacing.m),
                   ],
 
-                  // Winds stay visible for every operation (the analysis API
-                  // uses the context for wait-score predictions); dora only
-                  // for score/wait and win-time chips only for scoring, as in
-                  // the result mockups.
+                  // Winds and 表ドラ for every check (the analysis API uses the
+                  // context); 裏ドラ and the win-time chips only for scoring.
                   GameStatePanel(
                     context_: _context,
                     onChanged: (c) => setState(() => _updateContext(c)),
                     conditionChips: isScore ? _conditionChips() : const [],
-                    showDora: !asksAi,
+                    showUraDora: isScore,
                   ),
                   const SizedBox(height: AppSpacing.l),
 

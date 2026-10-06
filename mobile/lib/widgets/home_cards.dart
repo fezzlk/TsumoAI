@@ -166,66 +166,75 @@ class SessionCard extends StatelessWidget {
               children: [
                 Positioned(
                   right: 2,
-                  bottom: 3,
+                  top: 14,
                   child: CustomPaint(
                     size: const Size(134, 106),
                     painter: _TilePatternPainter(colors.onDark),
                   ),
                 ),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 178),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 18, 120, 17),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          eyebrow,
-                          style: text.labelSmall?.copyWith(
-                            color: playing
-                                ? colors.sessionPlayingEyebrow
-                                : colors.sessionEyebrow,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                        const SizedBox(height: 7),
-                        Text(
-                          title,
-                          style: text.titleLarge?.copyWith(
-                            color: colors.onDark,
-                            fontWeight: FontWeight.w800,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 7),
-                        Text(
-                          description,
-                          style: text.bodySmall?.copyWith(
-                            color: colors.onDarkMuted,
-                            fontWeight: FontWeight.w600,
-                            height: 1.55,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.m),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
+                Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 102),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              action,
-                              style: text.labelLarge?.copyWith(
-                                color: colors.onDark,
+                              eyebrow,
+                              style: text.labelSmall?.copyWith(
+                                color: playing
+                                    ? colors.sessionPlayingEyebrow
+                                    : colors.sessionEyebrow,
+                                letterSpacing: 1.2,
                               ),
                             ),
-                            Icon(
-                              Icons.chevron_right,
-                              color: colors.onDark,
-                              size: 20,
+                            const SizedBox(height: 7),
+                            Text(
+                              title,
+                              style: text.titleLarge?.copyWith(
+                                color: colors.onDark,
+                                fontWeight: FontWeight.w800,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 7),
+                            Text(
+                              description,
+                              style: text.bodySmall?.copyWith(
+                                color: colors.onDarkMuted,
+                                fontWeight: FontWeight.w600,
+                                height: 1.55,
+                              ),
                             ),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: AppSpacing.l),
+                      // A solid white button so the card reads as something
+                      // to press rather than a notice (device check
+                      // 2026-10-04); the whole card stays tappable too.
+                      SizedBox(
+                        height: AppSizes.tapTarget,
+                        child: FilledButton.icon(
+                          onPressed: onTap,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: colors.onDark,
+                            foregroundColor: gradient.first,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                AppRadius.button,
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.play_arrow_rounded),
+                          label: Text(action),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

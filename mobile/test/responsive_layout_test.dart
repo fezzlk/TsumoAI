@@ -193,7 +193,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('和了者を選択'), findsOneWidget);
+    expect(find.text('和了した人の座席をタップ'), findsOneWidget);
     expectNoOverflow(tester);
   });
 
@@ -213,7 +213,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('和了者を選択'), findsOneWidget);
+    expect(find.text('和了した人の座席をタップ'), findsOneWidget);
     expect(find.byKey(const ValueKey('end-match-button')), findsOneWidget);
     expectNoOverflow(tester);
   });
@@ -231,7 +231,7 @@ void main() {
     await tester.tap(find.byTooltip('設定'));
     await tester.pumpAndSettle();
 
-    expect(find.text('利用履歴'), findsOneWidget);
+    expect(find.text('AI利用状況・残り枠'), findsOneWidget);
     await tester.drag(find.byType(ListView).last, const Offset(0, -360));
     await tester.pumpAndSettle();
     expect(find.text('プライバシーポリシー'), findsOneWidget);

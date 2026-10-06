@@ -22,7 +22,9 @@ class TileCountSelector extends StatelessWidget {
     final options = <int?>[null, ...counts];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      clipBehavior: Clip.none,
+      // Clipped to the card's inner edge; the vertical padding keeps the
+      // selected chip's shadow from being cut.
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Row(
         children: [
           for (var index = 0; index < options.length; index++) ...[
