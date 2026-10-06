@@ -14,7 +14,7 @@ abstract final class AppRadius {
   static const xLarge = 20.0;
   static const modal = 24.0;
 
-  /// Home: 發 mark, login pill, feature cards, match card.
+  /// Home: brand mark, login pill, feature cards, match card.
   static const iconTile = 10.0;
   static const brandMark = 13.0;
   static const pill = 15.0;

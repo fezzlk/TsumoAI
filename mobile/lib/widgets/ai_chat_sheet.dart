@@ -12,6 +12,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import 'status_banner.dart';
 import 'toggle_chip.dart';
+import 'tsumorou_avatar.dart';
 
 typedef AIChatSender =
     Future<String> Function({
@@ -606,15 +607,18 @@ class _AIChatSheetState extends State<AIChatSheet> {
                       : null,
                 ),
               if (_sending)
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: EdgeInsets.all(AppSpacing.m),
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
+                const Padding(
+                  padding: EdgeInsets.only(bottom: AppSpacing.m),
+                  child: Row(
+                    children: [
+                      TsumorouAvatar(size: 32),
+                      SizedBox(width: AppSpacing.m),
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ],
                   ),
                 ),
               if (_error == _sendFailedMessage)
@@ -938,7 +942,17 @@ class _MessageBubble extends StatelessWidget {
             ? CrossAxisAlignment.end
             : CrossAxisAlignment.start,
         children: [
-          bubble,
+          if (isUser)
+            bubble
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const TsumorouAvatar(size: 32),
+                const SizedBox(width: AppSpacing.s),
+                Flexible(child: bubble),
+              ],
+            ),
           if (isUser)
             TextButton.icon(
               onPressed: saved ? null : onSave,
