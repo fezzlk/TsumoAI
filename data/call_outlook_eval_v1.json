@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "terminal_chi_blocks_tanyao_even_with_dora",
+      "tiles": ["2m", "3m", "4p", "5p", "6p", "6s", "7s", "8s", "5p", "5p", "6s", "6s", "C"],
+      "call": ["chi", "1m", ["2m", "3m"]],
+      "context": {"dora_indicators": ["4p"]},
+      "status": "no_yaku",
+      "warning_contains": "タンヤオは成立しません",
+      "estimate": false
+    },
+    {
+      "id": "simple_chi_keeps_open_tanyao",
+      "tiles": ["2m", "3m", "4p", "5p", "6p", "6s", "7s", "8s", "5p", "5p", "6s", "6s", "C"],
+      "call": ["chi", "4m", ["2m", "3m"]],
+      "status": "available",
+      "yaku": "断么九",
+      "estimate": true
+    },
+    {
+      "id": "kuitan_disabled_removes_only_yaku",
+      "tiles": ["2m", "3m", "4p", "5p", "6p", "6s", "7s", "8s", "5p", "5p", "6s", "6s", "C"],
+      "call": ["chi", "4m", ["2m", "3m"]],
+      "rules": {"kuitan_ari": false},
+      "status": "no_yaku",
+      "warning_contains": "喰いタンなし",
+      "estimate": false
+    },
+    {
+      "id": "sanshoku_before_tenpai_is_conditional_one_han",
+      "tiles": ["1m", "2m", "1p", "2p", "3p", "1s", "2s", "5p", "5p", "7s", "8s", "C", "9m"],
+      "call": ["chi", "3m", ["1m", "2m"]],
+      "status": "conditional",
+      "yaku": "三色同順",
+      "estimate": true
+    },
+    {
+      "id": "missing_context_is_not_no_yaku",
+      "tiles": ["2m", "3m", "4p", "5p", "6p", "6s", "7s", "8s", "5p", "5p", "6s", "6s", "C"],
+      "call": ["chi", "1m", ["2m", "3m"]],
+      "without_context": true,
+      "status": "unknown",
+      "estimate": false
+    }
+  ]
+}

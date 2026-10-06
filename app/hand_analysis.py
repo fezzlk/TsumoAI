@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.call_outlook import assess_call_branch, summarize_call_outlooks
 from app.domain.analysis import analyze_discards, enumerate_improving_tiles
 from app.domain.shanten import calculate_shanten
 from app.domain.tiles import index_to_tile, tile_to_index, tiles_to_counts
@@ -18,6 +19,7 @@ from app.schemas import (
     MeldType,
     TenpaiAnalysisRequest,
     TenpaiAnalysisResponse,
+    TenpaiWaitAnalysis,
     WaitAnalysis,
 )
 
@@ -82,24 +84,48 @@ def _request_with_hypothetical_meld(
         "pon": MeldType.pon,
         "kan": MeldType.kan,
     }[call_type]
+    remaining = list(request.closed_tiles)
+    consumed_tiles = []
+    for tile_index in consumed_indices:
+        position = next(i for i, tile in enumerate(remaining) if tile_to_index(tile) == tile_index)
+        consumed_tiles.append(remaining.pop(position))
     meld = Meld(
         type=meld_type,
         tiles=[
-            *(index_to_tile(index) for index in consumed_indices),
+            *consumed_tiles,
             index_to_tile(call_tile_index),
         ],
         open=True,
     )
     context = request.context
     if context is not None:
-        # An open call makes riichi-family flags impossible. Clear stale
-        # values before running the existing deterministic score validator.
+        # Compare ordinary future ron outcomes; incidental win flags must not
+        # make an otherwise yakuless call appear safe. Preserve winds/dora.
+        encoded_red = sum(tile.endswith("r") for tile in request.closed_tiles)
+        encoded_red += sum(tile.endswith("r") for meld in request.melds for tile in meld.tiles)
         context = context.model_copy(
-            update={"riichi": False, "double_riichi": False, "ippatsu": False}
+            update={"win_type": "ron", "riichi": False, "double_riichi": False, "ippatsu": False,
+                    "haitei": False, "houtei": False, "rinshan": False, "chankan": False,
+                    "tenhou": False, "chiihou": False, "honba": 0, "kyotaku": 0,
+                    "aka_dora_count": max(context.aka_dora_count, encoded_red)}
         )
     return request.model_copy(
-        update={"melds": [*request.melds, meld], "context": context}
+        update={"closed_tiles": remaining, "melds": [*request.melds, meld], "context": context}
     )
+
+
+def _call_wait_results(request: CallAnalysisRequest, tiles: list[str], waits, shanten: int):
+    context = request.context
+    if context is not None:
+        removed_red = sum(tile.endswith("r") for tile in request.closed_tiles) - sum(tile.endswith("r") for tile in tiles)
+        context = context.model_copy(update={"aka_dora_count": max(0, context.aka_dora_count - removed_red)})
+    # Checking yaku is essential even when score details were opted out.
+    scoring_request = request.model_copy(update={"include_score_predictions": True, "context": context})
+    ron = _wait_results(scoring_request, tiles, waits, predict_scores=shanten == 0)
+    tsumo_context = context.model_copy(update={"win_type": "tsumo"}) if context is not None else None
+    tsumo_request = scoring_request.model_copy(update={"context": tsumo_context})
+    tsumo = _wait_results(tsumo_request, tiles, waits, predict_scores=shanten == 0)
+    return ron, tsumo
 
 
 def _possible_yaku(*wait_groups: list[WaitAnalysis]) -> list[str]:
@@ -145,9 +171,46 @@ def analyze_tenpai(request: TenpaiAnalysisRequest) -> TenpaiAnalysisResponse:
     closed_counts, visible_counts = _validated_counts(request, expected, "tenpai analysis")
     shanten = calculate_shanten(closed_counts, completed_melds)
     waits = enumerate_improving_tiles(closed_counts, completed_melds, visible_counts)
+    scoring_requests = {}
+    for win_type in ("ron", "tsumo"):
+        context = request.context
+        if context is not None:
+            encoded_red = sum(tile.endswith("r") for tile in request.closed_tiles)
+            encoded_red += sum(tile.endswith("r") for meld in request.melds for tile in meld.tiles)
+            # Keep the current riichi/dora/round settings. Only remove flags
+            # incompatible with the alternative way of winning.
+            clear_flags = ("haitei", "rinshan", "chiihou", "tenhou") if win_type == "ron" else ("houtei", "chankan")
+            context = context.model_copy(update={
+                "win_type": win_type,
+                "aka_dora_count": max(context.aka_dora_count, encoded_red),
+                **{flag: False for flag in clear_flags},
+            })
+        scoring_requests[win_type] = request.model_copy(update={"context": context})
+    predictions = []
+    for wait in waits:
+        ron, ron_error = _score_wait(scoring_requests["ron"], request.closed_tiles, wait.tile) if shanten == 0 else (None, None)
+        tsumo, tsumo_error = _score_wait(scoring_requests["tsumo"], request.closed_tiles, wait.tile) if shanten == 0 else (None, None)
+        selected_tsumo = request.context is not None and request.context.win_type == "tsumo"
+        predictions.append(TenpaiWaitAnalysis(
+            tile=wait.tile, remaining=wait.remaining,
+            score=tsumo if selected_tsumo else ron,
+            score_error=tsumo_error if selected_tsumo else ron_error,
+            ron_score=ron, ron_score_error=ron_error,
+            tsumo_score=tsumo, tsumo_score_error=tsumo_error,
+        ))
+    conditions = []
+    if request.context is not None and request.include_score_predictions and shanten == 0:
+        context = request.context
+        wind_names = {"E": "東", "S": "南", "W": "西", "N": "北"}
+        conditions = [
+            f"場風 {wind_names[context.round_wind]}・自風 {wind_names[context.seat_wind]}（{'親' if context.seat_wind == 'E' else '子'}）",
+            "ダブルリーチあり" if context.double_riichi else "リーチあり" if context.riichi else "リーチなし",
+            "喰いタンあり" if request.rules.kuitan_ari else "喰いタンなし",
+        ]
     return TenpaiAnalysisResponse(
         shanten=shanten,
-        improving_tiles=_wait_results(request, request.closed_tiles, waits, predict_scores=shanten == 0),
+        improving_tiles=predictions,
+        score_conditions=conditions,
     )
 
 
@@ -213,23 +276,21 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
             after_discard = _remove_tile_indices(
                 reduced_tiles, [tile_to_index(item.discard)]
             )
-            waits = _wait_results(
+            waits, tsumo_waits = _call_wait_results(
                 hypothetical_request,
                 after_discard,
                 item.waits,
-                predict_scores=(
-                    request.include_score_predictions
-                    and request.context is not None
-                    and item.shanten == 0
-                ),
+                item.shanten,
             )
             wait_groups.append(waits)
+            wait_groups.append(tsumo_waits)
             discard_results.append(
                 DiscardAnalysisResult(
                     discard=item.discard,
                     shanten=item.shanten,
                     improving_tiles=_without_score_details(waits),
                     total_remaining=sum(wait.remaining for wait in waits),
+                    call_outlook=assess_call_branch(hypothetical_request, after_discard, item.shanten, waits, tsumo_waits),
                 )
             )
         calls.append(
@@ -240,6 +301,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                 shanten_after_call=best_shanten,
                 recommendation=recommendation(best_shanten),
                 possible_yaku=_possible_yaku(*wait_groups),
+                outlook=summarize_call_outlooks([item.call_outlook for item in discard_results]),
                 discards=discard_results,
             )
         )
@@ -268,16 +330,14 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                 tuple(reduced), completed_melds + 1, tuple(visible)
             )
             replacement_shanten = calculate_shanten(tuple(reduced), completed_melds + 1)
-            replacement_results = _wait_results(
+            replacement_results, tsumo_results = _call_wait_results(
                 hypothetical_request,
                 reduced_tiles,
                 replacement_tiles,
-                predict_scores=(
-                    request.include_score_predictions
-                    and request.context is not None
-                    and replacement_shanten == 0
-                ),
+                replacement_shanten,
             )
+            outlook = assess_call_branch(hypothetical_request, reduced_tiles, replacement_shanten, replacement_results, tsumo_results)
+            outlook.warnings.append("カン後は補充牌と打牌で形が変わります。嶺上開花・新しい槓ドラは打点に含めていません。")
             calls.append(
                 CallAnalysisResult(
                     call_tile=index_to_tile(call_index),
@@ -285,7 +345,8 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                     consumed_tiles=[index_to_tile(call_index)] * 3,
                     shanten_after_call=replacement_shanten,
                     recommendation=recommendation(replacement_shanten),
-                    possible_yaku=_possible_yaku(replacement_results),
+                    possible_yaku=_possible_yaku(replacement_results, tsumo_results),
+                    outlook=outlook,
                     replacement_tiles=_without_score_details(replacement_results),
                 )
             )

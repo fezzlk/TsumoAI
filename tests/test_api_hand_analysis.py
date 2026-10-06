@@ -24,6 +24,11 @@ def test_analyze_thirteen_tiles_with_score_prediction():
     wait = next(item for item in body["improving_tiles"] if item["tile"] == "2p")
     assert wait["remaining"] == 3
     assert wait["score"]["points"]["ron"] > 0
+    assert wait["ron_score"] == wait["score"]
+    assert wait["tsumo_score"]["points"]["tsumo_dealer_pay"] > 0
+    assert wait["ron_score_error"] is None
+    assert wait["tsumo_score_error"] is None
+    assert "リーチあり" in body["score_conditions"]
 
 
 def test_analyze_fourteen_tiles_returns_discard_options():
@@ -106,6 +111,15 @@ def test_call_analysis_lists_possible_calls_without_an_opponent_selection():
         for item in body["calls"]
     )
     assert all(item["recommendation"] in {"improves", "keeps", "worsens"} for item in body["calls"])
+    shapes = [(item["call_tile"], item["call_type"], tuple(sorted(item["consumed_tiles"])))
+              for item in body["calls"]]
+    assert len(shapes) == len(set(shapes))
+    # Same called tile/action can legitimately have different consumed tiles.
+    # The UI groups these without dropping their separate yaku/discard results.
+    assert {tuple(item["consumed_tiles"]) for item in body["calls"]
+            if item["call_tile"] == "3m" and item["call_type"] == "chi"} == {
+        ("1m", "2m"), ("2m", "4m"), ("4m", "5m"),
+    }
 
 
 def test_call_analysis_reports_only_deterministically_scored_possible_yaku():
@@ -135,6 +149,9 @@ def test_call_analysis_reports_only_deterministically_scored_possible_yaku():
     assert pon["shanten_after_call"] == 0
     assert "役牌 白" in pon["possible_yaku"]
     assert "ドラ" not in pon["possible_yaku"]
+    assert pon["outlook"]["status"] == "available"
+    assert pon["outlook"]["score_estimate"]["min_points"] > 0
+    assert any(discard["call_outlook"]["winning_tiles"] for discard in pon["discards"])
     assert all(
         wait["score"] is None and wait["score_error"] is None
         for discard in pon["discards"]

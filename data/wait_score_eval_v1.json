@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "open_sanshoku_one_side_only",
+      "tiles": ["3p", "4p", "5p", "4s", "5s", "7p", "7p", "7p", "9s", "9s"],
+      "melds": [{"type": "chi", "tiles": ["3m", "4m", "5m"], "open": true}],
+      "waits": {"3s": {"ron_yaku": ["三色同順"], "ron_points": 1000, "tsumo_yaku": ["三色同順"]}, "6s": {"ron_no_yaku": true, "tsumo_no_yaku": true}}
+    },
+    {
+      "id": "closed_tsumo_adds_yaku_when_ron_has_none",
+      "tiles": ["1m", "1m", "1m", "2p", "3p", "4p", "5s", "6s", "7s", "9m", "9m", "7p", "8p"],
+      "waits": {"6p": {"ron_no_yaku": true, "tsumo_yaku": ["門前清自摸和"]}, "9p": {"ron_no_yaku": true, "tsumo_yaku": ["門前清自摸和"]}}
+    }
+  ]
+}
