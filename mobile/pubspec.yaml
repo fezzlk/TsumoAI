@@ -71,6 +71,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/branding/tsumorou.png
     - assets/ml/tile_classifier.tflite
     - assets/ml/labels.txt
     - assets/tiles/

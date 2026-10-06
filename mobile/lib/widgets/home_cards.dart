@@ -2,29 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import 'tsumorou_avatar.dart';
 
-/// The 發 brand mark next to the wordmark on Home.
+/// Tsumorou, the owl mentor next to the TsumoAI wordmark.
 class BrandMark extends StatelessWidget {
   const BrandMark({super.key});
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: 42,
-    height: 42,
-    alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.primary,
-      borderRadius: BorderRadius.circular(AppRadius.brandMark),
-    ),
-    child: Text(
-      '發',
-      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-        color: context.appColors.onDark,
-        fontWeight: FontWeight.w900,
-        height: 1,
-      ),
-    ),
-  );
+  Widget build(BuildContext context) => const TsumorouAvatar();
 }
 
 /// One of the four checks on Home: a tinted card with an icon frame,
