@@ -1038,41 +1038,6 @@ class _CallTypeBadge extends StatelessWidget {
   }
 }
 
-/// チー・ポン・カン as a solid colored pill (blue / amber / purple) so the
-/// call kind reads at a glance; the label still names it for color-blind
-/// users.
-class _CallTypeBadge extends StatelessWidget {
-  const _CallTypeBadge({required this.callType});
-
-  final Object? callType;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.appColors;
-    final background = switch (callType) {
-      'chi' => colors.wait.accent,
-      'pon' => colors.discard.accent,
-      'kan' => colors.call.accent,
-      _ => Theme.of(context).colorScheme.onSurfaceVariant,
-    };
-    return Container(
-      constraints: const BoxConstraints(minWidth: 46),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s, vertical: 3),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(AppRadius.pill),
-      ),
-      child: Text(
-        _callTypeLabel(callType),
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-          color: colors.onDark,
-        ),
-      ),
-    );
-  }
-}
-
 String _callTypeLabel(Object? value) => switch (value) {
   'chi' => 'チー',
   'pon' => 'ポン',
