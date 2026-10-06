@@ -10,6 +10,7 @@ import 'firebase_options.dart';
 import 'models/match_state.dart';
 import 'models/scan_purpose.dart';
 import 'models/score_request.dart';
+import 'screens/history_screen.dart';
 import 'screens/match_home_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/settings_screen.dart';
@@ -23,6 +24,7 @@ import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 import 'widgets/home_cards.dart';
 import 'widgets/screen_header.dart';
+import 'widgets/section_list.dart';
 import 'widgets/status_banner.dart';
 
 List<CameraDescription> cameras = const [];
@@ -261,6 +263,22 @@ class HomeScreen extends StatelessWidget {
                   : '点数計算できる人がいない場合に\n1半荘分の点数計算をサポート',
               action: matchActive ? '対局ホームへ' : '対局を始める',
               onTap: () => _openMatch(context),
+            ),
+            // History moved here from settings (device check 2026-10-04).
+            const SizedBox(height: AppSpacing.m),
+            SectionGroup(
+              children: [
+                SectionTile(
+                  mark: '履',
+                  title: '利用履歴',
+                  subtitle: '過去の確認結果とAIとの会話',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const HistoryScreen(),
+                    ),
+                  ),
+                ),
+              ],
             ),
             _buildTrainingAction(context),
           ],

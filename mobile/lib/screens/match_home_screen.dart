@@ -50,7 +50,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           winnerOptions: TableSeat.values
               .map(
                 (seat) => ScoreWinnerOption(
-                  label: _physicalSeatLabel(seat),
+                  label: _seatLabel(seat),
                   context: _match.current.contextFor(seat),
                 ),
               )
@@ -165,11 +165,6 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _sectionHeading(
-                      Text('和了者を選択', style: text.headlineSmall),
-                      Text('和了した人の座席をタップ', style: muted),
-                    ),
-                    const SizedBox(height: AppSpacing.m),
                     _tableCard(state),
                     const SizedBox(height: AppSpacing.l),
                     _sectionHeading(
@@ -207,7 +202,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
   );
 
   Widget _carriedSummary(MatchSnapshot state, TextStyle? style) {
-    final dealer = '親：${_physicalSeatLabel(state.dealerSeat)}家';
+    final dealer = '親：${_seatCaption(state.dealerSeat)}';
     final label = '${_windLabel(state.roundWind)}${state.handNumber}局・$dealer';
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -240,8 +235,8 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
               final plate = width * 0.38;
               final seatWidth = width * 0.27;
               final seatHeight = seatWidth * 0.95;
-              // The north seat starts just below the corner badges' top
-              // edge; the south seat overhangs the plate by the same amount.
+              // The north seat starts just below the dora panel's top edge;
+              // the south seat overhangs the plate by the same amount.
               final plateTop = 56 + seatHeight * 0.6;
               final height = plateTop + plate + seatHeight * 0.6 + 4;
               final centerX = (width - seatWidth) / 2;
@@ -250,7 +245,30 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
                 height: height,
                 child: Stack(
                   children: [
-                    Positioned(left: 0, top: 0, child: _roundBadge(state)),
+                    // The instruction takes the corner the round badge used
+                    // to hold (the separate heading above the card is gone).
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      width: width * 0.58,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.touch_app_outlined,
+                            size: 20,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Expanded(
+                            child: Text(
+                              '和了した人の座席をタップ',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     Positioned(
                       right: 0,
                       top: 0,
@@ -333,34 +351,6 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
     );
   }
 
-  Widget _roundBadge(MatchSnapshot state) {
-    final colors = context.appColors;
-    final text = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.m,
-        vertical: AppSpacing.s,
-      ),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary,
-        borderRadius: BorderRadius.circular(AppRadius.large),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '${_windLabel(state.roundWind)}${state.handNumber}局',
-            style: text.titleMedium?.copyWith(color: colors.onDark),
-          ),
-          Text(
-            '${state.honba}本場',
-            style: text.bodySmall?.copyWith(color: colors.onDarkMuted),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _roundPlate(MatchSnapshot state) {
     final colors = context.appColors;
     return DecoratedBox(
@@ -378,14 +368,27 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           ),
         ],
       ),
+      // The round lives only here (the corner badge was dropped as a
+      // duplicate), so it also carries 本場.
       child: Center(
         child: FittedBox(
           fit: BoxFit.scaleDown,
-          child: Text(
-            '${_windLabel(state.roundWind)}${_kanjiNumber(state.handNumber)}局',
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(color: colors.onDark),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${_windLabel(state.roundWind)}${_kanjiNumber(state.handNumber)}局',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(color: colors.onDark),
+              ),
+              Text(
+                '${state.honba}本場',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onDarkMuted),
+              ),
+            ],
           ),
         ),
       ),
@@ -529,15 +532,10 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
     final scheme = Theme.of(context).colorScheme;
     final colors = context.appColors;
     final text = Theme.of(context).textTheme;
-    final caption = switch (seat) {
-      TableSeat.starting => '起家',
-      TableSeat.right => '起家の右隣',
-      TableSeat.opposite => '起家の対面',
-      TableSeat.left => '起家の左隣',
-    };
+    final caption = _seatCaption(seat);
     return Semantics(
       button: true,
-      label: '${_physicalSeatLabel(seat)}（$caption${isDealer ? '・親' : ''}）',
+      label: '${_seatLabel(seat)}（$caption${isDealer ? '・親' : ''}）',
       excludeSemantics: true,
       child: Material(
         color: isDealer ? colors.recommended.container : scheme.surface,
@@ -582,7 +580,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
                       ],
                     ),
                   Text(
-                    _physicalSeatLabel(seat),
+                    _seatLabel(seat),
                     style: text.headlineMedium?.copyWith(
                       color: scheme.onSurface,
                     ),
@@ -605,11 +603,17 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
   String _roundLabel(MatchSnapshot state) =>
       '${_windLabel(state.roundWind)}${state.handNumber}局・${state.honba}本場';
 
-  String _physicalSeatLabel(TableSeat seat) => switch (seat) {
-    TableSeat.starting => '南',
-    TableSeat.right => '東',
-    TableSeat.opposite => '北',
-    TableSeat.left => '西',
+  /// The seat's wind this hand: the dealer is 東 and the winds run
+  /// counter-clockwise from there, so they rotate as the dealer moves while
+  /// 起家 stays put (東1局: 下東・右南・上西・左北).
+  String _seatLabel(TableSeat seat) =>
+      _windLabel(_match.current.seatWind(seat));
+
+  String _seatCaption(TableSeat seat) => switch (seat) {
+    TableSeat.starting => '起家',
+    TableSeat.right => '起家の右隣',
+    TableSeat.opposite => '起家の対面',
+    TableSeat.left => '起家の左隣',
   };
 
   String _windLabel(String wind) => switch (wind) {
@@ -819,7 +823,7 @@ class _EndMatchDialog extends StatelessWidget {
                           children: [
                             stat('現在の局', roundLabel),
                             VerticalDivider(color: scheme.outline, width: 1),
-                            stat('計算済み', '$completedHands局'),
+                            stat('終了した局', '$completedHands局'),
                           ],
                         ),
                       ),

@@ -540,6 +540,24 @@ void main() {
     );
     await _capture(
       tester,
+      '12b_condition_card_no_riichi',
+      _panelHost(
+        GameStatePanel(
+          context_: ContextInput(
+            roundWind: 'E',
+            seatWind: 'E',
+            doraIndicators: const ['3p'],
+          ),
+          onChanged: (_) {},
+          conditionChips: [
+            ToggleChip(label: '立直', selected: false, onTap: () {}),
+            ToggleChip(label: '一発', selected: false, onTap: () {}),
+          ],
+        ),
+      ),
+    );
+    await _capture(
+      tester,
       '13_tile_picker',
       Builder(
         builder: (context) => Scaffold(

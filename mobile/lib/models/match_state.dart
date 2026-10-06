@@ -50,7 +50,9 @@ class MatchSnapshot {
     doraIndicators: const [],
   );
 
-  MatchSnapshot dealerChanges() {
+  /// The next dealer's hand. 本場 resets after a non-dealer win but carries
+  /// on (+1) after a draw, even when the dealer passes ([afterDraw]).
+  MatchSnapshot dealerChanges({bool afterDraw = false}) {
     var nextWind = roundWind;
     var nextHand = handNumber + 1;
     if (nextHand > 4) {
@@ -60,7 +62,7 @@ class MatchSnapshot {
     return MatchSnapshot(
       roundWind: nextWind,
       handNumber: nextHand,
-      honba: 0,
+      honba: afterDraw ? honba + 1 : 0,
       dealerSeat: TableSeat.values[(dealerSeat.index + 1) % 4],
       doraIndicators: const [],
     );
@@ -123,7 +125,7 @@ class MatchState {
     _history.add(_current);
     _current = dealerContinues
         ? _current.dealerContinues()
-        : _current.dealerChanges();
+        : _current.dealerChanges(afterDraw: true);
   }
 
   void undo() {
