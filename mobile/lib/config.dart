@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 enum Environment { production, local }
 
 class AppConfig {
@@ -6,7 +8,7 @@ class AppConfig {
   static const String _productionUrl = 'https://tsumoai.fezzlk.com';
   static const String _localUrl = 'http://localhost:8000';
 
-  static String _customUrl = '';
+  static String _customUrl = const String.fromEnvironment('API_BASE_URL');
 
   static Environment get environment => _env;
 
@@ -14,7 +16,7 @@ class AppConfig {
     if (_customUrl.isNotEmpty) return _customUrl;
     switch (_env) {
       case Environment.production:
-        return _productionUrl;
+        return kIsWeb ? Uri.base.origin : _productionUrl;
       case Environment.local:
         return _localUrl;
     }

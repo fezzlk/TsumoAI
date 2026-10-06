@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'local_document.dart';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../config.dart';
 import '../models/history_entry.dart';
@@ -42,14 +41,14 @@ class HistoryService {
         '${value.substring(20)}';
   }
 
-  Future<File> _file() async {
+  Future<LocalDocument> _file() async {
     final directory = await _directoryProvider();
-    return File('${directory.path}/$_fileName');
+    return LocalDocument('${directory.path}/$_fileName');
   }
 
-  Future<File> _pendingDeletionFile() async {
+  Future<LocalDocument> _pendingDeletionFile() async {
     final directory = await _directoryProvider();
-    return File('${directory.path}/$_pendingDeletionFileName');
+    return LocalDocument('${directory.path}/$_pendingDeletionFileName');
   }
 
   Future<List<HistoryEntry>> _loadAll() async {
@@ -76,7 +75,6 @@ class HistoryService {
 
   Future<void> _writeLocal(Iterable<HistoryEntry> entries) async {
     final file = await _file();
-    await file.parent.create(recursive: true);
     await file.writeAsString(
       jsonEncode(entries.map((entry) => entry.toJson()).toList()),
       flush: true,
@@ -236,7 +234,6 @@ class HistoryService {
 
   Future<void> _writePendingDeletions(Set<String> uids) async {
     final file = await _pendingDeletionFile();
-    await file.parent.create(recursive: true);
     await file.writeAsString(jsonEncode(uids.toList()..sort()), flush: true);
   }
 

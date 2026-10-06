@@ -8,6 +8,12 @@ __pycache__
 *.pyd
 .DS_Store
 tests
+venv
+.venv
+mobile/build
+mobile/.dart_tool
+mobile/tool/web_runtime/node_modules
+mobile/web/vendor
 # Personal eval photos, not for the image (Docker can't re-include a file
 # under an excluded parent dir, so this must stay narrow — not `data`).
 data/eval_images

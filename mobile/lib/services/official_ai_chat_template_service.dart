@@ -1,8 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
+import 'local_document.dart';
 
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../config.dart';
 import '../models/official_ai_chat_template.dart';
@@ -19,8 +18,8 @@ class OfficialAIChatTemplateService {
   final Dio _dio;
   final Future<Directory> Function() _directoryProvider;
 
-  Future<File> _file() async =>
-      File('${(await _directoryProvider()).path}/$_fileName');
+  Future<LocalDocument> _file() async =>
+      LocalDocument('${(await _directoryProvider()).path}/$_fileName');
 
   Future<OfficialAIChatTemplateConfig> load({bool refresh = true}) async {
     final cached = await _loadCached();
@@ -75,7 +74,6 @@ class OfficialAIChatTemplateService {
 
   Future<void> _write(OfficialAIChatTemplateConfig config) async {
     final file = await _file();
-    await file.parent.create(recursive: true);
     await file.writeAsString(jsonEncode(config.toJson()), flush: true);
   }
 

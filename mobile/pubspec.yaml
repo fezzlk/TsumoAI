@@ -42,6 +42,8 @@ dependencies:
   firebase_core: ^4.12.1
   firebase_auth: ^6.5.6
   google_sign_in: ^7.2.0
+  image_picker: ^1.2.3
+  web: ^1.1.1
 
 # 2.6.0 embeds an ad-hoc signed objective_c.framework that iOS devices and
 # App Store export reject. Remove this override after the upstream fix lands.

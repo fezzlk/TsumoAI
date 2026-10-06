@@ -1,9 +1,11 @@
 import 'dart:async';
-import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import '../widgets/photo_input.dart';
+import '../services/photo_import.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show compute, debugPrint;
+import 'package:flutter/foundation.dart' show compute, debugPrint, kIsWeb;
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
@@ -364,7 +366,7 @@ class _ScanScreenState extends State<ScanScreen> {
           isDealer: true,
         );
     _selectedWinnerIndex = widget.initialWinnerIndex;
-    _initCamera();
+    if (!kIsWeb) _initCamera();
     _classifierInitialization = _initClassifier();
   }
 
@@ -488,40 +490,20 @@ class _ScanScreenState extends State<ScanScreen> {
     try {
       final xFile = await _controller!.takePicture();
       trace.mark('pictureTaken');
-      final bytes = await File(xFile.path).readAsBytes();
+      final bytes = await xFile.readAsBytes();
       trace.mark('bytesRead');
       // The preview is a centered 16:9 frame. Persist exactly that frame so
       // detection, result display, box editing and training upload all share
       // the same image and coordinate system instead of reverting to the
       // camera plugin's full portrait JPEG after capture.
       final framed = await compute(prepareCapturedFrame, bytes);
+      if (!mounted) return;
       final framedBytes = framed.bytes;
       final decoded = framed.image;
       trace.mark('jpegDecoded');
       capturedOk = true;
 
-      setState(() {
-        final resumeWinConditions = _resumeWinConditionsAfterRetake;
-        _capturedBytes = framedBytes;
-        _capturedImage = decoded;
-        _phase = _ScanPhase.detecting;
-        _recognitionComplete = false;
-        if (!resumeWinConditions) {
-          _winConditionStep = _WinConditionStep.riichi;
-          _winConditionsComplete = false;
-          _doraSlotCount = math.max(1, _context.doraIndicators.length);
-        }
-        _resumeWinConditionsAfterRetake = false;
-        for (int i = 0; i < _maxPhysicalTiles; i++) {
-          _tiles[i] = null;
-          _predictedTiles[i] = null;
-          _candidates[i] = [];
-          _isClassifying[i] = false;
-          _croppedImages[i] = null;
-          _croppedImageThumbnails[i] = null;
-          _tileQuads[i] = null;
-        }
-      });
+      _acceptPhoto(framedBytes, decoded);
 
       // Always proceed straight to the results phase with whatever detection
       // found. Missing or extraneous boxes are recovered by changing the
@@ -548,6 +530,72 @@ class _ScanScreenState extends State<ScanScreen> {
       // the results phase (empty boxes) rather than getting stuck on the
       // spinner — the user can add all 14 boxes manually from there.
       if (capturedOk) await _classifyBoxesAndFinish(const []);
+    } finally {
+      if (mounted) setState(() => _isCapturing = false);
+    }
+  }
+
+  void _acceptPhoto(Uint8List framedBytes, img.Image decoded) {
+    setState(() {
+      final resumeWinConditions = _resumeWinConditionsAfterRetake;
+      _capturedBytes = framedBytes;
+      _capturedImage = decoded;
+      _phase = _ScanPhase.detecting;
+      _recognitionComplete = false;
+      if (!resumeWinConditions) {
+        _winConditionStep = _WinConditionStep.riichi;
+        _winConditionsComplete = false;
+        _doraSlotCount = math.max(1, _context.doraIndicators.length);
+      }
+      _resumeWinConditionsAfterRetake = false;
+      for (int i = 0; i < _maxPhysicalTiles; i++) {
+        _tiles[i] = null;
+        _predictedTiles[i] = null;
+        _candidates[i] = [];
+        _isClassifying[i] = false;
+        _croppedImages[i] = null;
+        _croppedImageThumbnails[i] = null;
+        _tileQuads[i] = null;
+      }
+    });
+  }
+
+  Future<void> _pickPhoto(ImageSource source) async {
+    if (_isCapturing) return;
+    setState(() => _isCapturing = true);
+    bool accepted = false;
+    try {
+      final photo = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 95,
+      );
+      if (photo == null || !mounted) return;
+      if (await photo.length() > 20 * 1024 * 1024) {
+        throw const FormatException('画像は20MB以下で選んでください');
+      }
+      final prepared = await compute(
+        prepareImportedPhoto,
+        await photo.readAsBytes(),
+      );
+      if (!mounted) return;
+      _acceptPhoto(prepared.bytes, prepared.image);
+      accepted = true;
+      final detected = await compute(segmentTilesWithHintsForExpectedCount, (
+        bytes: prepared.bytes,
+        expectedTileCount: _expectedTileCount,
+        allowExtendedAuto: _expectedTileCount == null,
+      ));
+      if (!mounted) return;
+      await _classifyBoxesAndFinish(
+        detected.boxes,
+        angleHints: detected.angleHints,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showError('画像読込エラー: $error');
+      if (accepted) await _classifyBoxesAndFinish(const []);
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
@@ -1770,7 +1818,11 @@ class _ScanScreenState extends State<ScanScreen> {
     final c = _context;
     void apply(ContextInput next) => setState(() => _updateContext(next));
     Widget chip(String label, bool selected, ContextInput Function() next) =>
-        ToggleChip(label: label, selected: selected, onTap: () => apply(next()));
+        ToggleChip(
+          label: label,
+          selected: selected,
+          onTap: () => apply(next()),
+        );
     return [
       chip(
         '立直',
@@ -2449,9 +2501,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 Row(
                   children: [
                     Icon(
-                      _recognitionComplete
-                          ? Icons.check_circle
-                          : Icons.circle,
+                      _recognitionComplete ? Icons.check_circle : Icons.circle,
                       size: _recognitionComplete ? 16 : 10,
                       color: _colors.detectionBox,
                     ),
@@ -2662,6 +2712,24 @@ class _ScanScreenState extends State<ScanScreen> {
   // ════════════════════════════════════════
 
   Widget _buildCameraPhase() {
+    if (kIsWeb) {
+      return SafeArea(
+        child: Column(
+          children: [
+            ScreenHeader(
+              title: _purpose.label,
+              subtitle: '手牌の写真から確認',
+              trailing: HeaderHomeButton(
+                onPressed: () => Navigator.maybePop(context),
+              ),
+            ),
+            Expanded(
+              child: PhotoInput(busy: _isCapturing, onPick: _pickPhoto),
+            ),
+          ],
+        ),
+      );
+    }
     if (_cameraInitError != null) return _buildCameraError();
     final ready = _controller != null && _controller!.value.isInitialized;
     return SafeArea(
@@ -3003,7 +3071,9 @@ class _ScanScreenState extends State<ScanScreen> {
     final detected = _tileQuads.where((quad) => quad != null).length;
     if (detected == 0) return true;
     final expected = _expectedTileCount;
-    if (expected != null ? detected != expected : detected < 13 || detected > 18) {
+    if (expected != null
+        ? detected != expected
+        : detected < 13 || detected > 18) {
       return true;
     }
     final classifying =
@@ -3028,9 +3098,8 @@ class _ScanScreenState extends State<ScanScreen> {
               Expanded(child: Text('認識結果を確認', style: _text.titleMedium)),
               TextButton.icon(
                 key: const ValueKey('recognition-details-toggle'),
-                onPressed: () => setState(
-                  () => _recognitionDetailsExpanded = !expanded,
-                ),
+                onPressed: () =>
+                    setState(() => _recognitionDetailsExpanded = !expanded),
                 iconAlignment: IconAlignment.end,
                 icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
                 label: const Text('写真・枚数'),

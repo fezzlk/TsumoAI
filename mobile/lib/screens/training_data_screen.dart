@@ -1,6 +1,8 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
+import '../widgets/photo_input.dart';
+import '../services/photo_import.dart';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
@@ -63,7 +65,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    _initCamera();
+    if (!kIsWeb) _initCamera();
   }
 
   Future<void> _initCamera() async {
@@ -125,7 +127,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
   Future<void> _capture() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
     final xFile = await _controller!.takePicture();
-    final bytes = await File(xFile.path).readAsBytes();
+    final bytes = await xFile.readAsBytes();
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return;
 
@@ -135,6 +137,43 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
       _phase = _TDPhase.align;
       _imageTransform = Matrix4.identity();
     });
+  }
+
+  bool _isImporting = false;
+  Future<void> _pickPhoto(ImageSource source) async {
+    if (_isImporting) return;
+    setState(() => _isImporting = true);
+    try {
+      final photo = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 95,
+      );
+      if (photo == null || !mounted) return;
+      if (await photo.length() > 20 * 1024 * 1024) {
+        throw const FormatException('画像は20MB以下で選んでください');
+      }
+      final prepared = await compute(
+        prepareImportedPhoto,
+        await photo.readAsBytes(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _capturedBytes = prepared.bytes;
+        _capturedImage = prepared.image;
+        _phase = _TDPhase.align;
+        _imageTransform = Matrix4.identity();
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('画像読込エラー: $error')));
+      }
+    } finally {
+      if (mounted) setState(() => _isImporting = false);
+    }
   }
 
   void _cropAndSelectLabel(
@@ -345,6 +384,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
   );
 
   Widget _buildCamera() {
+    if (kIsWeb) return PhotoInput(busy: _isImporting, onPick: _pickPhoto);
     final ready = _controller != null && _controller!.value.isInitialized;
     return Column(
       children: [
@@ -372,9 +412,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
                               color: _colors.cameraGuide,
                               width: 2,
                             ),
-                            borderRadius: BorderRadius.circular(
-                              AppRadius.card,
-                            ),
+                            borderRadius: BorderRadius.circular(AppRadius.card),
                           ),
                         ),
                       ),
@@ -567,7 +605,6 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
                 ),
               ),
             ),
-
           ],
         );
       },

@@ -77,6 +77,7 @@ from app.schemas import (
     TenpaiAnalysisResponse,
 )
 from app.validators import validate_score_request, validate_tile
+from app.web_app import mount_web_app
 
 try:  # pragma: no cover
     from pillow_heif import register_heif_opener
@@ -99,6 +100,7 @@ repo = InMemoryRepository(ttl_hours=settings.image_ttl_hours)
 recognition_jobs = RecognitionJobManager(repo=repo, model_name=settings.openai_model)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+mount_web_app(app, Path(__file__).resolve().parent.parent / "web")
 gcs_feedback_store = GCSFeedbackStore()
 history_store = HistoryStore()
 user_settings_store = UserSettingsStore()
@@ -169,6 +171,7 @@ a.card:hover{background:#1a3055}
 <h1>TsumoAI</h1>
 <p class="subtitle">麻雀点数計算 &amp; 牌認識</p>
 <div class="grid">
+  <a class="card" href="/app/"><div class="icon">📱</div><div class="card-body"><div class="name">TsumoAI アプリ</div><div class="desc">写真から認識・分析／ホーム画面に追加</div></div></a>
   <a class="card" href="/score-ui"><div class="icon">🀄</div><div class="card-body"><div class="name">点数計算UI</div><div class="desc">牌画像から点数を計算</div></div></a>
   <a class="card" href="/training-data"><div class="icon">📚</div><div class="card-body"><div class="name">学習データ一覧</div><div class="desc">牌分類モデルの学習データ管理</div></div></a>
   <a class="card" href="/score-dataset"><div class="icon">📊</div><div class="card-body"><div class="name">スコアデータセット</div><div class="desc">点数計算のデータセット管理</div></div></a>

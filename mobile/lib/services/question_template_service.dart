@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'local_document.dart';
 
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../config.dart';
 import '../models/question_template.dart';
@@ -24,9 +23,9 @@ class QuestionTemplateService {
 
   bool get lastLoadFailed => _lastLoadFailed;
 
-  Future<File> _file() async {
+  Future<LocalDocument> _file() async {
     final directory = await _directoryProvider();
-    return File('${directory.path}/$_fileName');
+    return LocalDocument('${directory.path}/$_fileName');
   }
 
   Future<List<QuestionTemplate>> _loadAll() async {
@@ -54,7 +53,6 @@ class QuestionTemplateService {
 
   Future<void> _writeAll(Iterable<QuestionTemplate> items) async {
     final file = await _file();
-    await file.parent.create(recursive: true);
     await file.writeAsString(
       jsonEncode(items.map((item) => item.toJson()).toList()),
       flush: true,
