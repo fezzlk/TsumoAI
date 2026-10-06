@@ -819,7 +819,7 @@ class _EndMatchDialog extends StatelessWidget {
                           children: [
                             stat('現在の局', roundLabel),
                             VerticalDivider(color: scheme.outline, width: 1),
-                            stat('計算済み', '$completedHands局'),
+                            stat('終了した局', '$completedHands局'),
                           ],
                         ),
                       ),
