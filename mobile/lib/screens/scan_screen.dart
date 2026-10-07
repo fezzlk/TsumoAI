@@ -40,6 +40,7 @@ import '../services/capture_framing.dart';
 import '../services/performance_trace.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
+import '../services/hand_error_messages.dart';
 import '../services/purpose_switch.dart';
 import '../widgets/purpose_switch_dialogs.dart';
 import '../theme/app_colors.dart';
@@ -995,6 +996,12 @@ class _ScanScreenState extends State<ScanScreen> {
     List<ConfirmedMeld> carriedMelds = const [],
     String? carriedWinningTileId,
   }) async {
+    final adjusted = await _matchTileCountToPurpose();
+    if (adjusted == null || !mounted) return;
+    if (adjusted.changed) {
+      carriedMelds = adjusted.melds;
+      carriedWinningTileId = adjusted.winningTileId;
+    }
     if (_interpretation == null) {
       await _runInterpretation(
         carriedMelds: carriedMelds,
@@ -1003,6 +1010,103 @@ class _ScanScreenState extends State<ScanScreen> {
       if (!mounted || _interpretation == null) return;
     }
     await _confirmAndAnalyze(showResultDialog: false);
+  }
+
+  /// Physical tiles the purpose works on: 13 (待ち確認・鳴き判断) or 14
+  /// (点数計算・何を切る), plus one for each declared 槓.
+  int get _requiredTileCount =>
+      _purpose.defaultTileCount +
+      _confirmedMelds.where((meld) => meld.observationIds.length == 4).length;
+
+  /// Before running, makes the identified tiles match [_requiredTileCount]:
+  /// one too many asks which tile to leave out and one too few asks for the
+  /// missing tile (the same dialogs as 「別の確認へ」); further off stops with
+  /// a message and opens the photo controls. Without this the server
+  /// refused e.g. 14 tiles for 鳴き判断 with an English error.
+  ///
+  /// Returns null to stop. `changed` is true when a tile was removed or
+  /// added; the interpretation is then reset and `melds` / `winningTileId`
+  /// must be carried into the rerun.
+  Future<({bool changed, List<ConfirmedMeld> melds, String? winningTileId})?>
+  _matchTileCountToPurpose() async {
+    final count = _identifiedIndices.length;
+    final required = _requiredTileCount;
+    final delta = count - required;
+    if (delta == 0) {
+      return (changed: false, melds: const <ConfirmedMeld>[], winningTileId: null);
+    }
+    if (delta.abs() > 1) {
+      setState(() => _recognitionDetailsExpanded = true);
+      _showError(
+        '牌が$count枚あります。${_purpose.label}は$required枚で行います。'
+        '想定枚数やトリミングで枚数を合わせてください。',
+      );
+      return null;
+    }
+    if (delta == 1) {
+      final candidates = _concealedIndices;
+      if (candidates.isEmpty) return null;
+      final removedIndex = await showTileRemovalDialog(
+        context,
+        target: _purpose,
+        candidates: [for (final index in candidates) (index, _tiles[index]!)],
+        highlightedIndex: slotForObservationId(_confirmedWinningTileId),
+      );
+      if (removedIndex == null || !mounted) return null;
+      final melds = shiftMeldsAfterRemoval(
+        List.of(_confirmedMelds),
+        removedIndex,
+      );
+      final winningTileId = shiftObservationIdAfterRemoval(
+        _confirmedWinningTileId,
+        removedIndex,
+      );
+      setState(() {
+        removeSlot<String?>(_tiles, removedIndex, null);
+        removeSlot<String?>(_predictedTiles, removedIndex, null);
+        removeSlot<List<TileCandidate>>(
+          _candidates,
+          removedIndex,
+          <TileCandidate>[],
+        );
+        removeSlot<bool>(_isClassifying, removedIndex, false);
+        removeSlot<img.Image?>(_croppedImages, removedIndex, null);
+        removeSlot<Uint8List?>(_croppedImageThumbnails, removedIndex, null);
+        removeSlot<TileQuad?>(_tileQuads, removedIndex, null);
+        _setDisplayedTileCount(_identifiedIndices.length);
+        _invalidateInterpretation();
+      });
+      return (
+        changed: true,
+        melds: melds,
+        winningTileId: _operation == HandOperation.score ? winningTileId : null,
+      );
+    }
+    if (_nextFreeSlot >= _maxPhysicalTiles) {
+      _showError('これ以上牌を追加できません');
+      return null;
+    }
+    final addedTile = await TileImagePicker.show(
+      context,
+      title: '${_purpose.label}は$required枚で行います。足りない牌を選択',
+    );
+    if (addedTile == null || !mounted) return null;
+    final melds = List.of(_confirmedMelds);
+    setState(() {
+      final index = _nextFreeSlot;
+      _tiles[index] = addedTile;
+      _candidates[index] = [TileCandidate(tile: addedTile, confidence: 1.0)];
+      _setDisplayedTileCount(index + 1);
+      _invalidateInterpretation();
+    });
+    return (
+      changed: true,
+      melds: melds,
+      // For score the added tile is the drawn one, i.e. the あがり牌.
+      winningTileId: _operation == HandOperation.score
+          ? _defaultWinningTileId
+          : null,
+    );
   }
 
   Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
@@ -1146,7 +1250,9 @@ class _ScanScreenState extends State<ScanScreen> {
       }
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        _showError('解析エラー: $error');
+        _showError(
+          error is HandRequestException ? error.message : '解析エラー: $error',
+        );
       }
     } finally {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
