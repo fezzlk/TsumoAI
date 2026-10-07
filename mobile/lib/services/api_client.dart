@@ -81,7 +81,7 @@ class ApiClient {
       if (e.response?.statusCode == 422) {
         final detail = _detailOf(e);
         if (detail == notWinningShapeDetail) return null;
-        throw HandRequestException(describeHandError(detail));
+        throw HandRequestException(describeHandError(detail), detail: detail);
       }
       rethrow;
     }
@@ -103,7 +103,8 @@ class ApiClient {
       return Map<String, dynamic>.from(response.data as Map);
     } on DioException catch (e) {
       if (e.response?.statusCode == 422) {
-        throw HandRequestException(describeHandError(_detailOf(e)));
+        final detail = _detailOf(e);
+        throw HandRequestException(describeHandError(detail), detail: detail);
       }
       rethrow;
     }

@@ -1,8 +1,14 @@
 /// A hand the server refused (HTTP 422), with a message for the user.
 class HandRequestException implements Exception {
-  const HandRequestException(this.message);
+  const HandRequestException(this.message, {this.detail});
 
   final String message;
+
+  /// The server's original message, for telling refusals apart.
+  final Object? detail;
+
+  /// The hand is a winning shape but has no 役 under these conditions.
+  bool get isNoYaku => detail == noYakuDetail;
 
   @override
   String toString() => message;
@@ -11,6 +17,9 @@ class HandRequestException implements Exception {
 /// The server's score message for a hand that simply isn't a winning shape;
 /// only this one means 「上がりの形になっていません」.
 const notWinningShapeDetail = 'Hand is not a valid winning shape';
+
+/// The server's score message for a winning shape without any 役.
+const noYakuDetail = 'No yaku: dora-only hands cannot win';
 
 const _tileNames = {
   'E': '東',

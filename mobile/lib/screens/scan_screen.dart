@@ -313,13 +313,24 @@ class _ScanScreenState extends State<ScanScreen> {
     if (selected != null && mounted) _setWinningTile(selected);
   }
 
+  /// Why ツモ / ロン has no score while the other side has one.
+  String? _tsumoNote;
+  String? _ronNote;
+
+  /// The last failure of 実行 (interpretation, analysis or score), shown on
+  /// screen until the next run or edit instead of a short-lived snack bar.
+  String? _runError;
+
   void _invalidateAnalysis() {
     _requestEpoch.invalidate();
     _analysisResult = null;
     _chatMessages = [];
     _tsumoScoreResult = null;
     _ronScoreResult = null;
+    _tsumoNote = null;
+    _ronNote = null;
     _isNotWinning = false;
+    _runError = null;
   }
 
   bool get _hasScoreCalculation =>
@@ -1110,7 +1121,10 @@ class _ScanScreenState extends State<ScanScreen> {
       });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        _showError('画像解釈エラー: $error');
+        setState(
+          () => _runError =
+              '画像の解釈に失敗しました。もう一度「実行」を押してください。（$error）',
+        );
       }
     } finally {
       if (mounted) setState(() => _isInterpreting = false);
@@ -1180,11 +1194,12 @@ class _ScanScreenState extends State<ScanScreen> {
       return (changed: false, melds: const <ConfirmedMeld>[], winningTileId: null);
     }
     if (delta.abs() > 1) {
-      setState(() => _recognitionDetailsExpanded = true);
-      _showError(
-        '牌が$count枚あります。${_purpose.label}は$required枚で行います。'
-        '槓子の数・枠の追加と削除・トリミングで枚数を合わせてください。',
-      );
+      setState(() {
+        _recognitionDetailsExpanded = true;
+        _runError =
+            '牌が$count枚あります。${_purpose.label}は$required枚で行います。'
+            '槓子の数・枠の追加と削除・トリミングで枚数を合わせてください。';
+      });
       return null;
     }
     if (delta == 1) {
@@ -1350,29 +1365,51 @@ class _ScanScreenState extends State<ScanScreen> {
             winTile: winTile,
           );
           final baseContext = _context.copyWith(akaDora: akaDoraCount);
-          final results = await Future.wait([
-            _api.calculateScore(
-              ScoreRequest(
-                hand: hand,
-                context: _contextForWinType(baseContext, 'tsumo'),
-                rules: rules,
-              ),
-            ),
-            _api.calculateScore(
-              ScoreRequest(
-                hand: hand,
-                context: _contextForWinType(baseContext, 'ron'),
-                rules: rules,
-              ),
-            ),
-          ]);
-          final tsumoResult = results[0];
-          final ronResult = results[1];
+          // ツモ and ロン are scored separately: one may be refused while the
+          // other wins (a 門前清自摸和-only hand, e.g. with a 暗槓, has no
+          // 役 for ロン), so one refusal must not hide the other result.
+          Future<(ScoreResponse?, HandRequestException?)> attempt(
+            String winType,
+          ) async {
+            try {
+              final response = await _api.calculateScore(
+                ScoreRequest(
+                  hand: hand,
+                  context: _contextForWinType(baseContext, winType),
+                  rules: rules,
+                ),
+              );
+              return (response, null);
+            } on HandRequestException catch (error) {
+              return (null, error);
+            }
+          }
+
+          final tsumoAttempt = attempt('tsumo');
+          final ronAttempt = attempt('ron');
+          final (tsumoResult, tsumoError) = await tsumoAttempt;
+          final (ronResult, ronError) = await ronAttempt;
           if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
+          String? note(HandRequestException? error) => error == null
+              ? null
+              : error.isNoYaku
+              ? '役なしのため和了できません'
+              : error.message;
           setState(() {
             _tsumoScoreResult = tsumoResult;
             _ronScoreResult = ronResult;
-            _isNotWinning = tsumoResult == null && ronResult == null;
+            _tsumoNote = note(tsumoError);
+            _ronNote = note(ronError);
+            if (tsumoResult == null && ronResult == null) {
+              final refused = tsumoError ?? ronError;
+              final shapeRefused =
+                  (tsumoError == null) || (ronError == null);
+              if (refused == null || shapeRefused) {
+                _isNotWinning = true;
+              } else {
+                _runError = refused.message;
+              }
+            }
           });
           if (tsumoResult != null || ronResult != null) {
             await _saveScoreHistory(
@@ -1425,8 +1462,10 @@ class _ScanScreenState extends State<ScanScreen> {
       }
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        _showError(
-          error is HandRequestException ? error.message : '解析エラー: $error',
+        setState(
+          () => _runError = error is HandRequestException
+              ? error.message
+              : '解析できませんでした。通信状態を確認して、もう一度「実行」を押してください。（$error）',
         );
       }
     } finally {
@@ -2369,6 +2408,8 @@ class _ScanScreenState extends State<ScanScreen> {
                       child: ScoreResultPanel(
                         tsumoResponse: _tsumoScoreResult,
                         ronResponse: _ronScoreResult,
+                        tsumoNote: _tsumoNote,
+                        ronNote: _ronNote,
                         ruleSettings: widget.ruleSettings,
                         isOpenHand: _confirmedMelds.any((meld) => meld.open),
                       ),
@@ -2462,6 +2503,8 @@ class _ScanScreenState extends State<ScanScreen> {
         ScoreResultPanel(
           tsumoResponse: _tsumoScoreResult,
           ronResponse: _ronScoreResult,
+          tsumoNote: _tsumoNote,
+          ronNote: _ronNote,
           ruleSettings: widget.ruleSettings,
           isOpenHand: _confirmedMelds.any((meld) => meld.open),
         ),
@@ -3567,6 +3610,10 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                   const SizedBox(height: AppSpacing.l),
 
+                  if (_runError case final message?) ...[
+                    StatusBanner(kind: StatusKind.error, message: message),
+                    const SizedBox(height: AppSpacing.m),
+                  ],
                   _buildInlineScoreResult(),
                   if (!isScore && _isScoring) _busyCard('結果を更新中...'),
                   if (!isScore && _analysisResult != null)

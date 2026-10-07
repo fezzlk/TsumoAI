@@ -13,12 +13,19 @@ class ScoreResultPanel extends StatelessWidget {
     super.key,
     required this.tsumoResponse,
     required this.ronResponse,
+    this.tsumoNote,
+    this.ronNote,
     this.ruleSettings = const MahjongRuleSettings(),
     this.isOpenHand = false,
   });
 
   final ScoreResponse? tsumoResponse;
   final ScoreResponse? ronResponse;
+
+  /// Why a side has no result (e.g. 役なし for ロン on a 門前清自摸和-only
+  /// hand); defaults to a generic note.
+  final String? tsumoNote;
+  final String? ronNote;
   final MahjongRuleSettings ruleSettings;
   final bool isOpenHand;
 
@@ -33,6 +40,7 @@ class ScoreResultPanel extends StatelessWidget {
             child: _ResultCard(
               label: 'ツモの場合',
               result: tsumoResponse?.result,
+              note: tsumoNote,
               isTsumo: true,
               tint: colors.tsumoCard,
               panel: this,
@@ -43,6 +51,7 @@ class ScoreResultPanel extends StatelessWidget {
             child: _ResultCard(
               label: 'ロンの場合',
               result: ronResponse?.result,
+              note: ronNote,
               isTsumo: false,
               tint: colors.ronCard,
               panel: this,
@@ -58,6 +67,7 @@ class _ResultCard extends StatelessWidget {
   const _ResultCard({
     required this.label,
     required this.result,
+    this.note,
     required this.isTsumo,
     required this.tint,
     required this.panel,
@@ -65,6 +75,7 @@ class _ResultCard extends StatelessWidget {
 
   final String label;
   final ScoreResult? result;
+  final String? note;
   final bool isTsumo;
   final TintColors tint;
   final ScoreResultPanel panel;
@@ -89,7 +100,7 @@ class _ResultCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.l),
           if (result == null)
             Text(
-              'この条件では和了として成立しません',
+              note ?? 'この条件では和了として成立しません',
               style: text.bodySmall?.copyWith(color: ink),
             )
           else ...[
