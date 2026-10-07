@@ -74,4 +74,24 @@ void main() {
 
     expect(shiftMeldsAfterRemoval([pon], 11), isEmpty);
   });
+
+  test('insertSlot shifts later slots right', () {
+    final slots = <String?>['a', 'b', 'c', null];
+    insertSlot<String?>(slots, 1, 'x');
+    expect(slots, ['a', 'x', 'b', 'c']);
+  });
+
+  test('ids and melds after an inserted slot move one to the right', () {
+    expect(shiftObservationIdAfterInsertion('tile-004', 2), 'tile-005');
+    expect(shiftObservationIdAfterInsertion('tile-001', 2), 'tile-001');
+    expect(shiftObservationIdAfterInsertion(null, 2), isNull);
+
+    const pon = ConfirmedMeld(
+      observationIds: ['tile-002', 'tile-003', 'tile-004'],
+      type: 'pon',
+      open: true,
+    );
+    final shifted = shiftMeldsAfterInsertion([pon], 3);
+    expect(shifted.single.observationIds, ['tile-002', 'tile-004', 'tile-005']);
+  });
 }

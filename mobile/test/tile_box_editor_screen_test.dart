@@ -19,7 +19,10 @@ const _initialQuad = TileQuad(
 
 /// Pumps a screen with a button that pushes [TileBoxEditorScreen], taps it,
 /// and returns a getter for whatever the route eventually pops.
-Future<TileBoxEditorResult? Function()> openEditor(WidgetTester tester) async {
+Future<TileBoxEditorResult? Function()> openEditor(
+  WidgetTester tester, {
+  bool canDelete = false,
+}) async {
   TileBoxEditorResult? result;
   await pumpAtDeviceLandscapeSize(
     tester,
@@ -35,6 +38,7 @@ Future<TileBoxEditorResult? Function()> openEditor(WidgetTester tester) async {
                     rawWidth: 400,
                     rawHeight: 300,
                     initialQuad: _initialQuad,
+                    canDelete: canDelete,
                   ),
                 ),
               );
@@ -51,14 +55,34 @@ Future<TileBoxEditorResult? Function()> openEditor(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets(
-    'TileBoxEditorScreen: correction does not expose box deletion',
-    (tester) async {
-      final result = await openEditor(tester);
+  testWidgets('TileBoxEditorScreen: no deletion at the minimum tile count', (
+    tester,
+  ) async {
+    final result = await openEditor(tester);
 
-      expect(find.byTooltip('この枠を削除'), findsNothing);
-      expect(find.text('確定'), findsOneWidget);
+    expect(find.text('この枠を削除'), findsNothing);
+    expect(find.text('確定'), findsOneWidget);
+    expect(result(), isNull);
+  });
+
+  testWidgets(
+    'TileBoxEditorScreen: delete asks first, then returns TileBoxEditorDeleted',
+    (tester) async {
+      final result = await openEditor(tester, canDelete: true);
+
+      await tester.tap(find.text('この枠を削除'));
+      await tester.pumpAndSettle();
+      expect(find.text('この枠を削除しますか？'), findsOneWidget);
+
+      await tester.tap(find.text('キャンセル').last);
+      await tester.pumpAndSettle();
       expect(result(), isNull);
+
+      await tester.tap(find.text('この枠を削除'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('削除'));
+      await tester.pumpAndSettle();
+      expect(result(), isA<TileBoxEditorDeleted>());
     },
   );
 

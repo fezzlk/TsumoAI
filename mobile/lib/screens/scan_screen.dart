@@ -96,6 +96,10 @@ enum _WinConditionStep { riichi, dora, uraDora, waiting }
 
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
+
+  /// Tile boxes can be added up to [_maxPhysicalTiles] and deleted down to
+  /// this many (13: the smallest hand any check works on).
+  static const int _minTileBoxes = 13;
   static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
   CameraController? _controller;
   String? _cameraInitError;
@@ -273,7 +277,7 @@ class _ScanScreenState extends State<ScanScreen> {
             spacing: 6,
             runSpacing: 6,
             children: [
-              for (final index in _identifiedIndices)
+              for (final index in _concealedIndices)
                 Semantics(
                   button: true,
                   selected: index == current,
@@ -830,6 +834,131 @@ class _ScanScreenState extends State<ScanScreen> {
   /// `_clearTileSlot`
   /// (see FEZ-193 — previously the only way to undo a wrongly-added box
   /// was to retake the whole photo).
+  /// Occupied tile slots (a box, or a tile added without one).
+  int get _slotCount => [
+    for (var index = 0; index < _maxPhysicalTiles; index++)
+      if (_tileQuads[index] != null || _tiles[index] != null) index,
+  ].length;
+
+  /// Resets the interpretation after the slots changed, keeping the user's
+  /// melds and あがり牌 (already renumbered by the caller), and keeps the
+  /// tile-count choice in step with the boxes. Must run inside `setState`.
+  void _afterSlotsChanged(List<ConfirmedMeld> melds, String? winningTileId) {
+    final manual = _winningTileManuallySet;
+    _invalidateInterpretation();
+    _confirmedMelds.addAll(melds);
+    if (winningTileId != null) {
+      _confirmedWinningTileId = winningTileId;
+      _winningTileManuallySet = manual;
+    }
+    _keepWinningTileOutsideMelds();
+    _setDisplayedTileCount(_slotCount);
+  }
+
+  /// 「この枠を削除」 from the box editor: drops the slot, closing the gap.
+  void _deleteTileBox(int index) {
+    if (_slotCount <= _minTileBoxes) return;
+    final melds = shiftMeldsAfterRemoval(List.of(_confirmedMelds), index);
+    final winningTileId = shiftObservationIdAfterRemoval(
+      _confirmedWinningTileId,
+      index,
+    );
+    setState(() {
+      removeSlot<String?>(_tiles, index, null);
+      removeSlot<String?>(_predictedTiles, index, null);
+      removeSlot<List<TileCandidate>>(_candidates, index, <TileCandidate>[]);
+      removeSlot<bool>(_isClassifying, index, false);
+      removeSlot<img.Image?>(_croppedImages, index, null);
+      removeSlot<Uint8List?>(_croppedImageThumbnails, index, null);
+      removeSlot<TileQuad?>(_tileQuads, index, null);
+      _afterSlotsChanged(melds, winningTileId);
+    });
+  }
+
+  /// 「枠を追加」: opens the box editor on a median-size box in the middle of
+  /// the photo; the confirmed box is inserted in left-to-right order and
+  /// identified like the others.
+  Future<void> _addTileBox() async {
+    final srcImage = _capturedImage;
+    final imageBytes = _capturedBytes;
+    if (srcImage == null || imageBytes == null) return;
+    if (_slotCount >= _maxPhysicalTiles) return;
+    final existing = _tileQuads
+        .whereType<TileQuad>()
+        .map((quad) => quad.boundingRect)
+        .toList();
+    double median(Iterable<double> values) {
+      final sorted = values.toList()..sort();
+      return sorted[sorted.length ~/ 2];
+    }
+
+    final placeholder = TileQuad.fromRect(
+      Rect.fromCenter(
+        center: Offset(srcImage.width / 2, srcImage.height / 2),
+        width: existing.isEmpty
+            ? srcImage.width / 16
+            : median(existing.map((rect) => rect.width)),
+        height: existing.isEmpty
+            ? srcImage.width / 12
+            : median(existing.map((rect) => rect.height)),
+      ),
+    );
+    final result = await Navigator.of(context).push<TileBoxEditorResult>(
+      MaterialPageRoute(
+        builder: (_) => TileBoxEditorScreen(
+          rawImageBytes: imageBytes,
+          rawWidth: srcImage.width,
+          rawHeight: srcImage.height,
+          initialQuad: placeholder,
+        ),
+      ),
+    );
+    if (result is! TileBoxEditorConfirmed || !mounted) return;
+
+    final quad = result.quad;
+    final centerX = quad.boundingRect.center.dx;
+    var insertAt = _slotCount;
+    for (var index = 0; index < _slotCount; index++) {
+      final other = _tileQuads[index];
+      if (other != null && other.boundingRect.center.dx > centerX) {
+        insertAt = index;
+        break;
+      }
+    }
+    final cropped = _cropQuad(srcImage, quad);
+    final melds = shiftMeldsAfterInsertion(List.of(_confirmedMelds), insertAt);
+    final winningTileId = shiftObservationIdAfterInsertion(
+      _confirmedWinningTileId,
+      insertAt,
+    );
+    setState(() {
+      insertSlot<TileQuad?>(_tileQuads, insertAt, quad);
+      insertSlot<img.Image?>(_croppedImages, insertAt, cropped);
+      insertSlot<Uint8List?>(
+        _croppedImageThumbnails,
+        insertAt,
+        Uint8List.fromList(img.encodeJpg(cropped)),
+      );
+      insertSlot<String?>(_tiles, insertAt, null);
+      insertSlot<String?>(_predictedTiles, insertAt, null);
+      insertSlot<List<TileCandidate>>(
+        _candidates,
+        insertAt,
+        <TileCandidate>[],
+      );
+      insertSlot<bool>(_isClassifying, insertAt, false);
+      _afterSlotsChanged(melds, winningTileId);
+    });
+    if (!widget.autoClassify) return;
+    await _classifierInitialization;
+    if (!mounted) return;
+    if (!_classifier.isReady) {
+      _showError('牌識別モデルが読み込まれていません');
+      return;
+    }
+    await _classifyTile(insertAt);
+  }
+
   Future<void> _openBoxEditor(int index) async {
     final srcImage = _capturedImage;
     final imageBytes = _capturedBytes;
@@ -847,10 +976,15 @@ class _ScanScreenState extends State<ScanScreen> {
           rawWidth: srcImage.width,
           rawHeight: srcImage.height,
           initialQuad: quad,
+          canDelete: _slotCount > _minTileBoxes,
         ),
       ),
     );
     if (result == null || !mounted) return;
+    if (result is TileBoxEditorDeleted) {
+      _deleteTileBox(index);
+      return;
+    }
 
     final newQuad = (result as TileBoxEditorConfirmed).quad;
     final cropped = _cropQuad(srcImage, newQuad);
@@ -971,6 +1105,7 @@ class _ScanScreenState extends State<ScanScreen> {
         // "suggested winning tile" text block that duplicated this same
         // information without driving the real control.
         _applySuggestedWinningTile(result);
+        _keepWinningTileOutsideMelds();
       });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
@@ -1044,6 +1179,36 @@ class _ScanScreenState extends State<ScanScreen> {
       return null;
     }
     if (delta == 1) {
+      // One extra tile is often an unregistered 槓子 rather than a stray.
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('牌が1枚多いです'),
+          content: Text(
+            '${_purpose.label}は$required枚（槓子1つにつき+1枚）で行います。'
+            '槓子がある場合は槓子として登録してください。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'remove'),
+              child: const Text('外す牌を選ぶ'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'kan'),
+              child: const Text('槓子を登録'),
+            ),
+          ],
+        ),
+      );
+      if (choice == null || !mounted) return null;
+      if (choice == 'kan') {
+        await _showMeldSelectionDialog();
+        if (!mounted) return null;
+        // Registered: the count now fits and the run goes on.
+        return _identifiedIndices.length == _requiredTileCount
+            ? (changed: false, melds: const <ConfirmedMeld>[], winningTileId: null)
+            : null;
+      }
       final candidates = _concealedIndices;
       if (candidates.isEmpty) return null;
       final removedIndex = await showTileRemovalDialog(
@@ -1111,6 +1276,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
     if (_interpretation == null) return;
+    setState(_keepWinningTileOutsideMelds);
     if (_operation == HandOperation.score && _confirmedWinningTileId == null) {
       _showError('あがり牌を選択してください');
       return;
@@ -1783,6 +1949,17 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
+  /// The あがり牌 is a concealed tile: when it becomes part of a meld, move
+  /// it to the rightmost tile left outside the melds. Call inside setState.
+  void _keepWinningTileOutsideMelds() {
+    final current = slotForObservationId(_confirmedWinningTileId);
+    if (current == null || !_isConfirmedMeldMember(current)) return;
+    final concealed = _concealedIndices;
+    _confirmedWinningTileId = concealed.isEmpty
+        ? null
+        : observationIdForSlot(concealed.last);
+  }
+
   void _addConfirmedMeld(
     Set<int> selection, {
     required String type,
@@ -1795,6 +1972,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _confirmedMelds.add(
         ConfirmedMeld(observationIds: observationIds, type: type, open: open),
       );
+      _keepWinningTileOutsideMelds();
       _invalidateAnalysisAndMaybeRecalculate();
     });
   }
@@ -3253,6 +3431,21 @@ class _ScanScreenState extends State<ScanScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                OutlinedButton.icon(
+                  key: const ValueKey('add-tile-box'),
+                  onPressed: _slotCount < _maxPhysicalTiles
+                      ? _addTileBox
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, AppSizes.tapTarget),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.m,
+                    ),
+                  ),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('枠を追加'),
+                ),
+                const SizedBox(width: AppSpacing.s),
                 if (_cropRegion != null)
                   IconButton(
                     onPressed: () => _redetectInRegion(null),
