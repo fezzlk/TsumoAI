@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Reproducible browser inference runtime (npm ci --prefix tool/web_runtime).
+/tool/web_runtime/node_modules/
+/web/vendor/

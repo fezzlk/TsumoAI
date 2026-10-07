@@ -1,4 +1,21 @@
 services:
+  web:
+    build:
+      context: ./mobile
+      dockerfile: Dockerfile.web
+    ports:
+      - "8088:8088"
+    environment:
+      - WEB_API_URL=http://api:8000
+    volumes:
+      - ./mobile:/workspace
+      - flutter-web-cache:/root/.pub-cache
+      - flutter-web-tool:/workspace/.dart_tool
+      - flutter-web-build:/workspace/build
+      - flutter-web-node:/workspace/tool/web_runtime/node_modules
+    depends_on:
+      - api
+
   ml-train:
     build: ./ml
     container_name: mahjong-ml-train
@@ -25,3 +42,9 @@ services:
     volumes:
       - ./app:/app/app
       - ~/.config/gcloud:/tmp/gcloud:ro
+
+volumes:
+  flutter-web-cache:
+  flutter-web-tool:
+  flutter-web-build:
+  flutter-web-node:

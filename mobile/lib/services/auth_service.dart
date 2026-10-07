@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -22,8 +22,14 @@ class AuthService {
 
   static Future<void> initialize() async {
     if (_initialized) return;
+    if (kIsWeb) {
+      _initialized = true;
+      return;
+    }
     await GoogleSignIn.instance.initialize(
-      clientId: Platform.isIOS ? _iosClientId : null,
+      clientId: defaultTargetPlatform == TargetPlatform.iOS
+          ? _iosClientId
+          : null,
       serverClientId: _webClientId,
     );
     _initialized = true;
@@ -34,6 +40,14 @@ class AuthService {
     if (existing != null) return existing;
 
     await initialize();
+    if (kIsWeb) {
+      final result = await FirebaseAuth.instance.signInWithPopup(
+        GoogleAuthProvider(),
+      );
+      final user = result.user;
+      if (user == null) throw StateError('Googleログインに失敗しました');
+      return user;
+    }
     final account = await GoogleSignIn.instance.authenticate();
     final googleAuth = account.authentication;
     final idToken = googleAuth.idToken;
@@ -70,6 +84,6 @@ class AuthService {
   static Future<void> signOut() async {
     if (Firebase.apps.isEmpty) return;
     await FirebaseAuth.instance.signOut();
-    await GoogleSignIn.instance.signOut();
+    if (!kIsWeb) await GoogleSignIn.instance.signOut();
   }
 }

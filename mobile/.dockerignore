@@ -1,0 +1,5 @@
+build
+.dart_tool
+tool/web_runtime/node_modules
+web/vendor
+.git

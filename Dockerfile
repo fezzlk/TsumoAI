@@ -1,3 +1,17 @@
+FROM node:22-bookworm-slim AS web-build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git unzip xz-utils libglu1-mesa \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch 3.41.4 https://github.com/flutter/flutter.git /opt/flutter
+ENV PATH="/opt/flutter/bin:${PATH}"
+RUN flutter config --no-analytics --enable-web && flutter precache --web
+WORKDIR /src/mobile
+COPY mobile/ ./
+RUN npm ci --omit=dev --prefix tool/web_runtime \
+    && flutter pub get \
+    && flutter build web --release --pwa-strategy=none --base-href=/app/
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -10,6 +24,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY --from=web-build /src/mobile/build/web ./web
 COPY ml/output/tile_classifier.tflite ml/output/labels.txt ./ml/output/
 
 # Fail the build if the shipped Linux runtime cannot load and invoke the model.

@@ -1,102 +1,24 @@
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
-import 'model_updater.dart';
+import 'classifier_runtime.dart';
 import 'red_five_detector.dart';
 
-/// On-device mahjong tile classifier using TFLite (MobileNetV2).
-///
-/// Includes preprocessing to handle real-world camera crops:
-/// 1. Replace green mat background with white
-/// 2. Detect and crop to tile face region
-/// 3. Apply contrast normalization
+/// Shared preprocessing/ranking, with native and browser TFLite runtimes.
 class TileClassifier {
-  static const String _bundledModelPath = 'assets/ml/tile_classifier.tflite';
-  static const String _bundledLabelsPath = 'assets/ml/labels.txt';
-  static const String _bundledModelVersion = 'bundled-ed2678e9c4f0';
   static const String _preprocessingVersion = 'mobile-tile-preprocess-v1';
   static const int _inputSize = 224;
-
-  Interpreter? _interpreter;
-  List<String> _labels = [];
+  final ClassifierRuntime _runtime = ClassifierRuntime();
   bool _isReady = false;
-  String _modelSource = 'bundled';
-  String _modelVersion = _bundledModelVersion;
-
-  bool get isReady => _isReady;
+  List<String> get _labels => _runtime.labels;
   List<String> get labels => _labels;
-  String get modelSource => _modelSource;
-  String get modelVersion => _modelVersion;
+  bool get isReady => _isReady;
+  String get modelSource => _runtime.modelSource;
+  String get modelVersion => _runtime.modelVersion;
   String get preprocessingVersion => _preprocessingVersion;
-
   Future<void> init() async {
-    // Try to use a downloaded (newer) model first
-    final updatedDir = await ModelUpdater.checkAndUpdate();
-
-    if (updatedDir != null) {
-      final modelFile = File('$updatedDir/tile_classifier.tflite');
-      final labelsFile = File('$updatedDir/labels.txt');
-      if (modelFile.existsSync() && labelsFile.existsSync()) {
-        try {
-          _interpreter = Interpreter.fromFile(modelFile);
-          _labels = labelsFile.readAsStringSync()
-              .split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-          _isReady = true;
-          _modelSource = 'downloaded';
-          _modelVersion = _readDownloadedModelVersion(updatedDir);
-          debugPrint('TileClassifier: using downloaded model from $updatedDir');
-          return;
-        } catch (e) {
-          debugPrint('TileClassifier: downloaded model failed, falling back to bundled: $e');
-        }
-      }
-    }
-
-    // Fallback: bundled model
-    try {
-      final modelBytes = await rootBundle.load(_bundledModelPath);
-      final tempDir = await getTemporaryDirectory();
-      final modelFile = File('${tempDir.path}/tile_classifier.tflite');
-      await modelFile.writeAsBytes(modelBytes.buffer.asUint8List());
-      _interpreter = Interpreter.fromFile(modelFile);
-    } catch (e) {
-      _isReady = false;
-      throw Exception('TFLiteモデル読込失敗 ($_bundledModelPath): $e');
-    }
-
-    try {
-      final labelsData = await rootBundle.loadString(_bundledLabelsPath);
-      _labels = labelsData.split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-    } catch (e) {
-      _isReady = false;
-      throw Exception('ラベル読込失敗 ($_bundledLabelsPath): $e');
-    }
-
+    await _runtime.init();
     _isReady = true;
-    _modelSource = 'bundled';
-    _modelVersion = _bundledModelVersion;
-  }
-
-  static String _readDownloadedModelVersion(String modelDir) {
-    try {
-      final decoded = jsonDecode(
-        File('$modelDir/model_meta.json').readAsStringSync(),
-      );
-      if (decoded is Map<String, dynamic>) {
-        final version = decoded['version'];
-        if (version is String && version.trim().isNotEmpty) {
-          return version.trim();
-        }
-      }
-    } catch (e) {
-      debugPrint('TileClassifier: model version metadata unavailable: $e');
-    }
-    return 'downloaded-unknown';
   }
 
   /// Classify a cropped tile image with preprocessing pipeline.
@@ -112,13 +34,17 @@ class TileClassifier {
     img.Image tileImage, {
     int topK = 3,
   }) async {
-    if (!_isReady || _interpreter == null) return [];
+    if (!_isReady) return [];
 
     // Preprocessing pipeline
     var processed = await compute(_preprocessTileForClassification, tileImage);
 
     // Resize to model input
-    final resized = img.copyResize(processed, width: _inputSize, height: _inputSize);
+    final resized = img.copyResize(
+      processed,
+      width: _inputSize,
+      height: _inputSize,
+    );
 
     // Convert to float32 tensor [-1, 1]
     final input = Float32List(_inputSize * _inputSize * 3);
@@ -132,12 +58,7 @@ class TileClassifier {
       }
     }
 
-    final inputTensor = input.reshape([1, _inputSize, _inputSize, 3]);
-    final outputTensor = List.filled(_labels.length, 0.0).reshape([1, _labels.length]);
-
-    _interpreter!.run(inputTensor, outputTensor);
-
-    final scores = (outputTensor[0] as List<double>);
+    final scores = await _runtime.run(input, _labels.length);
     final results = <TileClassification>[];
     for (int i = 0; i < scores.length; i++) {
       // The model's label space (`assets/ml/labels.txt`) includes 8 "bonus"
@@ -151,11 +72,13 @@ class TileClassifier {
       // would reject outright with a 422 (invalid tile code), a confusing
       // dead end for the user.
       if (_labels[i].startsWith('bonus-')) continue;
-      results.add(TileClassification(
-        label: _labels[i],
-        tileCode: _labelToTileCode(_labels[i]),
-        confidence: scores[i],
-      ));
+      results.add(
+        TileClassification(
+          label: _labels[i],
+          tileCode: _labelToTileCode(_labels[i]),
+          confidence: scores[i],
+        ),
+      );
     }
     results.sort((a, b) => b.confidence.compareTo(a.confidence));
     final top = results.take(topK).toList();
@@ -178,18 +101,26 @@ class TileClassifier {
     if (label.startsWith('bamboo-')) return '${label.substring(7)}s';
     if (label.startsWith('characters-')) return '${label.substring(11)}m';
     const map = {
-      'honors-east': 'E', 'honors-south': 'S', 'honors-west': 'W', 'honors-north': 'N',
+      'honors-east': 'E',
+      'honors-south': 'S',
+      'honors-west': 'W',
+      'honors-north': 'N',
       'honors-red': 'C', 'honors-green': 'F', 'honors-white': 'P',
       // Bonus tiles → not used in Japanese mahjong, map to short codes
-      'bonus-spring': '春', 'bonus-summer': '夏', 'bonus-autumn': '秋', 'bonus-winter': '冬',
-      'bonus-plum': '梅', 'bonus-orchid': '蘭', 'bonus-chrysanthemum': '菊', 'bonus-bamboo': '竹',
+      'bonus-spring': '春',
+      'bonus-summer': '夏',
+      'bonus-autumn': '秋',
+      'bonus-winter': '冬',
+      'bonus-plum': '梅',
+      'bonus-orchid': '蘭',
+      'bonus-chrysanthemum': '菊',
+      'bonus-bamboo': '竹',
     };
     return map[label] ?? label;
   }
 
   void dispose() {
-    _interpreter?.close();
-    _interpreter = null;
+    _runtime.dispose();
     _isReady = false;
   }
 }
@@ -199,7 +130,11 @@ class TileClassification {
   final String tileCode;
   final double confidence;
 
-  const TileClassification({required this.label, required this.tileCode, required this.confidence});
+  const TileClassification({
+    required this.label,
+    required this.tileCode,
+    required this.confidence,
+  });
 
   @override
   String toString() => '$tileCode (${(confidence * 100).toStringAsFixed(1)}%)';
@@ -253,8 +188,12 @@ img.Image _preprocessTileForClassification(img.Image src) {
 
   // Find bounds using edge concentration
   int hPeak = 0, vPeak = 0;
-  for (final v in hProj) { if (v > hPeak) hPeak = v; }
-  for (final v in vProj) { if (v > vPeak) vPeak = v; }
+  for (final v in hProj) {
+    if (v > hPeak) hPeak = v;
+  }
+  for (final v in vProj) {
+    if (v > vPeak) vPeak = v;
+  }
 
   final hThreshold = hPeak * 0.25;
   final vThreshold = vPeak * 0.25;
@@ -263,19 +202,31 @@ img.Image _preprocessTileForClassification(img.Image src) {
 
   // Find top edge (first row with significant edges)
   for (int y = 0; y < h; y++) {
-    if (hProj[y] > hThreshold) { top = y; break; }
+    if (hProj[y] > hThreshold) {
+      top = y;
+      break;
+    }
   }
   // Find bottom edge (last row with significant edges)
   for (int y = h - 1; y >= 0; y--) {
-    if (hProj[y] > hThreshold) { bottom = y; break; }
+    if (hProj[y] > hThreshold) {
+      bottom = y;
+      break;
+    }
   }
   // Find left edge
   for (int x = 0; x < w; x++) {
-    if (vProj[x] > vThreshold) { left = x; break; }
+    if (vProj[x] > vThreshold) {
+      left = x;
+      break;
+    }
   }
   // Find right edge
   for (int x = w - 1; x >= 0; x--) {
-    if (vProj[x] > vThreshold) { right = x; break; }
+    if (vProj[x] > vThreshold) {
+      right = x;
+      break;
+    }
   }
 
   // Validate bounds

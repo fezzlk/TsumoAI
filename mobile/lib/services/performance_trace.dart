@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'trace_output.dart';
 
 import 'package:flutter/foundation.dart';
 
@@ -63,7 +63,7 @@ class PerformanceTrace {
     // forward Dart's debug-print stream. stderr is captured by both paths,
     // which keeps real-device profiling usable without affecting release
     // builds (guarded above).
-    stderr.writeln(message);
+    writeTrace(message);
     if (kDebugMode) debugPrint(message);
   }
 }

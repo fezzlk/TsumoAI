@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
@@ -52,7 +53,7 @@ Future<void> main() async {
   }
 
   try {
-    cameras = await availableCameras();
+    if (!kIsWeb) cameras = await availableCameras();
   } catch (_) {
     cameras = [];
   }
