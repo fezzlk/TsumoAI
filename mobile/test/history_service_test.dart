@@ -17,6 +17,24 @@ HistoryEntry entry(String id, {String? accountUid}) => HistoryEntry(
 );
 
 void main() {
+  test('unavailable storage reports an unsaved result and can recover', () async {
+    final directory = await Directory.systemTemp.createTemp('history-recovery-');
+    addTearDown(() => directory.delete(recursive: true));
+    var storageAvailable = false;
+    final service = HistoryService(
+      directoryProvider: () async {
+        if (!storageAvailable) throw StateError('Storage is blocked or full');
+        return directory;
+      },
+      currentUidProvider: () => null,
+    );
+    expect(await service.trySave(entry('analysis')), isFalse);
+    expect(await service.loadLocal(), isEmpty);
+    storageAvailable = true;
+    expect(await service.trySave(entry('analysis')), isTrue);
+    expect((await service.loadLocal()).single.id, 'analysis');
+  });
+
   test(
     'local history only exposes the signed-in account and unowned items',
     () async {

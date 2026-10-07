@@ -1190,7 +1190,7 @@ class _ScanScreenState extends State<ScanScreen> {
       };
     }
 
-    await _historyService.save(
+    await _saveHistoryWithoutBlockingResult(
       HistoryEntry(
         id: _historyEntryId,
         createdAt: _historyCreatedAt,
@@ -1221,7 +1221,7 @@ class _ScanScreenState extends State<ScanScreen> {
       ScanPurpose.callAdvice => 'call_advice',
       _ => 'discard',
     };
-    await _historyService.save(
+    await _saveHistoryWithoutBlockingResult(
       HistoryEntry(
         id: _historyEntryId,
         createdAt: _historyCreatedAt,
@@ -1244,6 +1244,13 @@ class _ScanScreenState extends State<ScanScreen> {
         accountUid: AuthService.currentUser?.uid,
       ),
     );
+  }
+
+  Future<void> _saveHistoryWithoutBlockingResult(HistoryEntry entry) async {
+    final saved = await _historyService.trySave(entry);
+    if (!saved && mounted) {
+      _showError('結果は確認できますが、履歴を保存できませんでした。端末の空き容量や保存設定を確認してください。');
+    }
   }
 
   Map<String, String> get _recognitionModelMetadata => {

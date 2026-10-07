@@ -98,6 +98,17 @@ class HistoryService {
     unawaited(_uploadIfSignedIn(storedEntry));
   }
 
+  /// Analysis is still usable when local storage is blocked or full.
+  /// Callers must tell the user when the result was not saved.
+  Future<bool> trySave(HistoryEntry entry) async {
+    try {
+      await save(entry);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<HistoryEntry?> updateDetails(
     String id,
     Map<String, dynamic> updates,
