@@ -121,6 +121,45 @@ void main() {
     expectNoOverflow(tester);
   });
 
+  testWidgets('槓子 count choice: 0-2 visible, 3-4 by scroll', (tester) async {
+    int? selected = 14;
+    await pumpAtDeviceSize(
+      tester,
+      StatefulBuilder(
+        builder: (context, setState) => Scaffold(
+          body: TileCountSelector(
+            selectedCount: selected,
+            counts: const [14, 15, 16, 17, 18],
+            includeAuto: false,
+            labelOf: (count) => '${count - 14}',
+            onChanged: (value) => setState(() => selected = value),
+          ),
+        ),
+      ),
+      size: _narrowPortrait,
+      padding: _narrowPadding,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('自動'), findsNothing);
+    for (final label in ['0', '1', '2']) {
+      expect(
+        tester.getRect(find.text(label)).right,
+        lessThanOrEqualTo(_narrowPortrait.width),
+      );
+    }
+    await tester.tap(find.text('1'));
+    await tester.pump();
+    expect(selected, 15);
+
+    await tester.ensureVisible(find.text('4'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('4'));
+    await tester.pump();
+    expect(selected, 18);
+    expectNoOverflow(tester);
+  });
+
   testWidgets('tile count choices: frequent ones visible, 17/18 by scroll', (
     tester,
   ) async {

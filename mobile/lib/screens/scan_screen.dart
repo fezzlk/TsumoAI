@@ -100,7 +100,8 @@ class _ScanScreenState extends State<ScanScreen> {
   /// Tile boxes can be added up to [_maxPhysicalTiles] and deleted down to
   /// this many (13: the smallest hand any check works on).
   static const int _minTileBoxes = 13;
-  static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
+  /// Up to four 槓子; each adds one physical tile to the purpose's base.
+  static const int _maxKans = 4;
   CameraController? _controller;
   String? _cameraInitError;
   final TileClassifier _classifier = TileClassifier();
@@ -1136,6 +1137,14 @@ class _ScanScreenState extends State<ScanScreen> {
     if (adjusted.changed) {
       carriedMelds = adjusted.melds;
       carriedWinningTileId = adjusted.winningTileId;
+    } else if (_interpretation == null && carriedMelds.isEmpty) {
+      // The interpretation run resets melds; keep the ones the user already
+      // registered (a 槓子 registered before 実行 used to be dropped, so a
+      // 15-tile hand reached the server as 15 loose tiles).
+      carriedMelds = List.of(_confirmedMelds);
+      if (_winningTileManuallySet) {
+        carriedWinningTileId ??= _confirmedWinningTileId;
+      }
     }
     if (_interpretation == null) {
       await _runInterpretation(
@@ -1174,7 +1183,7 @@ class _ScanScreenState extends State<ScanScreen> {
       setState(() => _recognitionDetailsExpanded = true);
       _showError(
         '牌が$count枚あります。${_purpose.label}は$required枚で行います。'
-        '想定枚数やトリミングで枚数を合わせてください。',
+        '槓子の数・枠の追加と削除・トリミングで枚数を合わせてください。',
       );
       return null;
     }
@@ -3067,15 +3076,15 @@ class _ScanScreenState extends State<ScanScreen> {
                 const SizedBox(height: AppSpacing.l),
                 Row(
                   children: [
-                    Expanded(child: Text('想定枚数', style: _text.titleSmall)),
-                    Text('違う場合だけ変更', style: _text.bodySmall),
+                    Expanded(child: Text('槓子の数', style: _text.titleSmall)),
+                    Text('槓子があるときだけ選択', style: _text.bodySmall),
                   ],
                 ),
                 const SizedBox(height: AppSpacing.s),
                 _buildExpectedTileCountSelector(),
                 const SizedBox(height: AppSpacing.s),
                 Text(
-                  '${_purpose.label}では${_purpose.defaultTileCount}枚を初期選択しています',
+                  '${_purpose.label}は手牌${_purpose.defaultTileCount}枚＋槓子1つにつき1枚で読み取ります',
                   style: _text.bodySmall,
                 ),
                 const SizedBox(height: AppSpacing.l),
@@ -3210,10 +3219,17 @@ class _ScanScreenState extends State<ScanScreen> {
     },
   );
 
+  /// The tile-count choice, asked as the number of 槓子 (0-4, default 0):
+  /// the expected tiles are the purpose's 13 or 14 plus one per 槓子. 3 and 4
+  /// are rare, so they may sit past the edge (decided 2026-10-08).
   Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
+    final base = _purpose.defaultTileCount;
     return TileCountSelector(
       selectedCount: _expectedTileCount,
-      counts: _selectableTileCounts,
+      counts: [for (var kans = 0; kans <= _maxKans; kans++) base + kans],
+      includeAuto: false,
+      labelOf: (count) => '${count - base}',
+      semanticsOf: (count) => '槓子${count - base}つ（$count枚）',
       onChanged: (selected) async {
         setState(() => _expectedTileCount = selected);
         if (redetectOnChange && _capturedImage != null) {
