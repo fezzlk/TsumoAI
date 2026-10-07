@@ -236,6 +236,7 @@ def analyze_discard_options(request: DiscardAnalysisRequest) -> DiscardAnalysisR
         )
     return DiscardAnalysisResponse(
         shanten=min(result.shanten for result in discard_results),
+        hand_shanten=calculate_shanten(closed_counts, completed_melds),
         discards=discard_results,
     )
 

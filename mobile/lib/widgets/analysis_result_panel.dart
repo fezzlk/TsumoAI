@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/tile_assets.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import 'status_banner.dart';
 import 'tile_glyph.dart';
 import 'wait_score_details.dart';
 
@@ -46,8 +47,12 @@ class AnalysisResultPanel extends StatelessWidget {
             _FocusChips(onAsk: onAskAiWithDiscardFocus!),
             const SizedBox(height: AppSpacing.l),
           ],
+          if (_tenpaiNotice(result) case final notice?) ...[
+            StatusBanner(kind: StatusKind.success, message: notice),
+            const SizedBox(height: AppSpacing.m),
+          ],
           _SectionTitle(
-            eyebrow: '$shantenシャンテン',
+            eyebrow: shanten == 0 ? 'テンパイ' : '$shantenシャンテン',
             title: '打牌候補 ベスト3',
             trailing: '牌効率を優先した結果',
           ),
@@ -77,6 +82,22 @@ class AnalysisResultPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 何を切る: says when the 14-tile hand is already complete or tenpai. The
+/// candidates stay listed below, since a tenpai hand may still swap tiles
+/// for a better hand or more points.
+String? _tenpaiNotice(Map<String, dynamic> result) {
+  if (_asInt(result['shanten']) != 0) return null;
+  if (result['hand_shanten'] == -1) {
+    return '和了形です（このままツモ和了できます）。打点を上げる打牌も候補に出しています。';
+  }
+  final keeping = <String>[
+    for (final item in _maps(result['discards']))
+      if (_asInt(item['shanten']) == 0) tileDisplayName(item['discard'].toString()),
+  ];
+  final unique = keeping.toSet().join('・');
+  return 'すでに聴牌しています（$uniqueを切ると聴牌）。手役や打点を上げる打牌も候補に出しています。';
 }
 
 class _SectionTitle extends StatelessWidget {
