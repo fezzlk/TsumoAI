@@ -76,3 +76,38 @@ List<ConfirmedMeld> shiftMeldsAfterRemoval(
         ),
   ];
 }
+
+/// Inserts [value] at [index] of a fixed-length slot list, shifting later
+/// slots one position right (the last slot falls off; callers keep at least
+/// one slot free). The counterpart of [removeSlot] for 「枠を追加」.
+void insertSlot<T>(List<T> slots, int index, T value) {
+  for (var i = slots.length - 1; i > index; i--) {
+    slots[i] = slots[i - 1];
+  }
+  slots[index] = value;
+}
+
+/// [id] renumbered after a slot was inserted at [insertedIndex].
+String? shiftObservationIdAfterInsertion(String? id, int insertedIndex) {
+  final index = slotForObservationId(id);
+  if (index == null || index < insertedIndex) return id;
+  return observationIdForSlot(index + 1);
+}
+
+/// Confirmed melds renumbered after a slot was inserted at [insertedIndex].
+List<ConfirmedMeld> shiftMeldsAfterInsertion(
+  List<ConfirmedMeld> melds,
+  int insertedIndex,
+) {
+  return [
+    for (final meld in melds)
+      ConfirmedMeld(
+        observationIds: [
+          for (final id in meld.observationIds)
+            shiftObservationIdAfterInsertion(id, insertedIndex)!,
+        ],
+        type: meld.type,
+        open: meld.open,
+      ),
+  ];
+}

@@ -11,15 +11,27 @@ class TileCountSelector extends StatelessWidget {
     required this.selectedCount,
     required this.counts,
     required this.onChanged,
+    this.includeAuto = true,
+    this.labelOf,
+    this.semanticsOf,
   });
 
   final int? selectedCount;
   final List<int> counts;
   final ValueChanged<int?> onChanged;
 
+  /// Whether the leading 自動 chip is offered.
+  final bool includeAuto;
+
+  /// Chip text for a count (defaults to the count itself).
+  final String Function(int count)? labelOf;
+
+  /// Spoken label for a count (defaults to 想定牌数N枚).
+  final String Function(int count)? semanticsOf;
+
   @override
   Widget build(BuildContext context) {
-    final options = <int?>[null, ...counts];
+    final options = <int?>[if (includeAuto) null, ...counts];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       // Clipped to the card's inner edge; the vertical padding keeps the
@@ -31,6 +43,13 @@ class TileCountSelector extends StatelessWidget {
             if (index > 0) const SizedBox(width: AppSpacing.s),
             _CountButton(
               count: options[index],
+              label: options[index] == null
+                  ? '自動'
+                  : labelOf?.call(options[index]!) ?? '${options[index]}',
+              semantics: options[index] == null
+                  ? '牌数を自動推定'
+                  : semanticsOf?.call(options[index]!) ??
+                        '想定牌数${options[index]}枚',
               selected: options[index] == selectedCount,
               onPressed: () => onChanged(options[index]),
             ),
@@ -44,22 +63,25 @@ class TileCountSelector extends StatelessWidget {
 class _CountButton extends StatelessWidget {
   const _CountButton({
     required this.count,
+    required this.label,
+    required this.semantics,
     required this.selected,
     required this.onPressed,
   });
 
   final int? count;
+  final String label;
+  final String semantics;
   final bool selected;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final label = count?.toString() ?? '自動';
     final scheme = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
       selected: selected,
-      label: count == null ? '牌数を自動推定' : '想定牌数$count枚',
+      label: semantics,
       child: SizedBox(
         width: count == null ? 88 : 60,
         height: AppSizes.primaryButton,

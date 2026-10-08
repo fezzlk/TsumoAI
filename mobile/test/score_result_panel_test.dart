@@ -43,6 +43,7 @@ ScoreResponse response({
 Widget subject({
   ScoreResponse? tsumo,
   ScoreResponse? ron,
+  String? ronNote,
   MahjongRuleSettings settings = const MahjongRuleSettings(),
   bool isOpenHand = false,
 }) => MaterialApp(
@@ -51,6 +52,7 @@ Widget subject({
     body: ScoreResultPanel(
       tsumoResponse: tsumo,
       ronResponse: ron,
+      ronNote: ronNote,
       ruleSettings: settings,
       isOpenHand: isOpenHand,
     ),
@@ -81,6 +83,16 @@ void main() {
 
     expect(find.text('満貫'), findsOneWidget);
     expect(find.text('この条件では和了として成立しません'), findsOneWidget);
+  });
+
+  testWidgets('a refused side says why (ロン with no 役)', (tester) async {
+    await tester.pumpWidget(
+      subject(tsumo: response(winType: 'tsumo'), ronNote: '役なしのため和了できません'),
+    );
+
+    expect(find.text('満貫'), findsOneWidget);
+    expect(find.text('役なしのため和了できません'), findsOneWidget);
+    expect(find.text('この条件では和了として成立しません'), findsNothing);
   });
 
   testWidgets('adds each red tile and the all-star bonus to chips', (

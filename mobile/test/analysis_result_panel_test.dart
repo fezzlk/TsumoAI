@@ -233,6 +233,57 @@ void main() {
     },
   );
 
+  testWidgets('a tenpai discard result says so and keeps the candidates', (
+    tester,
+  ) async {
+    Map<String, Object> option(String tile, int shanten) => {
+      'discard': tile,
+      'shanten': shanten,
+      'total_remaining': 4,
+      'improving_tiles': <Object>[],
+    };
+    await tester.pumpWidget(
+      subject({
+        'shanten': 0,
+        'hand_shanten': 0,
+        'discards': [option('9s', 0), option('E', 0), option('1m', 1)],
+      }),
+    );
+
+    expect(find.text('テンパイ'), findsOneWidget);
+    expect(find.textContaining('すでに聴牌しています'), findsOneWidget);
+    expect(find.textContaining('九索・東を切ると聴牌'), findsOneWidget);
+    expect(find.text('打牌候補 ベスト3'), findsOneWidget);
+  });
+
+  testWidgets('a complete hand is called 和了形', (tester) async {
+    await tester.pumpWidget(
+      subject({
+        'shanten': 0,
+        'hand_shanten': -1,
+        'discards': [
+          {'discard': '5p', 'shanten': 0, 'improving_tiles': <Object>[]},
+        ],
+      }),
+    );
+
+    expect(find.textContaining('和了形です'), findsOneWidget);
+  });
+
+  testWidgets('no tenpai notice before tenpai', (tester) async {
+    await tester.pumpWidget(
+      subject({
+        'shanten': 1,
+        'discards': [
+          {'discard': '1m', 'shanten': 1, 'improving_tiles': <Object>[]},
+        ],
+      }),
+    );
+
+    expect(find.textContaining('聴牌しています'), findsNothing);
+    expect(find.text('1シャンテン'), findsWidgets);
+  });
+
   testWidgets('discard result shows only the tile-efficiency top three', (
     tester,
   ) async {

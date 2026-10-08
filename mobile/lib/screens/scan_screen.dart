@@ -40,6 +40,7 @@ import '../services/capture_framing.dart';
 import '../services/performance_trace.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
+import '../services/hand_error_messages.dart';
 import '../services/purpose_switch.dart';
 import '../widgets/purpose_switch_dialogs.dart';
 import '../theme/app_colors.dart';
@@ -95,7 +96,12 @@ enum _WinConditionStep { riichi, dora, uraDora, waiting }
 
 class _ScanScreenState extends State<ScanScreen> {
   static const int _maxPhysicalTiles = 18;
-  static const List<int> _selectableTileCounts = [13, 14, 15, 16, 17, 18];
+
+  /// Tile boxes can be added up to [_maxPhysicalTiles] and deleted down to
+  /// this many (13: the smallest hand any check works on).
+  static const int _minTileBoxes = 13;
+  /// Up to four 槓子; each adds one physical tile to the purpose's base.
+  static const int _maxKans = 4;
   CameraController? _controller;
   String? _cameraInitError;
   final TileClassifier _classifier = TileClassifier();
@@ -272,7 +278,7 @@ class _ScanScreenState extends State<ScanScreen> {
             spacing: 6,
             runSpacing: 6,
             children: [
-              for (final index in _identifiedIndices)
+              for (final index in _concealedIndices)
                 Semantics(
                   button: true,
                   selected: index == current,
@@ -307,13 +313,24 @@ class _ScanScreenState extends State<ScanScreen> {
     if (selected != null && mounted) _setWinningTile(selected);
   }
 
+  /// Why ツモ / ロン has no score while the other side has one.
+  String? _tsumoNote;
+  String? _ronNote;
+
+  /// The last failure of 実行 (interpretation, analysis or score), shown on
+  /// screen until the next run or edit instead of a short-lived snack bar.
+  String? _runError;
+
   void _invalidateAnalysis() {
     _requestEpoch.invalidate();
     _analysisResult = null;
     _chatMessages = [];
     _tsumoScoreResult = null;
     _ronScoreResult = null;
+    _tsumoNote = null;
+    _ronNote = null;
     _isNotWinning = false;
+    _runError = null;
   }
 
   bool get _hasScoreCalculation =>
@@ -829,6 +846,131 @@ class _ScanScreenState extends State<ScanScreen> {
   /// `_clearTileSlot`
   /// (see FEZ-193 — previously the only way to undo a wrongly-added box
   /// was to retake the whole photo).
+  /// Occupied tile slots (a box, or a tile added without one).
+  int get _slotCount => [
+    for (var index = 0; index < _maxPhysicalTiles; index++)
+      if (_tileQuads[index] != null || _tiles[index] != null) index,
+  ].length;
+
+  /// Resets the interpretation after the slots changed, keeping the user's
+  /// melds and あがり牌 (already renumbered by the caller), and keeps the
+  /// tile-count choice in step with the boxes. Must run inside `setState`.
+  void _afterSlotsChanged(List<ConfirmedMeld> melds, String? winningTileId) {
+    final manual = _winningTileManuallySet;
+    _invalidateInterpretation();
+    _confirmedMelds.addAll(melds);
+    if (winningTileId != null) {
+      _confirmedWinningTileId = winningTileId;
+      _winningTileManuallySet = manual;
+    }
+    _keepWinningTileOutsideMelds();
+    _setDisplayedTileCount(_slotCount);
+  }
+
+  /// 「この枠を削除」 from the box editor: drops the slot, closing the gap.
+  void _deleteTileBox(int index) {
+    if (_slotCount <= _minTileBoxes) return;
+    final melds = shiftMeldsAfterRemoval(List.of(_confirmedMelds), index);
+    final winningTileId = shiftObservationIdAfterRemoval(
+      _confirmedWinningTileId,
+      index,
+    );
+    setState(() {
+      removeSlot<String?>(_tiles, index, null);
+      removeSlot<String?>(_predictedTiles, index, null);
+      removeSlot<List<TileCandidate>>(_candidates, index, <TileCandidate>[]);
+      removeSlot<bool>(_isClassifying, index, false);
+      removeSlot<img.Image?>(_croppedImages, index, null);
+      removeSlot<Uint8List?>(_croppedImageThumbnails, index, null);
+      removeSlot<TileQuad?>(_tileQuads, index, null);
+      _afterSlotsChanged(melds, winningTileId);
+    });
+  }
+
+  /// 「枠を追加」: opens the box editor on a median-size box in the middle of
+  /// the photo; the confirmed box is inserted in left-to-right order and
+  /// identified like the others.
+  Future<void> _addTileBox() async {
+    final srcImage = _capturedImage;
+    final imageBytes = _capturedBytes;
+    if (srcImage == null || imageBytes == null) return;
+    if (_slotCount >= _maxPhysicalTiles) return;
+    final existing = _tileQuads
+        .whereType<TileQuad>()
+        .map((quad) => quad.boundingRect)
+        .toList();
+    double median(Iterable<double> values) {
+      final sorted = values.toList()..sort();
+      return sorted[sorted.length ~/ 2];
+    }
+
+    final placeholder = TileQuad.fromRect(
+      Rect.fromCenter(
+        center: Offset(srcImage.width / 2, srcImage.height / 2),
+        width: existing.isEmpty
+            ? srcImage.width / 16
+            : median(existing.map((rect) => rect.width)),
+        height: existing.isEmpty
+            ? srcImage.width / 12
+            : median(existing.map((rect) => rect.height)),
+      ),
+    );
+    final result = await Navigator.of(context).push<TileBoxEditorResult>(
+      MaterialPageRoute(
+        builder: (_) => TileBoxEditorScreen(
+          rawImageBytes: imageBytes,
+          rawWidth: srcImage.width,
+          rawHeight: srcImage.height,
+          initialQuad: placeholder,
+        ),
+      ),
+    );
+    if (result is! TileBoxEditorConfirmed || !mounted) return;
+
+    final quad = result.quad;
+    final centerX = quad.boundingRect.center.dx;
+    var insertAt = _slotCount;
+    for (var index = 0; index < _slotCount; index++) {
+      final other = _tileQuads[index];
+      if (other != null && other.boundingRect.center.dx > centerX) {
+        insertAt = index;
+        break;
+      }
+    }
+    final cropped = _cropQuad(srcImage, quad);
+    final melds = shiftMeldsAfterInsertion(List.of(_confirmedMelds), insertAt);
+    final winningTileId = shiftObservationIdAfterInsertion(
+      _confirmedWinningTileId,
+      insertAt,
+    );
+    setState(() {
+      insertSlot<TileQuad?>(_tileQuads, insertAt, quad);
+      insertSlot<img.Image?>(_croppedImages, insertAt, cropped);
+      insertSlot<Uint8List?>(
+        _croppedImageThumbnails,
+        insertAt,
+        Uint8List.fromList(img.encodeJpg(cropped)),
+      );
+      insertSlot<String?>(_tiles, insertAt, null);
+      insertSlot<String?>(_predictedTiles, insertAt, null);
+      insertSlot<List<TileCandidate>>(
+        _candidates,
+        insertAt,
+        <TileCandidate>[],
+      );
+      insertSlot<bool>(_isClassifying, insertAt, false);
+      _afterSlotsChanged(melds, winningTileId);
+    });
+    if (!widget.autoClassify) return;
+    await _classifierInitialization;
+    if (!mounted) return;
+    if (!_classifier.isReady) {
+      _showError('牌識別モデルが読み込まれていません');
+      return;
+    }
+    await _classifyTile(insertAt);
+  }
+
   Future<void> _openBoxEditor(int index) async {
     final srcImage = _capturedImage;
     final imageBytes = _capturedBytes;
@@ -846,10 +988,15 @@ class _ScanScreenState extends State<ScanScreen> {
           rawWidth: srcImage.width,
           rawHeight: srcImage.height,
           initialQuad: quad,
+          canDelete: _slotCount > _minTileBoxes,
         ),
       ),
     );
     if (result == null || !mounted) return;
+    if (result is TileBoxEditorDeleted) {
+      _deleteTileBox(index);
+      return;
+    }
 
     final newQuad = (result as TileBoxEditorConfirmed).quad;
     final cropped = _cropQuad(srcImage, newQuad);
@@ -970,10 +1117,14 @@ class _ScanScreenState extends State<ScanScreen> {
         // "suggested winning tile" text block that duplicated this same
         // information without driving the real control.
         _applySuggestedWinningTile(result);
+        _keepWinningTileOutsideMelds();
       });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        _showError('画像解釈エラー: $error');
+        setState(
+          () => _runError =
+              '画像の解釈に失敗しました。もう一度「実行」を押してください。（$error）',
+        );
       }
     } finally {
       if (mounted) setState(() => _isInterpreting = false);
@@ -995,6 +1146,20 @@ class _ScanScreenState extends State<ScanScreen> {
     List<ConfirmedMeld> carriedMelds = const [],
     String? carriedWinningTileId,
   }) async {
+    final adjusted = await _matchTileCountToPurpose();
+    if (adjusted == null || !mounted) return;
+    if (adjusted.changed) {
+      carriedMelds = adjusted.melds;
+      carriedWinningTileId = adjusted.winningTileId;
+    } else if (_interpretation == null && carriedMelds.isEmpty) {
+      // The interpretation run resets melds; keep the ones the user already
+      // registered (a 槓子 registered before 実行 used to be dropped, so a
+      // 15-tile hand reached the server as 15 loose tiles).
+      carriedMelds = List.of(_confirmedMelds);
+      if (_winningTileManuallySet) {
+        carriedWinningTileId ??= _confirmedWinningTileId;
+      }
+    }
     if (_interpretation == null) {
       await _runInterpretation(
         carriedMelds: carriedMelds,
@@ -1005,8 +1170,137 @@ class _ScanScreenState extends State<ScanScreen> {
     await _confirmAndAnalyze(showResultDialog: false);
   }
 
+  /// Physical tiles the purpose works on: 13 (待ち確認・鳴き判断) or 14
+  /// (点数計算・何を切る), plus one for each declared 槓.
+  int get _requiredTileCount =>
+      _purpose.defaultTileCount +
+      _confirmedMelds.where((meld) => meld.observationIds.length == 4).length;
+
+  /// Before running, makes the identified tiles match [_requiredTileCount]:
+  /// one too many asks which tile to leave out and one too few asks for the
+  /// missing tile (the same dialogs as 「別の確認へ」); further off stops with
+  /// a message and opens the photo controls. Without this the server
+  /// refused e.g. 14 tiles for 鳴き判断 with an English error.
+  ///
+  /// Returns null to stop. `changed` is true when a tile was removed or
+  /// added; the interpretation is then reset and `melds` / `winningTileId`
+  /// must be carried into the rerun.
+  Future<({bool changed, List<ConfirmedMeld> melds, String? winningTileId})?>
+  _matchTileCountToPurpose() async {
+    final count = _identifiedIndices.length;
+    final required = _requiredTileCount;
+    final delta = count - required;
+    if (delta == 0) {
+      return (changed: false, melds: const <ConfirmedMeld>[], winningTileId: null);
+    }
+    if (delta.abs() > 1) {
+      setState(() {
+        _recognitionDetailsExpanded = true;
+        _runError =
+            '牌が$count枚あります。${_purpose.label}は$required枚で行います。'
+            '槓子の数・枠の追加と削除・トリミングで枚数を合わせてください。';
+      });
+      return null;
+    }
+    if (delta == 1) {
+      // One extra tile is often an unregistered 槓子 rather than a stray.
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('牌が1枚多いです'),
+          content: Text(
+            '${_purpose.label}は$required枚（槓子1つにつき+1枚）で行います。'
+            '槓子がある場合は槓子として登録してください。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'remove'),
+              child: const Text('外す牌を選ぶ'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'kan'),
+              child: const Text('槓子を登録'),
+            ),
+          ],
+        ),
+      );
+      if (choice == null || !mounted) return null;
+      if (choice == 'kan') {
+        await _showMeldSelectionDialog();
+        if (!mounted) return null;
+        // Registered: the count now fits and the run goes on.
+        return _identifiedIndices.length == _requiredTileCount
+            ? (changed: false, melds: const <ConfirmedMeld>[], winningTileId: null)
+            : null;
+      }
+      final candidates = _concealedIndices;
+      if (candidates.isEmpty) return null;
+      final removedIndex = await showTileRemovalDialog(
+        context,
+        target: _purpose,
+        candidates: [for (final index in candidates) (index, _tiles[index]!)],
+        highlightedIndex: slotForObservationId(_confirmedWinningTileId),
+      );
+      if (removedIndex == null || !mounted) return null;
+      final melds = shiftMeldsAfterRemoval(
+        List.of(_confirmedMelds),
+        removedIndex,
+      );
+      final winningTileId = shiftObservationIdAfterRemoval(
+        _confirmedWinningTileId,
+        removedIndex,
+      );
+      setState(() {
+        removeSlot<String?>(_tiles, removedIndex, null);
+        removeSlot<String?>(_predictedTiles, removedIndex, null);
+        removeSlot<List<TileCandidate>>(
+          _candidates,
+          removedIndex,
+          <TileCandidate>[],
+        );
+        removeSlot<bool>(_isClassifying, removedIndex, false);
+        removeSlot<img.Image?>(_croppedImages, removedIndex, null);
+        removeSlot<Uint8List?>(_croppedImageThumbnails, removedIndex, null);
+        removeSlot<TileQuad?>(_tileQuads, removedIndex, null);
+        _setDisplayedTileCount(_identifiedIndices.length);
+        _invalidateInterpretation();
+      });
+      return (
+        changed: true,
+        melds: melds,
+        winningTileId: _operation == HandOperation.score ? winningTileId : null,
+      );
+    }
+    if (_nextFreeSlot >= _maxPhysicalTiles) {
+      _showError('これ以上牌を追加できません');
+      return null;
+    }
+    final addedTile = await TileImagePicker.show(
+      context,
+      title: '${_purpose.label}は$required枚で行います。足りない牌を選択',
+    );
+    if (addedTile == null || !mounted) return null;
+    final melds = List.of(_confirmedMelds);
+    setState(() {
+      final index = _nextFreeSlot;
+      _tiles[index] = addedTile;
+      _candidates[index] = [TileCandidate(tile: addedTile, confidence: 1.0)];
+      _setDisplayedTileCount(index + 1);
+      _invalidateInterpretation();
+    });
+    return (
+      changed: true,
+      melds: melds,
+      // For score the added tile is the drawn one, i.e. the あがり牌.
+      winningTileId: _operation == HandOperation.score
+          ? _defaultWinningTileId
+          : null,
+    );
+  }
+
   Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
     if (_interpretation == null) return;
+    setState(_keepWinningTileOutsideMelds);
     if (_operation == HandOperation.score && _confirmedWinningTileId == null) {
       _showError('あがり牌を選択してください');
       return;
@@ -1071,29 +1365,51 @@ class _ScanScreenState extends State<ScanScreen> {
             winTile: winTile,
           );
           final baseContext = _context.copyWith(akaDora: akaDoraCount);
-          final results = await Future.wait([
-            _api.calculateScore(
-              ScoreRequest(
-                hand: hand,
-                context: _contextForWinType(baseContext, 'tsumo'),
-                rules: rules,
-              ),
-            ),
-            _api.calculateScore(
-              ScoreRequest(
-                hand: hand,
-                context: _contextForWinType(baseContext, 'ron'),
-                rules: rules,
-              ),
-            ),
-          ]);
-          final tsumoResult = results[0];
-          final ronResult = results[1];
+          // ツモ and ロン are scored separately: one may be refused while the
+          // other wins (a 門前清自摸和-only hand, e.g. with a 暗槓, has no
+          // 役 for ロン), so one refusal must not hide the other result.
+          Future<(ScoreResponse?, HandRequestException?)> attempt(
+            String winType,
+          ) async {
+            try {
+              final response = await _api.calculateScore(
+                ScoreRequest(
+                  hand: hand,
+                  context: _contextForWinType(baseContext, winType),
+                  rules: rules,
+                ),
+              );
+              return (response, null);
+            } on HandRequestException catch (error) {
+              return (null, error);
+            }
+          }
+
+          final tsumoAttempt = attempt('tsumo');
+          final ronAttempt = attempt('ron');
+          final (tsumoResult, tsumoError) = await tsumoAttempt;
+          final (ronResult, ronError) = await ronAttempt;
           if (!mounted || !_requestEpoch.isCurrent(requestEpoch)) return;
+          String? note(HandRequestException? error) => error == null
+              ? null
+              : error.isNoYaku
+              ? '役なしのため和了できません'
+              : error.message;
           setState(() {
             _tsumoScoreResult = tsumoResult;
             _ronScoreResult = ronResult;
-            _isNotWinning = tsumoResult == null && ronResult == null;
+            _tsumoNote = note(tsumoError);
+            _ronNote = note(ronError);
+            if (tsumoResult == null && ronResult == null) {
+              final refused = tsumoError ?? ronError;
+              final shapeRefused =
+                  (tsumoError == null) || (ronError == null);
+              if (refused == null || shapeRefused) {
+                _isNotWinning = true;
+              } else {
+                _runError = refused.message;
+              }
+            }
           });
           if (tsumoResult != null || ronResult != null) {
             await _saveScoreHistory(
@@ -1146,7 +1462,11 @@ class _ScanScreenState extends State<ScanScreen> {
       }
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        _showError('解析エラー: $error');
+        setState(
+          () => _runError = error is HandRequestException
+              ? error.message
+              : '解析できませんでした。通信状態を確認して、もう一度「実行」を押してください。（$error）',
+        );
       }
     } finally {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
@@ -1677,6 +1997,17 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
+  /// The あがり牌 is a concealed tile: when it becomes part of a meld, move
+  /// it to the rightmost tile left outside the melds. Call inside setState.
+  void _keepWinningTileOutsideMelds() {
+    final current = slotForObservationId(_confirmedWinningTileId);
+    if (current == null || !_isConfirmedMeldMember(current)) return;
+    final concealed = _concealedIndices;
+    _confirmedWinningTileId = concealed.isEmpty
+        ? null
+        : observationIdForSlot(concealed.last);
+  }
+
   void _addConfirmedMeld(
     Set<int> selection, {
     required String type,
@@ -1689,6 +2020,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _confirmedMelds.add(
         ConfirmedMeld(observationIds: observationIds, type: type, open: open),
       );
+      _keepWinningTileOutsideMelds();
       _invalidateAnalysisAndMaybeRecalculate();
     });
   }
@@ -2076,6 +2408,8 @@ class _ScanScreenState extends State<ScanScreen> {
                       child: ScoreResultPanel(
                         tsumoResponse: _tsumoScoreResult,
                         ronResponse: _ronScoreResult,
+                        tsumoNote: _tsumoNote,
+                        ronNote: _ronNote,
                         ruleSettings: widget.ruleSettings,
                         isOpenHand: _confirmedMelds.any((meld) => meld.open),
                       ),
@@ -2169,6 +2503,8 @@ class _ScanScreenState extends State<ScanScreen> {
         ScoreResultPanel(
           tsumoResponse: _tsumoScoreResult,
           ronResponse: _ronScoreResult,
+          tsumoNote: _tsumoNote,
+          ronNote: _ronNote,
           ruleSettings: widget.ruleSettings,
           isOpenHand: _confirmedMelds.any((meld) => meld.open),
         ),
@@ -2783,15 +3119,15 @@ class _ScanScreenState extends State<ScanScreen> {
                 const SizedBox(height: AppSpacing.l),
                 Row(
                   children: [
-                    Expanded(child: Text('想定枚数', style: _text.titleSmall)),
-                    Text('違う場合だけ変更', style: _text.bodySmall),
+                    Expanded(child: Text('槓子の数', style: _text.titleSmall)),
+                    Text('槓子があるときだけ選択', style: _text.bodySmall),
                   ],
                 ),
                 const SizedBox(height: AppSpacing.s),
                 _buildExpectedTileCountSelector(),
                 const SizedBox(height: AppSpacing.s),
                 Text(
-                  '${_purpose.label}では${_purpose.defaultTileCount}枚を初期選択しています',
+                  '${_purpose.label}は手牌${_purpose.defaultTileCount}枚＋槓子1つにつき1枚で読み取ります',
                   style: _text.bodySmall,
                 ),
                 const SizedBox(height: AppSpacing.l),
@@ -2926,10 +3262,17 @@ class _ScanScreenState extends State<ScanScreen> {
     },
   );
 
+  /// The tile-count choice, asked as the number of 槓子 (0-4, default 0):
+  /// the expected tiles are the purpose's 13 or 14 plus one per 槓子. 3 and 4
+  /// are rare, so they may sit past the edge (decided 2026-10-08).
   Widget _buildExpectedTileCountSelector({bool redetectOnChange = false}) {
+    final base = _purpose.defaultTileCount;
     return TileCountSelector(
       selectedCount: _expectedTileCount,
-      counts: _selectableTileCounts,
+      counts: [for (var kans = 0; kans <= _maxKans; kans++) base + kans],
+      includeAuto: false,
+      labelOf: (count) => '${count - base}',
+      semanticsOf: (count) => '槓子${count - base}つ（$count枚）',
       onChanged: (selected) async {
         setState(() => _expectedTileCount = selected);
         if (redetectOnChange && _capturedImage != null) {
@@ -3147,6 +3490,21 @@ class _ScanScreenState extends State<ScanScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                OutlinedButton.icon(
+                  key: const ValueKey('add-tile-box'),
+                  onPressed: _slotCount < _maxPhysicalTiles
+                      ? _addTileBox
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, AppSizes.tapTarget),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.m,
+                    ),
+                  ),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('枠を追加'),
+                ),
+                const SizedBox(width: AppSpacing.s),
                 if (_cropRegion != null)
                   IconButton(
                     onPressed: () => _redetectInRegion(null),
@@ -3252,6 +3610,10 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                   const SizedBox(height: AppSpacing.l),
 
+                  if (_runError case final message?) ...[
+                    StatusBanner(kind: StatusKind.error, message: message),
+                    const SizedBox(height: AppSpacing.m),
+                  ],
                   _buildInlineScoreResult(),
                   if (!isScore && _isScoring) _busyCard('結果を更新中...'),
                   if (!isScore && _analysisResult != null)

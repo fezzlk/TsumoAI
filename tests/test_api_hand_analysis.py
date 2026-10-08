@@ -203,3 +203,21 @@ def test_call_analysis_returns_empty_list_when_no_tile_can_be_called():
 
     assert response.status_code == 200
     assert response.json()["calls"] == []
+
+
+def test_discard_analysis_reports_the_hand_shanten():
+    # 123m 456m 789m 123p + 55p: already a winning shape.
+    complete = ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "5p", "5p"]
+    res = client.post("/api/v1/discards/analyze", json={"closed_tiles": complete})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["hand_shanten"] == -1
+    assert body["shanten"] == 0
+
+    # Swap one tile out of the pair: tenpai (discard 9s to wait on 5p).
+    tenpai = complete[:-1] + ["9s"]
+    res = client.post("/api/v1/discards/analyze", json={"closed_tiles": tenpai})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["shanten"] == 0
+    assert body["hand_shanten"] == 0

@@ -9,6 +9,7 @@ import '../models/score_result.dart';
 import '../models/ai_chat_message.dart';
 import '../models/ai_usage_status.dart';
 import 'auth_service.dart';
+import 'hand_error_messages.dart';
 
 class ApiClient {
   final Dio _dio;
@@ -66,8 +67,9 @@ class ApiClient {
   }
 
   /// Calculate score from hand data.
-  /// Returns null if the hand is not a valid winning shape (422).
-  /// Throws on other errors.
+  /// Returns null if the hand is not a valid winning shape; other refusals
+  /// (wrong tile count, conflicting conditions, no yaku, ...) throw a
+  /// [HandRequestException] with a message for the user.
   Future<ScoreResponse?> calculateScore(ScoreRequest request) async {
     try {
       final response = await _dio.post(
@@ -77,8 +79,32 @@ class ApiClient {
       return ScoreResponse.fromJson(response.data);
     } on DioException catch (e) {
       if (e.response?.statusCode == 422) {
-        // Not a valid winning hand
-        return null;
+        final detail = _detailOf(e);
+        if (detail == notWinningShapeDetail) return null;
+        throw HandRequestException(describeHandError(detail), detail: detail);
+      }
+      rethrow;
+    }
+  }
+
+  /// `detail` of a FastAPI error response, when present.
+  static Object? _detailOf(DioException error) {
+    final data = error.response?.data;
+    return data is Map ? data['detail'] : data;
+  }
+
+  /// Posts a hand analysis, turning a 422 into a [HandRequestException].
+  Future<Map<String, dynamic>> _postAnalysis(
+    String path,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final response = await _dio.post('$_baseUrl$path', data: payload);
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 422) {
+        final detail = _detailOf(e);
+        throw HandRequestException(describeHandError(detail), detail: detail);
       }
       rethrow;
     }
@@ -144,11 +170,10 @@ class ApiClient {
     required ContextInput context,
     required RuleSet rules,
   }) async {
-    final response = await _dio.post(
-      '$_baseUrl/api/v1/tenpai/analyze',
-      data: _analysisPayload(state, context, rules),
+    return _postAnalysis(
+      '/api/v1/tenpai/analyze',
+      _analysisPayload(state, context, rules),
     );
-    return Map<String, dynamic>.from(response.data as Map);
   }
 
   Future<Map<String, dynamic>> analyzeDiscards({
@@ -156,11 +181,10 @@ class ApiClient {
     required ContextInput context,
     required RuleSet rules,
   }) async {
-    final response = await _dio.post(
-      '$_baseUrl/api/v1/discards/analyze',
-      data: _analysisPayload(state, context, rules),
+    return _postAnalysis(
+      '/api/v1/discards/analyze',
+      _analysisPayload(state, context, rules),
     );
-    return Map<String, dynamic>.from(response.data as Map);
   }
 
   Future<Map<String, dynamic>> analyzeCalls({
@@ -168,11 +192,10 @@ class ApiClient {
     required ContextInput context,
     required RuleSet rules,
   }) async {
-    final response = await _dio.post(
-      '$_baseUrl/api/v1/calls/analyze',
-      data: _analysisPayload(state, context, rules),
+    return _postAnalysis(
+      '/api/v1/calls/analyze',
+      _analysisPayload(state, context, rules),
     );
-    return Map<String, dynamic>.from(response.data as Map);
   }
 
   Future<String> askAi({

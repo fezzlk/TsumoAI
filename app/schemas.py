@@ -298,6 +298,9 @@ class TenpaiAnalysisResponse(BaseModel):
 
 class DiscardAnalysisResponse(BaseModel):
     shanten: int
+    # Shanten of the 14-tile hand itself: -1 means it is already complete
+    # (a winning shape), 0 that it is tenpai before discarding.
+    hand_shanten: int | None = None
     discards: list[DiscardAnalysisResult] = Field(default_factory=list)
 
 

@@ -35,7 +35,12 @@ class TileBoxEditorScreen extends StatefulWidget {
     required this.rawWidth,
     required this.rawHeight,
     required this.initialQuad,
+    this.canDelete = false,
   });
+
+  /// Offers 「この枠を削除」 (off when deleting would leave fewer than the
+  /// minimum number of tiles).
+  final bool canDelete;
 
   @override
   State<TileBoxEditorScreen> createState() => _TileBoxEditorScreenState();
@@ -50,6 +55,11 @@ sealed class TileBoxEditorResult {
 class TileBoxEditorConfirmed extends TileBoxEditorResult {
   final TileQuad quad;
   const TileBoxEditorConfirmed(this.quad);
+}
+
+/// The user chose 「この枠を削除」 and confirmed it.
+class TileBoxEditorDeleted extends TileBoxEditorResult {
+  const TileBoxEditorDeleted();
 }
 
 enum _DragMode { body, background }
@@ -76,6 +86,32 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
   void initState() {
     super.initState();
     _focusRegion = _computeFocusRegion(widget.initialQuad);
+  }
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('この枠を削除しますか？'),
+        content: const Text('この牌の枠と識別結果を削除します。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('削除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      Navigator.pop(context, const TileBoxEditorDeleted());
+    }
   }
 
   Rect _computeFocusRegion(TileQuad quad) {
@@ -361,6 +397,23 @@ class _TileBoxEditorScreenState extends State<TileBoxEditorScreen> {
                       style: text.bodySmall?.copyWith(color: editor.muted),
                     ),
                     const SizedBox(height: AppSpacing.s),
+                    if (widget.canDelete) ...[
+                      OutlinedButton.icon(
+                        onPressed: _confirmDelete,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                          side: BorderSide(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                          minimumSize: const Size.fromHeight(
+                            AppSizes.tapTarget,
+                          ),
+                        ),
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('この枠を削除'),
+                      ),
+                      const SizedBox(height: AppSpacing.s),
+                    ],
                     SizedBox(
                       height: AppSizes.primaryButton,
                       child: FilledButton(
