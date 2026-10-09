@@ -5,7 +5,8 @@ import '../services/photo_import.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show compute, debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show compute, debugPrint, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
@@ -37,6 +38,10 @@ import '../services/request_epoch.dart';
 import '../services/history_service.dart';
 import '../services/auth_service.dart';
 import '../services/capture_framing.dart';
+import '../services/guided_capture.dart';
+import '../services/app_preferences.dart';
+import '../services/scan_diagnostics_client.dart';
+import '../services/diagnostic_log.dart';
 import '../services/performance_trace.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
@@ -92,6 +97,8 @@ class ScanScreen extends StatefulWidget {
 
 enum _ScanPhase { camera, detecting, results }
 
+enum _CaptureMode { detection, guides }
+
 enum _WinConditionStep { riichi, dora, uraDora, waiting }
 
 class _ScanScreenState extends State<ScanScreen> {
@@ -100,6 +107,7 @@ class _ScanScreenState extends State<ScanScreen> {
   /// Tile boxes can be added up to [_maxPhysicalTiles] and deleted down to
   /// this many (13: the smallest hand any check works on).
   static const int _minTileBoxes = 13;
+
   /// Up to four 槓子; each adds one physical tile to the purpose's base.
   static const int _maxKans = 4;
   CameraController? _controller;
@@ -168,6 +176,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // FEZ-96 counted stray candidates (often ~100) before capture, which read
   // as poor accuracy, so there is no detection until the shutter is tapped.
   Timer? _scoreRecalculationTimer;
+  _CaptureMode _captureMode = _CaptureMode.detection;
   PerformanceTrace? _performanceTrace;
   int? _expectedTileCount;
   int? _autoDetectedTileCount;
@@ -460,7 +469,11 @@ class _ScanScreenState extends State<ScanScreen> {
         return;
       }
       if (mounted) setState(() {});
+      unawaited(DiagnosticLog.instance.record(DiagnosticEvent.cameraReady));
     } catch (e) {
+      unawaited(
+        DiagnosticLog.instance.record(DiagnosticEvent.cameraFailed, error: e),
+      );
       debugPrint('Camera init error: $e');
       await controller.dispose();
       if (!mounted) return;
@@ -487,6 +500,8 @@ class _ScanScreenState extends State<ScanScreen> {
         _isCapturing) {
       return;
     }
+    final captureMode = _captureMode;
+    final guidedCount = _expectedTileCount ?? _purpose.defaultTileCount;
     final trace = PerformanceTrace(
       name: 'tileRecognition',
       metadata: {
@@ -496,15 +511,26 @@ class _ScanScreenState extends State<ScanScreen> {
         'auto_inferred_tile_count': _expectedTileCount == null
             ? _autoDetectedTileCount
             : null,
-        'capture_mode': 'manual',
+        'capture_mode': captureMode == _CaptureMode.guides
+            ? 'guided'
+            : 'manual',
       },
     );
     _performanceTrace = trace;
     trace.mark('captureRequested');
     setState(() => _isCapturing = true);
+    unawaited(DiagnosticLog.instance.record(DiagnosticEvent.captureRequested));
 
     bool capturedOk = false;
     try {
+      bool saveDiagnostics = false;
+      try {
+        saveDiagnostics =
+            await AppPreferences.scanDiagnosticsEnabled() &&
+            await AuthService.isAdmin();
+      } catch (_) {
+        // Diagnostic configuration must never prevent normal capture.
+      }
       final xFile = await _controller!.takePicture();
       trace.mark('pictureTaken');
       final bytes = await xFile.readAsBytes();
@@ -519,25 +545,61 @@ class _ScanScreenState extends State<ScanScreen> {
       final decoded = framed.image;
       trace.mark('jpegDecoded');
       capturedOk = true;
+      unawaited(
+        DiagnosticLog.instance.record(
+          DiagnosticEvent.captureCompleted,
+          elapsedMs:
+              (trace.durationMicros('captureRequested', 'jpegDecoded') ?? 0) ~/
+              1000,
+        ),
+      );
 
       _acceptPhoto(framedBytes, decoded);
 
       // Always proceed straight to the results phase with whatever detection
       // found. Missing or extraneous boxes are recovered by changing the
       // expected count, cropping the source region, or returning to camera.
-      final detected = await compute(segmentTilesWithHintsForExpectedCount, (
-        bytes: framedBytes,
-        expectedTileCount: _expectedTileCount,
-        allowExtendedAuto: _expectedTileCount == null,
-      ));
+      final detected = captureMode == _CaptureMode.guides
+          ? (
+              boxes: guidedTileBoxes(
+                Size(decoded.width.toDouble(), decoded.height.toDouble()),
+                guidedCount,
+              ),
+              angleHints: List<double>.filled(guidedCount, 0),
+            )
+          : await compute(segmentTilesWithHintsForExpectedCount, (
+              bytes: framedBytes,
+              expectedTileCount: _expectedTileCount,
+              allowExtendedAuto: _expectedTileCount == null,
+            ));
       trace.annotate('final_detected_tile_count', detected.boxes.length);
       trace.mark('segmentationCompleted');
+      unawaited(
+        DiagnosticLog.instance.record(
+          DiagnosticEvent.segmentationCompleted,
+          count: detected.boxes.length,
+        ),
+      );
       if (!mounted) return;
       await _classifyBoxesAndFinish(
         detected.boxes,
         angleHints: detected.angleHints,
       );
+      if (saveDiagnostics) {
+        unawaited(
+          _saveScanDiagnostics(
+            rawBytes: bytes,
+            framedBytes: framedBytes,
+            boxes: detected.boxes,
+            trace: trace,
+            captureMode: captureMode,
+          ),
+        );
+      }
     } catch (e) {
+      unawaited(
+        DiagnosticLog.instance.record(DiagnosticEvent.captureFailed, error: e),
+      );
       trace.mark('captureFailed');
       trace.log();
       if (identical(_performanceTrace, trace)) _performanceTrace = null;
@@ -549,6 +611,64 @@ class _ScanScreenState extends State<ScanScreen> {
       if (capturedOk) await _classifyBoxesAndFinish(const []);
     } finally {
       if (mounted) setState(() => _isCapturing = false);
+    }
+  }
+
+  Future<void> _saveScanDiagnostics({
+    required Uint8List rawBytes,
+    required Uint8List framedBytes,
+    required List<Rect> boxes,
+    required _CaptureMode captureMode,
+    required PerformanceTrace trace,
+  }) async {
+    try {
+      final image = _capturedImage;
+      final controller = _controller;
+      final captureId = await ScanDiagnosticsClient().upload(
+        rawImage: rawBytes,
+        framedImage: framedBytes,
+        metadata: {
+          'source': 'camera',
+          'framing_mode': captureMode.name,
+          'platform': defaultTargetPlatform.name,
+          'purpose': _purpose.name,
+          'camera_name': controller?.description.name,
+          'lens_type': controller?.description.lensType.name,
+          'expected_tile_count': _expectedTileCount,
+          'detected_tile_count': boxes.length,
+          'framed_width': image?.width,
+          'framed_height': image?.height,
+          'boxes': [
+            for (final box in boxes)
+              {
+                'left': box.left,
+                'top': box.top,
+                'right': box.right,
+                'bottom': box.bottom,
+              },
+          ],
+          'predicted_tiles': [
+            for (var i = 0; i < boxes.length; i++) _predictedTiles[i],
+          ],
+          'top_confidence': [
+            for (var i = 0; i < boxes.length; i++)
+              _candidates[i].isEmpty ? null : _candidates[i].first.confidence,
+          ],
+          'model_version': _classifier.modelVersion,
+          'model_source': _classifier.modelSource,
+          'preprocessing_version': _classifier.preprocessingVersion,
+          'live_detection_samples': const <Map<String, Object?>>[],
+          'trace': trace.snapshot(),
+        },
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('撮影診断を保存しました: ${captureId.substring(0, 8)}')),
+        );
+      }
+    } catch (error) {
+      debugPrint('Scan diagnostics upload failed: $error');
+      if (mounted) _showError('撮影診断ログの保存に失敗しました');
     }
   }
 
@@ -794,6 +914,12 @@ class _ScanScreenState extends State<ScanScreen> {
         if (_croppedImages[i] != null) await _classifyTile(i);
       }
       _performanceTrace?.mark('classificationCompleted');
+      unawaited(
+        DiagnosticLog.instance.record(
+          DiagnosticEvent.classificationCompleted,
+          count: _croppedImages.where((image) => image != null).length,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _isRunningFullClassification = false);
     }
@@ -953,11 +1079,7 @@ class _ScanScreenState extends State<ScanScreen> {
       );
       insertSlot<String?>(_tiles, insertAt, null);
       insertSlot<String?>(_predictedTiles, insertAt, null);
-      insertSlot<List<TileCandidate>>(
-        _candidates,
-        insertAt,
-        <TileCandidate>[],
-      );
+      insertSlot<List<TileCandidate>>(_candidates, insertAt, <TileCandidate>[]);
       insertSlot<bool>(_isClassifying, insertAt, false);
       _afterSlotsChanged(melds, winningTileId);
     });
@@ -1121,10 +1243,7 @@ class _ScanScreenState extends State<ScanScreen> {
       });
     } catch (error) {
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
-        setState(
-          () => _runError =
-              '画像の解釈に失敗しました。もう一度「実行」を押してください。（$error）',
-        );
+        setState(() => _runError = '画像の解釈に失敗しました。もう一度「実行」を押してください。（$error）');
       }
     } finally {
       if (mounted) setState(() => _isInterpreting = false);
@@ -1191,7 +1310,11 @@ class _ScanScreenState extends State<ScanScreen> {
     final required = _requiredTileCount;
     final delta = count - required;
     if (delta == 0) {
-      return (changed: false, melds: const <ConfirmedMeld>[], winningTileId: null);
+      return (
+        changed: false,
+        melds: const <ConfirmedMeld>[],
+        winningTileId: null,
+      );
     }
     if (delta.abs() > 1) {
       setState(() {
@@ -1230,7 +1353,11 @@ class _ScanScreenState extends State<ScanScreen> {
         if (!mounted) return null;
         // Registered: the count now fits and the run goes on.
         return _identifiedIndices.length == _requiredTileCount
-            ? (changed: false, melds: const <ConfirmedMeld>[], winningTileId: null)
+            ? (
+                changed: false,
+                melds: const <ConfirmedMeld>[],
+                winningTileId: null,
+              )
             : null;
       }
       final candidates = _concealedIndices;
@@ -1331,6 +1458,8 @@ class _ScanScreenState extends State<ScanScreen> {
       _isNotWinning = false;
     });
     final requestEpoch = _requestEpoch.current;
+    final analysisTimer = Stopwatch()..start();
+    unawaited(DiagnosticLog.instance.record(DiagnosticEvent.analysisRequested));
     try {
       final state = await _api.confirmHand(
         request: InterpretationRequest(
@@ -1402,8 +1531,7 @@ class _ScanScreenState extends State<ScanScreen> {
             _ronNote = note(ronError);
             if (tsumoResult == null && ronResult == null) {
               final refused = tsumoError ?? ronError;
-              final shapeRefused =
-                  (tsumoError == null) || (ronError == null);
+              final shapeRefused = (tsumoError == null) || (ronError == null);
               if (refused == null || shapeRefused) {
                 _isNotWinning = true;
               } else {
@@ -1460,7 +1588,19 @@ class _ScanScreenState extends State<ScanScreen> {
           }
           break;
       }
+      unawaited(
+        DiagnosticLog.instance.record(
+          DiagnosticEvent.analysisCompleted,
+          elapsedMs: analysisTimer.elapsedMilliseconds,
+        ),
+      );
     } catch (error) {
+      unawaited(
+        DiagnosticLog.instance.record(
+          DiagnosticEvent.analysisFailed,
+          error: error,
+        ),
+      );
       if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
         setState(
           () => _runError = error is HandRequestException
@@ -3090,15 +3230,48 @@ class _ScanScreenState extends State<ScanScreen> {
             child: ListView(
               padding: const EdgeInsets.all(AppSpacing.l),
               children: [
+                SegmentedButton<_CaptureMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: _CaptureMode.detection,
+                      icon: Icon(Icons.center_focus_strong),
+                      label: Text('自動検出'),
+                    ),
+                    ButtonSegment(
+                      value: _CaptureMode.guides,
+                      icon: Icon(Icons.grid_on),
+                      label: Text('枠に合わせる'),
+                    ),
+                  ],
+                  selected: {_captureMode},
+                  onSelectionChanged: _isCapturing
+                      ? null
+                      : (selection) {
+                          final mode = selection.first;
+                          setState(() => _captureMode = mode);
+                          unawaited(
+                            DiagnosticLog.instance.record(
+                              mode == _CaptureMode.guides
+                                  ? DiagnosticEvent.guidedModeSelected
+                                  : DiagnosticEvent.detectionModeSelected,
+                            ),
+                          );
+                        },
+                ),
+                const SizedBox(height: AppSpacing.m),
                 _photoFrame(
                   child: AspectRatio(
                     aspectRatio:
                         captureFrameAspectRatio *
                         captureGuideWidthFactor /
                         captureGuideHeightFactor,
-                    child: ready
-                        ? _buildCaptureAreaPreview()
-                        : Center(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (ready)
+                          _buildCaptureAreaPreview()
+                        else
+                          Center(
                             child: Text(
                               'カメラ初期化中...',
                               style: _text.bodyMedium?.copyWith(
@@ -3106,11 +3279,26 @@ class _ScanScreenState extends State<ScanScreen> {
                               ),
                             ),
                           ),
+                        if (_captureMode == _CaptureMode.guides)
+                          IgnorePointer(
+                            child: CustomPaint(
+                              painter: _GuidedTilePainter(
+                                count:
+                                    _expectedTileCount ??
+                                    _purpose.defaultTileCount,
+                                color: _colors.detectionBox,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.s),
                 Text(
-                  '手牌が枠に収まるように撮影してください',
+                  _captureMode == _CaptureMode.guides
+                      ? '牌を1枚ずつ枠に合わせて撮影してください'
+                      : '手牌が枠に収まるように撮影してください',
                   textAlign: TextAlign.center,
                   style: _text.bodyMedium?.copyWith(
                     color: _scheme.onSurfaceVariant,
@@ -3134,7 +3322,11 @@ class _ScanScreenState extends State<ScanScreen> {
                 Center(child: _shutterButton(enabled: ready && !_isCapturing)),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  _isCapturing ? '撮影中...' : '撮影',
+                  _isCapturing
+                      ? '撮影中...'
+                      : _captureMode == _CaptureMode.guides
+                      ? '枠に合わせて撮影'
+                      : '撮影',
                   textAlign: TextAlign.center,
                   style: _text.labelMedium,
                 ),
@@ -3718,6 +3910,31 @@ class _ScanScreenState extends State<ScanScreen> {
 }
 
 /// Large yes/no answer card of the condition-entry steps.
+class _GuidedTilePainter extends CustomPainter {
+  const _GuidedTilePainter({required this.count, required this.color});
+
+  final int count;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fill = Paint()..color = color.withValues(alpha: 0.12);
+    final outline = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    for (final box in guidedTileBoxes(size, count)) {
+      final rounded = RRect.fromRectAndRadius(box, const Radius.circular(3));
+      canvas.drawRRect(rounded, fill);
+      canvas.drawRRect(rounded, outline);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _GuidedTilePainter oldDelegate) =>
+      oldDelegate.count != count || oldDelegate.color != color;
+}
+
 class _AnswerCard extends StatelessWidget {
   const _AnswerCard({
     required this.label,

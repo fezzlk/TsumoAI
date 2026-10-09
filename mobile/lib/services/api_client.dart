@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import '../config.dart';
@@ -9,6 +10,7 @@ import '../models/score_result.dart';
 import '../models/ai_chat_message.dart';
 import '../models/ai_usage_status.dart';
 import 'auth_service.dart';
+import 'diagnostic_log.dart';
 import 'hand_error_messages.dart';
 
 class ApiClient {
@@ -33,7 +35,27 @@ class ApiClient {
              ),
            ),
        _baseUrlOverride = baseUrl,
-       _authTokenProvider = authTokenProvider ?? _currentAuthToken;
+       _authTokenProvider = authTokenProvider ?? _currentAuthToken {
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onError: (error, handler) {
+          final expectedInvalidHand =
+              error.response?.statusCode == 422 &&
+              error.requestOptions.path.endsWith('/api/v1/score');
+          if (!expectedInvalidHand) {
+            unawaited(
+              DiagnosticLog.instance.record(
+                DiagnosticEvent.apiRequestFailed,
+                statusCode: error.response?.statusCode,
+                error: error,
+              ),
+            );
+          }
+          handler.next(error);
+        },
+      ),
+    );
+  }
 
   String get _baseUrl => _baseUrlOverride ?? AppConfig.apiBaseUrl;
 

@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config.dart';
 import '../models/score_request.dart';
 import '../services/auth_service.dart';
+import '../services/app_preferences.dart';
+import '../services/diagnostic_log.dart';
+import '../services/scan_diagnostics_client.dart';
 import '../services/history_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/screen_header.dart';
@@ -375,9 +380,73 @@ class DeveloperSettingsScreen extends StatefulWidget {
 
 class _DeveloperSettingsScreenState extends State<DeveloperSettingsScreen> {
   late bool _showTrainingDataActions = widget.showTrainingDataActions;
+  bool _scanDiagnosticsEnabled = false;
+  Duration _logPeriod = const Duration(hours: 24);
+  bool _sendingLogs = false;
   late final Future<bool> _authorization = AuthService.isAdmin(
     forceRefresh: true,
   );
+
+  @override
+  void initState() {
+    super.initState();
+    AppPreferences.scanDiagnosticsEnabled().then((enabled) {
+      if (mounted) setState(() => _scanDiagnosticsEnabled = enabled);
+    });
+  }
+
+  Future<void> _sendLogs() async {
+    if (_sendingLogs) return;
+    final end = DateTime.now().toUtc();
+    final start = end.subtract(_logPeriod);
+    setState(() => _sendingLogs = true);
+    try {
+      await DiagnosticLog.instance.record(DiagnosticEvent.logsUploadRequested);
+      final entries = await DiagnosticLog.instance.entriesBetween(start, end);
+      if (entries.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('選択した期間のログはありません')));
+        }
+        return;
+      }
+      final logId = await ScanDiagnosticsClient().uploadLogs(
+        periodStart: start,
+        periodEnd: end,
+        entries: entries,
+      );
+      unawaited(
+        DiagnosticLog.instance.record(
+          DiagnosticEvent.logsUploadSucceeded,
+          count: entries.length,
+        ),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${entries.length}件を送信しました（ID: ${logId.substring(0, 8)}）',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      unawaited(
+        DiagnosticLog.instance.record(
+          DiagnosticEvent.logsUploadFailed,
+          error: error,
+        ),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ログを送信できませんでした。通信状態と権限を確認してください。')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sendingLogs = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -411,6 +480,64 @@ class _DeveloperSettingsScreenState extends State<DeveloperSettingsScreen> {
           }
           return ListView(
             children: [
+              const ListTile(
+                title: Text('操作・エラーログ'),
+                subtitle: Text(
+                  '端末内に直近7日・最大2000件を保存します。画面操作、認識の処理段階、エラーの種類を記録します。画像・会話・入力内容は含めません。クラウドには「ログを送信」を押した時だけ送信します。',
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: DropdownButtonFormField<Duration>(
+                  initialValue: _logPeriod,
+                  decoration: const InputDecoration(labelText: '送信する期間'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: Duration(hours: 1),
+                      child: Text('直近1時間'),
+                    ),
+                    DropdownMenuItem(
+                      value: Duration(hours: 24),
+                      child: Text('直近24時間'),
+                    ),
+                    DropdownMenuItem(
+                      value: Duration(days: 7),
+                      child: Text('直近7日'),
+                    ),
+                  ],
+                  onChanged: _sendingLogs
+                      ? null
+                      : (value) {
+                          if (value != null) setState(() => _logPeriod = value);
+                        },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: FilledButton.icon(
+                  onPressed: _sendingLogs ? null : _sendLogs,
+                  icon: _sendingLogs
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.upload_outlined),
+                  label: Text(_sendingLogs ? '送信中…' : 'ログを送信'),
+                ),
+              ),
+              const Divider(),
+              SwitchListTile(
+                title: const Text('撮影の診断記録を保存'),
+                subtitle: const Text(
+                  'この端末で撮影した元画像・枠画像・検出ログをクラウドへ保存します。オフでは送信しません。',
+                ),
+                value: _scanDiagnosticsEnabled,
+                onChanged: (value) async {
+                  await AppPreferences.setScanDiagnosticsEnabled(value);
+                  if (mounted) setState(() => _scanDiagnosticsEnabled = value);
+                },
+              ),
               SwitchListTile(
                 title: const Text('学習データ作成ボタンを表示'),
                 subtitle: const Text('ホームの1枚撮影と、認識結果の訂正データ送信を表示します'),
