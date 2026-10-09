@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
@@ -20,6 +21,7 @@ from app.ai_chat import AIChatUnavailableError, answer_ai_chat
 from app.ai_usage_store import AIUsageLimitReached, AIUsageStore
 from app.ai_chat_template_store import AIChatTemplateStore
 from app.gcs_feedback_store import GCSFeedbackStore
+from app.scan_diagnostics_store import ScanDiagnosticsStore
 from app.hand_extraction import extract_hand_from_image, hand_shape_from_estimate_with_warnings
 from app.recognition_feedback_store import RecognitionFeedbackStore
 from app.recognition_job_manager import RecognitionJobManager
@@ -108,6 +110,7 @@ question_template_store = QuestionTemplateStore()
 gcs_dataset_store = GCSFeedbackStore(prefix=settings.gcs_dataset_prefix)
 accuracy_store = GCSFeedbackStore(prefix=settings.gcs_accuracy_prefix)
 recognition_feedback_store = RecognitionFeedbackStore()
+scan_diagnostics_store = ScanDiagnosticsStore()
 
 from app.training_data_store import TrainingDataStore
 training_data_store = TrainingDataStore()
@@ -256,7 +259,7 @@ def privacy() -> HTMLResponse:
 <html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>プライバシーポリシー - TsumoAI</title><style>{_LEGAL_STYLE}</style></head><body><main>
 <h1>プライバシーポリシー</h1>
-<p class="updated">最終更新日: 2026-09-20</p>
+<p class="updated">最終更新日: 2026-10-09</p>
 
 <h2>1. 収集する情報と保存方針</h2>
 <p>{provider}（以下「運営者」）は、TsumoAI（以下「本サービス」）の提供にあたり、利用方法に応じて次のように情報を取り扱います。</p>
@@ -271,10 +274,17 @@ def privacy() -> HTMLResponse:
 <li><b>利用履歴</b>: 未ログイン時は認識牌・計算または分析結果・入力条件・AIとの会話を端末内に保存します。
 ログイン中は同じ内容をFirebase認証のユーザーIDに紐付けてCloud Firestoreへ自動同期します。撮影した元画像は
 利用履歴として同期しません。</li>
+<li><b>開発者向け撮影診断</b>: 設定で明示的に有効にした端末からのみ、撮影の元画像、検出に使った画像、
+検出枠を重ねた画像、検出枚数・カメラ情報・処理時間などを、Firebase認証のユーザーIDとともに
+Google Cloud Storageへ保存します。無効のときは送信しません。</li>
+<li><b>操作・エラーログ</b>: 画面操作、撮影・認識の処理段階、エラーの種類と発生箇所を端末内に直近7日・最大2000件保存します。
+画像・会話・入力内容・認証情報は記録しません。開発者設定から期間を選び「ログを送信」を押した場合だけ、
+その期間のログをFirebase認証のユーザーIDとともにGoogle Cloud Storageへ保存します。</li>
 </ul>
 
 <h2>2. 利用目的</h2>
-<p>収集した情報は、本サービスの牌認識・点数計算機能の提供、および認識モデルの精度改善のためにのみ利用します。</p>
+<p>収集した情報は、本サービスの牌認識・点数計算機能の提供、認識モデルの精度改善、
+および開発者向け撮影診断・不具合調査のためにのみ利用します。</p>
 
 <h2>3. 第三者提供</h2>
 <p>本サービスは牌認識のために外部のAI画像認識API（OpenAI Vision）を、認証にFirebase Authenticationを、
@@ -283,7 +293,8 @@ def privacy() -> HTMLResponse:
 
 <h2>4. 保存期間</h2>
 <p>未ログイン利用時のデータは{ttl}時間で自動削除されます。Google Cloud Storageに保存されたログイン投稿は、
-ユーザーが削除しない限り、本サービスの提供に必要な期間保存します。Cloud Firestoreへ同期した利用履歴も、
+ユーザーが削除しない限り、本サービスの提供に必要な期間保存します。開発者向け撮影診断の画像と送信された操作・エラーログも
+設定を無効にするだけでは過去分は消えず、手動で削除するまで保存します。Cloud Firestoreへ同期した利用履歴も、
 ユーザーが設定画面から削除するまで保存します。牌認識結果の訂正はサーバーの一時ファイルでのみ扱います。</p>
 
 <h2>5. 削除</h2>
@@ -859,6 +870,128 @@ def download_dataset(name: str = Query(...), _admin: dict = Depends(require_admi
 
 # --- Training data endpoints ---
 
+@app.post("/api/v1/scan-diagnostics")
+async def upload_scan_diagnostics(
+    raw_image: UploadFile = File(...),
+    framed_image: UploadFile = File(...),
+    metadata: str = Form(...),
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Save one explicitly enabled developer capture for offline diagnosis."""
+    if len(metadata.encode("utf-8")) > 64 * 1024:
+        raise HTTPException(status_code=413, detail="diagnostic metadata is too large")
+    try:
+        parsed = json.loads(metadata)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="invalid diagnostic metadata") from exc
+    boxes = parsed.get("boxes", []) if isinstance(parsed, dict) else None
+    if not isinstance(boxes, list) or len(boxes) > 18:
+        raise HTTPException(status_code=422, detail="invalid diagnostic boxes")
+    raw = await _read_limited_image(raw_image)
+    framed = await _read_limited_image(framed_image)
+    try:
+        with Image.open(BytesIO(raw)) as image:
+            if image.format != "JPEG" or max(image.size) > 8000:
+                raise ValueError("invalid raw JPEG")
+            image.verify()
+        with Image.open(BytesIO(framed)) as image:
+            if image.format != "JPEG" or max(image.size) > 8000:
+                raise ValueError("invalid framed JPEG")
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="invalid diagnostic JPEG") from exc
+    try:
+        capture_id = await run_in_threadpool(
+            scan_diagnostics_store.save,
+            uid=admin["uid"], raw=raw, framed=framed, metadata=parsed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="diagnostic storage unavailable") from exc
+    return {"status": "saved", "capture_id": capture_id}
+
+
+@app.post("/api/v1/scan-diagnostics/logs")
+async def upload_scan_diagnostic_logs(
+    request: Request,
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """Receive only the interval deliberately selected in developer settings."""
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 1024 * 1024:
+            raise HTTPException(status_code=413, detail="diagnostic log is too large")
+        body.extend(chunk)
+    try:
+        payload = json.loads(body)
+        start = datetime.fromisoformat(payload["period_start"])
+        end = datetime.fromisoformat(payload["period_end"])
+        entries = payload["entries"]
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="invalid diagnostic log") from exc
+    if (
+        not isinstance(payload, dict)
+        or start.tzinfo is None
+        or end.tzinfo is None
+        or end <= start
+        or end - start > timedelta(days=30)
+        or end > datetime.now(timezone.utc) + timedelta(minutes=5)
+        or not isinstance(entries, list)
+        or not 1 <= len(entries) <= 2000
+    ):
+        raise HTTPException(status_code=422, detail="invalid diagnostic period")
+    allowed = {"time", "event", "count", "elapsed_ms", "status_code", "error_type", "stack"}
+    known_events = {
+        "appStarted", "appReady", "appInitializationFailed", "settingsOpened",
+        "scanOpened", "guidedModeSelected", "detectionModeSelected",
+        "matchOpened", "cameraReady", "cameraFailed",
+        "captureRequested", "captureCompleted", "captureFailed",
+        "segmentationCompleted", "classificationCompleted", "analysisRequested",
+        "analysisCompleted", "analysisFailed", "logsUploadRequested",
+        "logsUploadSucceeded", "logsUploadFailed", "flutterUnhandledError",
+        "platformUnhandledError", "apiRequestFailed",
+    }
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) - allowed:
+            raise HTTPException(status_code=422, detail="invalid diagnostic entry")
+        try:
+            event_time = datetime.fromisoformat(entry["time"])
+            event = entry["event"]
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(status_code=422, detail="invalid diagnostic entry") from exc
+        if (
+            event_time.tzinfo is None
+            or event_time < start
+            or event_time > end
+            or not isinstance(event, str)
+            or event not in known_events
+            or any(
+                not isinstance(entry[key], int) or isinstance(entry[key], bool)
+                or entry[key] < 0 or entry[key] > 1_000_000
+                for key in ("count", "elapsed_ms", "status_code") if key in entry
+            )
+            or ("error_type" in entry and (
+                not isinstance(entry["error_type"], str)
+                or not entry["error_type"].isidentifier()
+                or len(entry["error_type"]) > 64
+            ))
+            or ("stack" in entry and (
+                not isinstance(entry["stack"], str)
+                or len(entry["stack"]) > 2000
+            ))
+        ):
+            raise HTTPException(status_code=422, detail="invalid diagnostic entry")
+    try:
+        log_id = await run_in_threadpool(
+            scan_diagnostics_store.save_logs,
+            uid=admin["uid"],
+            period_start=start.astimezone(timezone.utc).isoformat(),
+            period_end=end.astimezone(timezone.utc).isoformat(),
+            entries=entries,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="diagnostic storage unavailable") from exc
+    return {"status": "saved", "log_id": log_id, "entry_count": len(entries)}
+
 from app.schemas import TrainingDataListResponse, TrainingDataUploadResponse
 
 
@@ -990,6 +1123,7 @@ def delete_my_data(_user: dict = Depends(get_current_user)) -> MyDataDeletionRes
             deleted_score_feedback=gcs_feedback_store.delete_by_uid(uid),
             deleted_recognition_feedback=recognition_feedback_store.delete_by_uid(uid),
             deleted_dataset_uploads=gcs_dataset_store.delete_by_uid(uid),
+            deleted_scan_diagnostics=scan_diagnostics_store.delete_by_uid(uid),
         )
     except Exception as exc:
         raise HTTPException(

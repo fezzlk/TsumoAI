@@ -18,6 +18,7 @@ import 'screens/settings_screen.dart';
 import 'screens/training_data_screen.dart';
 import 'services/app_preferences.dart';
 import 'services/auth_service.dart';
+import 'services/diagnostic_log.dart';
 import 'services/question_template_service.dart';
 import 'services/rule_settings_service.dart';
 import 'services/official_ai_chat_template_service.dart';
@@ -34,6 +35,27 @@ const _startupSyncBudget = Duration(seconds: 2);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    unawaited(
+      DiagnosticLog.instance.record(
+        DiagnosticEvent.flutterUnhandledError,
+        error: details.exception,
+        stack: details.stack,
+      ),
+    );
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    unawaited(
+      DiagnosticLog.instance.record(
+        DiagnosticEvent.platformUnhandledError,
+        error: error,
+        stack: stack,
+      ),
+    );
+    return false;
+  };
+  unawaited(DiagnosticLog.instance.record(DiagnosticEvent.appStarted));
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   String? startupError;
@@ -42,19 +64,34 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
   } catch (error) {
+    unawaited(
+      DiagnosticLog.instance.record(
+        DiagnosticEvent.appInitializationFailed,
+        error: error,
+      ),
+    );
     debugPrint('main: Firebase.initializeApp failed: $error');
     startupError = 'Firebase初期化に失敗しました: $error';
   }
   try {
     await AuthService.initialize();
   } catch (error) {
+    unawaited(
+      DiagnosticLog.instance.record(
+        DiagnosticEvent.appInitializationFailed,
+        error: error,
+      ),
+    );
     debugPrint('main: AuthService.initialize failed: $error');
     startupError ??= 'ログイン機能の初期化に失敗しました: $error';
   }
 
   try {
     if (!kIsWeb) cameras = await availableCameras();
-  } catch (_) {
+  } catch (error) {
+    unawaited(
+      DiagnosticLog.instance.record(DiagnosticEvent.cameraFailed, error: error),
+    );
     cameras = [];
   }
 
@@ -76,6 +113,7 @@ Future<void> main() async {
       initialRuleSettings: initialRuleSettings,
     ),
   );
+  unawaited(DiagnosticLog.instance.record(DiagnosticEvent.appReady));
 }
 
 class TsumoAIApp extends StatefulWidget {
@@ -406,6 +444,7 @@ class HomeScreen extends StatelessWidget {
   }
 
   Future<void> _openScan(BuildContext context, ScanPurpose purpose) async {
+    unawaited(DiagnosticLog.instance.record(DiagnosticEvent.scanOpened));
     final showDeveloperActions =
         showTrainingDataActions && await AuthService.isAdmin();
     if (!context.mounted) return;
@@ -426,6 +465,7 @@ class HomeScreen extends StatelessWidget {
   }
 
   Future<void> _openMatch(BuildContext context) async {
+    unawaited(DiagnosticLog.instance.record(DiagnosticEvent.matchOpened));
     final showDeveloperActions =
         showTrainingDataActions && await AuthService.isAdmin();
     if (!context.mounted) return;
@@ -447,6 +487,7 @@ class HomeScreen extends StatelessWidget {
   }
 
   void _openSettings(BuildContext context) {
+    unawaited(DiagnosticLog.instance.record(DiagnosticEvent.settingsOpened));
     Navigator.push(
       context,
       MaterialPageRoute(

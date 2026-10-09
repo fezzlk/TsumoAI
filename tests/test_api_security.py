@@ -135,6 +135,7 @@ def test_delete_my_data_deletes_across_all_stores(monkeypatch):
     monkeypatch.setattr(main.gcs_feedback_store, "delete_by_uid", lambda uid: 1 if uid == "member-1" else 0)
     monkeypatch.setattr(main.recognition_feedback_store, "delete_by_uid", lambda uid: 3 if uid == "member-1" else 0)
     monkeypatch.setattr(main.gcs_dataset_store, "delete_by_uid", lambda uid: 0)
+    monkeypatch.setattr(main.scan_diagnostics_store, "delete_by_uid", lambda uid: 4 if uid == "member-1" else 0)
     response = client.delete("/api/v1/me/data")
     assert response.status_code == 200
     assert response.json() == {
@@ -143,6 +144,7 @@ def test_delete_my_data_deletes_across_all_stores(monkeypatch):
         "deleted_score_feedback": 1,
         "deleted_recognition_feedback": 3,
         "deleted_dataset_uploads": 0,
+        "deleted_scan_diagnostics": 4,
     }
 
 
