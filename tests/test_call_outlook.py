@@ -40,6 +40,13 @@ def test_call_outlook_evaluation_v1(case):
         assert case["yaku"] in [item.name for item in outlook.yaku]
     if "warning_contains" in case:
         assert any(case["warning_contains"] in warning for warning in outlook.warnings)
+    if "nearby_yaku" in case:
+        names = {item.name for item in outlook.nearby_yaku}
+        assert set(case["nearby_yaku"]) <= names
+        assert not names.intersection(case["excluded_nearby_yaku"])
+        assert all(item.condition for item in outlook.nearby_yaku)
+        assert not outlook.yaku  # Future routes are not currently available yaku.
+        assert any(discard.call_outlook.nearby_yaku for discard in call.discards)
     if outlook.status == "no_yaku":
         assert outlook.no_yaku_tiles
         assert not outlook.winning_tiles
@@ -105,7 +112,8 @@ def test_red_five_in_called_meld_contributes_to_score():
 
 
 def test_discarding_red_five_removes_its_bonus():
-    case = dict(tiles=["5pr", *EVALUATION["cases"][1]["tiles"][:-1]], call=["chi", "4m", ["2m", "3m"]],
+    case = dict(tiles=["5pr", "2m", "3m", "4m", "4p", "5p", "6p", "6s", "7s", "8s", "4p", "F", "F"],
+                call=["pon", "F", ["F", "F"]],
                 context={"aka_dora_count": 1})
     call = analyze_case(case)
     outlook = next(item for item in call.discards if item.discard == "5p").call_outlook

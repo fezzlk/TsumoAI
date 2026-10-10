@@ -64,6 +64,10 @@ class AnalysisResultPanel extends StatelessWidget {
             _DiscardResult(item: discards[index], index: index),
           ],
         ],
+        if (result.containsKey('calls') && shanten == 0) ...[
+          _CurrentCallTenpai(waits: _maps(result['current_waits'])),
+          const SizedBox(height: AppSpacing.m),
+        ],
         if (calls.isNotEmpty) ...[
           _CallResults(
             calls: calls,
@@ -98,6 +102,60 @@ String? _tenpaiNotice(Map<String, dynamic> result) {
   ];
   final unique = keeping.toSet().join('・');
   return 'すでに聴牌しています（$uniqueを切ると聴牌）。手役や打点を上げる打牌も候補に出しています。';
+}
+
+class _CurrentCallTenpai extends StatelessWidget {
+  const _CurrentCallTenpai({required this.waits});
+
+  final List<Map<String, dynamic>> waits;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('現在はテンパイ', style: text.titleMedium),
+        Text('ロンできる牌は和了を優先します。役を付ける鳴き・待ちの変化も確認します。', style: text.bodySmall),
+        if (waits.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.s),
+          Wrap(
+            spacing: AppSpacing.m,
+            runSpacing: AppSpacing.s,
+            children: [
+              for (final wait in waits)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _TileImage(
+                      tileCode: wait['tile'].toString(),
+                      semanticPrefix: '現在の待ち',
+                      tileKey: ValueKey('call-current-wait-${wait['tile']}'),
+                    ),
+                    Text(
+                      _asInt(wait['remaining']) == 0
+                          ? '残り0枚'
+                          : switch (wait['ron_status']) {
+                              'available' => 'ロン可能',
+                              'no_yaku' => '役なし（ロン不可）',
+                              _ => '役未判定',
+                            },
+                      style: text.labelMedium,
+                    ),
+                    if ((wait['yaku'] as List<dynamic>? ?? const []).isNotEmpty)
+                      Text(
+                        (wait['yaku'] as List<dynamic>).join('・'),
+                        style: text.bodySmall,
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        ],
+        Text('通常のロンの役を判定しています。フリテンは未判定です。', style: text.bodySmall),
+      ],
+    );
+  }
 }
 
 class _SectionTitle extends StatelessWidget {
@@ -588,7 +646,7 @@ class _CallCandidateRow extends StatelessWidget {
                       const SizedBox(height: AppSpacing.xs),
                     ],
                     Text(
-                      '$currentShanten → $afterシャンテン',
+                      _callShantenLabel(currentShanten, after),
                       style: text.titleMedium,
                     ),
                     const SizedBox(height: AppSpacing.xs),
@@ -623,15 +681,33 @@ String _callReason(
   _CallRecommendation recommendation,
 ) {
   final status = _outlookMap(item['outlook'])['status'];
+  if (item['tenpai_effect'] == 'adds_yaku') {
+    return item['call_type'] == 'kan'
+        ? '役なしの待ちに役を付ける候補です。カン後は補充牌・打牌で再確認します。'
+        : 'テンパイを維持し、役なしの待ちからロンできる待ちを作れる候補です。詳細で打牌を確認してください。';
+  }
+  if (item['tenpai_effect'] == 'breaks') {
+    return '鳴くとテンパイが崩れます。役・打点を改善する価値があるか慎重に判断します。';
+  }
+  if (item['tenpai_effect'] == 'keeps' && status == 'no_yaku') {
+    return 'テンパイは維持しますが、今の待ちでは役がありません。役を作る手変わりが必要です。';
+  }
   if (status == 'no_yaku') return '向聴数が進んでも、今の待ちでは役がありません。';
   if (status == 'conditional') return '狙う役の条件を満たせるか確認してから鳴きます。';
   if (status == 'unknown') return '役を確認できていないため、牌効率だけで鳴く判断はできません。';
+  if (item['tenpai_effect'] == 'keeps') {
+    return 'テンパイを維持します。現在と鳴いた後の役・待ち・打点を比較して判断します。';
+  }
   return switch (recommendation) {
     _CallRecommendation.recommended => '向聴数が進むため、牌効率では有力な候補です。',
     _CallRecommendation.conditional => '向聴数は変わりません。受け入れ・役・打点で判断します。',
     _CallRecommendation.skip => '向聴数が戻るため、通常は見送ります。',
   };
 }
+
+String _callShantenLabel(int current, int after) => current == 0
+    ? (after == 0 ? 'テンパイ維持' : 'テンパイ → $afterシャンテン')
+    : '$current → $afterシャンテン';
 
 Map<String, dynamic> _outlookMap(Object? value) =>
     value is Map ? Map<String, dynamic>.from(value) : const {};
@@ -658,6 +734,7 @@ class _CallOutlookView extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final yaku = _maps(outlook['yaku']);
+    final nearbyYaku = _maps(outlook['nearby_yaku']);
     final estimate = _outlookMap(outlook['score_estimate']);
     final warnings = (outlook['warnings'] as List<dynamic>? ?? const []).map(
       (value) => value.toString(),
@@ -708,6 +785,24 @@ class _CallOutlookView extends StatelessWidget {
             Text(
               '狙える役: ${yaku.map((item) => '${item['name']} ${item['han']}翻').toSet().join('・')}',
             ),
+        ],
+        if (nearbyYaku.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('手変わりで狙う近い役（未成立）', style: text.titleSmall),
+          for (final item in nearbyYaku)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '${item['name']}（${item['han']}翻）: ${item['condition']}',
+              ),
+            ),
+          Text(
+            '今の待ちに役が付くという意味ではありません。打牌ごとの条件は詳細で確認できます。',
+            style: text.bodySmall,
+          ),
+        ] else if (outlook['status'] == 'no_yaku') ...[
+          const SizedBox(height: 6),
+          Text('近い役候補は見つかりませんでした。さらに手変わりを検討する必要があります。', style: text.bodySmall),
         ],
         for (final warning in detailed ? warnings : warnings.take(2)) ...[
           const SizedBox(height: 4),
@@ -882,7 +977,11 @@ class _CallDetailDialogState extends State<_CallDetailDialog> {
                 ],
               ),
               const SizedBox(height: 12),
-              Text('向聴数: $currentShanten → $after'),
+              Text(
+                currentShanten == 0
+                    ? _callShantenLabel(currentShanten, after)
+                    : '向聴数: $currentShanten → $after',
+              ),
               const SizedBox(height: 6),
               Text(reason),
               if (item['outlook'] is! Map && possibleYaku.isNotEmpty) ...[
@@ -1013,6 +1112,11 @@ _CallRecommendation _recommendationOf(Map<String, dynamic> item) {
   }
   if (status == 'conditional' || status == 'unknown') {
     return _CallRecommendation.conditional;
+  }
+  if (item['tenpai_effect'] == 'adds_yaku') {
+    return item['call_type'] == 'kan'
+        ? _CallRecommendation.conditional
+        : _CallRecommendation.recommended;
   }
   return switch (item['recommendation']) {
     'improves' => _CallRecommendation.recommended,

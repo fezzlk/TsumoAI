@@ -276,6 +276,7 @@ class CallOutlook(BaseModel):
     status: Literal["available", "conditional", "no_yaku", "unknown"]
     summary: str
     yaku: list[CallYakuProspect] = Field(default_factory=list)
+    nearby_yaku: list[CallYakuProspect] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     score_estimate: CallScoreEstimate | None = None
     winning_tiles: list[CallWinningTile] = Field(default_factory=list)
@@ -314,14 +315,23 @@ class CallAnalysisResult(BaseModel):
     consumed_tiles: list[TileCode]
     shanten_after_call: int
     recommendation: Literal["improves", "keeps", "worsens"]
+    tenpai_effect: Literal["adds_yaku", "keeps", "breaks"] | None = None
     possible_yaku: list[str] = Field(default_factory=list)
     outlook: CallOutlook | None = None
     discards: list[DiscardAnalysisResult] = Field(default_factory=list)
     replacement_tiles: list[WaitAnalysis] = Field(default_factory=list)
 
 
+class CallCurrentWait(BaseModel):
+    tile: TileCode
+    remaining: conint(ge=0, le=4)
+    ron_status: Literal["available", "no_yaku", "unknown"]
+    yaku: list[str] = Field(default_factory=list)
+
+
 class CallAnalysisResponse(BaseModel):
     current_shanten: int
+    current_waits: list[CallCurrentWait] = Field(default_factory=list)
     calls: list[CallAnalysisResult] = Field(default_factory=list)
 
 
