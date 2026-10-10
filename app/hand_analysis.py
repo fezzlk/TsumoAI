@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.call_outlook import assess_call_branch, summarize_call_outlooks
+from app.call_outlook import NO_YAKU_ERROR, assess_call_branch, summarize_call_outlooks
 from app.domain.analysis import analyze_discards, enumerate_improving_tiles
 from app.domain.shanten import calculate_shanten
 from app.domain.tiles import index_to_tile, tile_to_index, tiles_to_counts
@@ -11,6 +11,7 @@ from app.schemas import (
     CallAnalysisRequest,
     CallAnalysisResponse,
     CallAnalysisResult,
+    CallCurrentWait,
     DiscardAnalysisRequest,
     DiscardAnalysisResponse,
     DiscardAnalysisResult,
@@ -247,6 +248,51 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
     closed_counts, visible_counts = _validated_counts(request, expected, "call analysis")
     current_shanten = calculate_shanten(closed_counts, completed_melds)
     calls: list[CallAnalysisResult] = []
+    current_waits = []
+    if current_shanten == 0:
+        # A completed shape is not necessarily a legal ron. Check ordinary
+        # ron even when score display is disabled or the UI selected tsumo.
+        context = request.context
+        if context is not None:
+            context = context.model_copy(update={
+                "haitei": False, "houtei": False, "rinshan": False,
+                "chankan": False, "tenhou": False, "chiihou": False,
+            })
+        current = analyze_tenpai(TenpaiAnalysisRequest(
+            closed_tiles=request.closed_tiles, melds=request.melds,
+            context=context, rules=request.rules, include_score_predictions=True,
+        ))
+        for wait in current.improving_tiles:
+            status = ("available" if wait.ron_score is not None else
+                      "no_yaku" if wait.ron_score_error == NO_YAKU_ERROR else "unknown")
+            names = []
+            if wait.ron_score is not None:
+                names = [y.name for y in wait.ron_score.yaku if y.name not in _BONUS_YAKU_NAMES]
+                names += wait.ron_score.yakuman
+            current_waits.append(CallCurrentWait(
+                tile=wait.tile, remaining=wait.remaining, ron_status=status, yaku=names,
+            ))
+    ron_tiles = {tile_to_index(w.tile) for w in current_waits
+                 if w.ron_status == "available" and w.remaining > 0}
+    live_current_waits = [w for w in current_waits if w.remaining > 0]
+    currently_no_ron_yaku = bool(live_current_waits) and all(
+        w.ron_status == "no_yaku" for w in live_current_waits
+    )
+    # Riichi forbids these open calls; ankan is not part of this endpoint.
+    if completed_melds == 4 or (request.context is not None and
+                               (request.context.riichi or request.context.double_riichi)):
+        return CallAnalysisResponse(current_shanten=current_shanten, current_waits=current_waits)
+
+    def tenpai_effect(shanten, outlooks):
+        if current_shanten != 0:
+            return None
+        if shanten > 0:
+            return "breaks"
+        if currently_no_ron_yaku and any(
+            wait.win_type == "ron" for outlook in outlooks for wait in outlook.winning_tiles
+        ):
+            return "adds_yaku"
+        return "keeps"
 
     def recommendation(shanten: int) -> str:
         if shanten < current_shanten:
@@ -301,6 +347,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                 consumed_tiles=[index_to_tile(index) for index in consumed_indices],
                 shanten_after_call=best_shanten,
                 recommendation=recommendation(best_shanten),
+                tenpai_effect=tenpai_effect(best_shanten, [item.call_outlook for item in discard_results]),
                 possible_yaku=_possible_yaku(*wait_groups),
                 outlook=summarize_call_outlooks([item.call_outlook for item in discard_results]),
                 discards=discard_results,
@@ -308,7 +355,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
         )
 
     for call_index in range(34):
-        if visible_counts[call_index] >= 4:
+        if visible_counts[call_index] >= 4 or call_index in ron_tiles:
             continue
         if closed_counts[call_index] >= 2:
             add_open_call(call_index, "pon", [call_index, call_index])
@@ -346,6 +393,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                     consumed_tiles=[index_to_tile(call_index)] * 3,
                     shanten_after_call=replacement_shanten,
                     recommendation=recommendation(replacement_shanten),
+                    tenpai_effect=tenpai_effect(replacement_shanten, [outlook]),
                     possible_yaku=_possible_yaku(replacement_results, tsumo_results),
                     outlook=outlook,
                     replacement_tiles=_without_score_details(replacement_results),
@@ -370,4 +418,4 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
             item.consumed_tiles,
         )
     )
-    return CallAnalysisResponse(current_shanten=current_shanten, calls=calls)
+    return CallAnalysisResponse(current_shanten=current_shanten, current_waits=current_waits, calls=calls)

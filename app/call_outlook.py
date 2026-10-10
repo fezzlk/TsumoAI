@@ -51,8 +51,8 @@ def _prospects(request: CallAnalysisRequest, tiles: list[str]) -> list[CallYakuP
     for tile, name in values:
         if any(meld[0] == tile and len(set(meld)) == 1 for meld in fixed):
             add(name, 1, "役牌の刻子・槓子を副露済み。残りを和了形にすれば役が付きます。")
-        elif closed[tile] >= 2 and len(fixed) < 4:
-            add(name, 1, f"{name}を刻子（3枚）にして和了形を作る必要があります。")
+        elif closed[tile] >= 2 and len(fixed) < 4 and counts[tile] < 4:
+            add(name, 1, f"{name.split()[-1]}をポンするか、もう1枚引いて刻子（3枚）にします。雀頭に使っている場合は別の雀頭も必要です。")
 
     if request.rules.kuitan_ari and all(_simple(tile) for meld in fixed for tile in meld):
         outside = sum(count for tile, count in closed.items() if not _simple(tile))
@@ -62,31 +62,38 @@ def _prospects(request: CallAnalysisRequest, tiles: list[str]) -> list[CallYakuP
     # Require at least seven of the nine sequence tiles, at least two per
     # missing sequence, and room for all three sequences among four melds.
     # Tiles locked in an unrelated meld cannot contribute to a target sequence.
-    def sequence_route(sequences: list[tuple[str, ...]]) -> bool:
+    def sequence_route(sequences: list[tuple[str, ...]]) -> Counter | None:
         remaining = list(sequences)
         for meld, shape in zip(request.melds, fixed):
             if meld.type == "chi" and shape in remaining:
                 remaining.remove(shape)
         if len(remaining) > 4 - len(fixed):
-            return False
+            return None
         needed = Counter(tile for sequence in remaining for tile in sequence)
         if any(sum(tile in closed for tile in sequence) < 2 for sequence in remaining):
-            return False
-        missing = sum(max(0, count - closed[tile]) for tile, count in needed.items())
+            return None
+        missing = needed - closed
         # Do not suggest a fifth copy that is already locked in another meld.
         if any(count + sum(shape.count(tile) for shape in fixed) > 4 for tile, count in needed.items()):
-            return False
-        return missing <= 2
+            return None
+        return missing if sum(missing.values()) <= 2 else None
+
+    def missing_condition(missing: Counter) -> str:
+        labels = {"m": "萬", "p": "筒", "s": "索"}
+        tiles = "・".join(f"{tile[0]}{labels[tile[1]]}×{count}枚" for tile, count in sorted(missing.items()))
+        return f"不足牌は{tiles}。" if tiles else "必要な順子の牌を崩さずに使います。"
 
     for start in range(1, 8):
         sequences = [tuple(f"{rank}{suit}" for rank in range(start, start + 3)) for suit in "mps"]
-        if sequence_route(sequences):
+        missing = sequence_route(sequences)
+        if missing is not None:
             ranks = "".join(str(rank) for rank in range(start, start + 3))
-            add("三色同順", 1, f"萬子・筒子・索子で{ranks}の順子をそろえ、和了形を作ると成立。鳴くと2翻→1翻。")
+            add("三色同順", 1, f"{missing_condition(missing)}萬子・筒子・索子で{ranks}の順子をそろえ、和了形を作ると成立。鳴くと2翻→1翻。")
     for suit, label in zip("mps", ("萬子", "筒子", "索子")):
         sequences = [tuple(f"{rank}{suit}" for rank in range(start, start + 3)) for start in (1, 4, 7)]
-        if sequence_route(sequences):
-            add("一気通貫", 1, f"{label}で123・456・789の順子をそろえて和了すると成立。鳴くと2翻→1翻。")
+        missing = sequence_route(sequences)
+        if missing is not None:
+            add("一気通貫", 1, f"{missing_condition(missing)}{label}で123・456・789の順子をそろえて和了すると成立。鳴くと2翻→1翻。")
         if all(len(tile) == 1 or tile[1] == suit for shape in fixed for tile in shape):
             off_suit = sum(count for tile, count in closed.items() if len(tile) == 2 and tile[1] != suit)
             if off_suit <= 2 and sum(count for tile, count in counts.items() if len(tile) == 2 and tile[1] == suit) >= 7:
@@ -162,7 +169,8 @@ def assess_call_branch(
             estimate = CallScoreEstimate(min_points=min(points), max_points=max(points),
                                          win_type='ron' if ron_points else 'tsumo',
                                          basis=f"{basis}。役が付く待ちの計算値・入力済みドラを含む。")
-        return CallOutlook(status=status, summary=summary, yaku=list(yaku.values()), warnings=warnings,
+        nearby = _prospects(request, tiles) if status == "no_yaku" or no_yaku else []
+        return CallOutlook(status=status, summary=summary, yaku=list(yaku.values()), nearby_yaku=nearby, warnings=warnings,
                            score_estimate=estimate, winning_tiles=winning, no_yaku_tiles=no_yaku)
 
     prospects = _prospects(request, tiles)
@@ -190,6 +198,7 @@ def summarize_call_outlooks(outlooks: list[CallOutlook]) -> CallOutlook:
                   if any(outlook.status == value for outlook in outlooks))
     relevant = [outlook for outlook in outlooks if outlook.status == status]
     yaku = {(item.name, item.condition): item for outlook in relevant for item in outlook.yaku}
+    nearby = {(item.name, item.condition): item for outlook in outlooks for item in outlook.nearby_yaku}
     warnings = list(dict.fromkeys(warning for outlook in outlooks for warning in outlook.warnings))
     if len({outlook.status for outlook in outlooks}) > 1:
         warnings.append("切る牌によって役の有無が変わります。詳細の打牌ごとの条件を確認してください。")
@@ -205,5 +214,6 @@ def summarize_call_outlooks(outlooks: list[CallOutlook]) -> CallOutlook:
     # Waits belong to their discard branches. Keep the summary free of a
     # misleading global association between a tile and its yaku/score.
     return CallOutlook(status=status, summary=relevant[0].summary, yaku=list(yaku.values()),
+                       nearby_yaku=list(nearby.values()),
                        warnings=warnings, score_estimate=estimate,
                        no_yaku_tiles=sorted({tile for outlook in outlooks for tile in outlook.no_yaku_tiles}) if status == "no_yaku" else [])

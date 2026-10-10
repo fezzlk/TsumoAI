@@ -37,6 +37,7 @@ import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
 import '../services/history_service.dart';
 import '../services/auth_service.dart';
+import '../services/camera_lifecycle.dart';
 import '../services/capture_framing.dart';
 import '../services/guided_capture.dart';
 import '../services/app_preferences.dart';
@@ -111,6 +112,7 @@ class _ScanScreenState extends State<ScanScreen> {
   /// Up to four 槓子; each adds one physical tile to the purpose's base.
   static const int _maxKans = 4;
   CameraController? _controller;
+  late final CameraLifecycle _cameraLifecycle;
   String? _cameraInitError;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
@@ -392,7 +394,25 @@ class _ScanScreenState extends State<ScanScreen> {
           isDealer: true,
         );
     _selectedWinnerIndex = widget.initialWinnerIndex;
-    if (!kIsWeb) _initCamera();
+    _cameraLifecycle = CameraLifecycle(
+      open: () async {
+        // Permission dialogs also emit resume. A denial must wait for an
+        // explicit retry instead of immediately asking for permission again.
+        if (_cameraInitError == null) await _initCamera();
+      },
+      close: _releaseCamera,
+      onError: (error, stack) {
+        debugPrint('Camera lifecycle error: $error');
+        unawaited(
+          DiagnosticLog.instance.record(
+            DiagnosticEvent.cameraFailed,
+            error: error,
+            stack: stack,
+          ),
+        );
+      },
+    );
+    if (!kIsWeb) unawaited(_cameraLifecycle.start());
     _classifierInitialization = _initClassifier();
   }
 
@@ -420,6 +440,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _initCamera([CameraDescription? camera]) async {
+    if (!mounted || !_cameraLifecycle.isActive) return;
     if (widget.cameras.isEmpty) {
       if (mounted) {
         setState(() => _cameraInitError = '利用できるカメラが見つかりませんでした');
@@ -427,10 +448,6 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
     final selectedCamera = camera ?? _preferredCamera();
-    final previousController = _controller;
-    if (previousController != null) {
-      await previousController.dispose();
-    }
     if (mounted) {
       setState(() {
         _controller = null;
@@ -455,6 +472,7 @@ class _ScanScreenState extends State<ScanScreen> {
     _controller = controller;
     try {
       await controller.initialize();
+      if (!mounted || !_cameraLifecycle.isActive) return;
       // The phone is held nearly flat, pointed down at tiles on a table —
       // the accelerometer can't reliably tell landscape from portrait in
       // that position, so ambient device-orientation detection (what both
@@ -484,10 +502,24 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  /// Releases the camera while the app is in the background (the plugin
+  /// requires it); [CameraLifecycle] reopens it on resume.
+  Future<void> _releaseCamera() async {
+    final controller = _controller;
+    _controller = null;
+    if (mounted) setState(() {});
+    await controller?.dispose();
+  }
+
+  Future<void> _retryCamera() {
+    setState(() => _cameraInitError = null);
+    return _cameraLifecycle.retry();
+  }
+
   @override
   void dispose() {
     _scoreRecalculationTimer?.cancel();
-    _controller?.dispose();
+    unawaited(_cameraLifecycle.dispose());
     _classifier.dispose();
     super.dispose();
   }
@@ -497,7 +529,8 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _capture() async {
     if (_controller == null ||
         !_controller!.value.isInitialized ||
-        _isCapturing) {
+        _isCapturing ||
+        !_cameraLifecycle.isActive) {
       return;
     }
     final captureMode = _captureMode;
@@ -3403,7 +3436,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   if (widget.cameras.isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.l),
                     FilledButton.icon(
-                      onPressed: _initCamera,
+                      onPressed: _retryCamera,
                       icon: const Icon(Icons.refresh),
                       label: const Text('再試行'),
                     ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import '../widgets/photo_input.dart';
@@ -16,6 +17,7 @@ import '../widgets/screen_header.dart';
 import '../widgets/tile_glyph.dart';
 import '../widgets/tile_image_picker.dart';
 import '../services/tile_assets.dart';
+import '../services/camera_lifecycle.dart';
 
 /// Screen for collecting single-tile training data.
 /// Flow: Camera → Capture → Align → Select label → Send → Repeat
@@ -32,6 +34,8 @@ enum _TDPhase { camera, align, label }
 class _TrainingDataScreenState extends State<TrainingDataScreen>
     with WidgetsBindingObserver {
   CameraController? _controller;
+  late final CameraLifecycle _cameraLifecycle;
+  String? _cameraError;
   final TrainingDataClient _client = TrainingDataClient();
 
   _TDPhase _phase = _TDPhase.camera;
@@ -65,48 +69,66 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    if (!kIsWeb) _initCamera();
+    _cameraLifecycle = CameraLifecycle(
+      open: () async {
+        if (_cameraError == null) await _initCamera();
+      },
+      close: _releaseCamera,
+      onError: (error, stack) =>
+          debugPrint('Training camera lifecycle error: $error'),
+    );
+    if (!kIsWeb) unawaited(_cameraLifecycle.start());
   }
 
   Future<void> _initCamera() async {
-    if (widget.cameras.isEmpty) return;
-    _controller = CameraController(
-      widget.cameras.first,
+    if (!mounted || !_cameraLifecycle.isActive) return;
+    if (widget.cameras.isEmpty) {
+      setState(() => _cameraError = '利用できるカメラが見つかりませんでした');
+      return;
+    }
+    setState(() => _cameraError = null);
+    final controller = CameraController(
+      widget.cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.back,
+        orElse: () => widget.cameras.first,
+      ),
       ResolutionPreset.high,
       enableAudio: false,
     );
+    _controller = controller;
     try {
-      await _controller!.initialize();
+      await controller.initialize();
+      if (!mounted || !_cameraLifecycle.isActive) return;
       await _syncCaptureOrientation();
       if (mounted) setState(() {});
-    } catch (_) {}
+    } catch (error) {
+      await controller.dispose();
+      _controller = null;
+      if (mounted) {
+        setState(
+          () => _cameraError = 'カメラを開始できませんでした。端末の設定でカメラへのアクセスを確認してください。',
+        );
+      }
+    }
   }
 
-  // The phone is held nearly flat, pointed down at the tile — the
-  // accelerometer can't reliably tell landscape from portrait in that
-  // position, so the camera plugin's own ambient-orientation fallback
-  // (what both the live preview and the captured photo would otherwise
-  // rely on) is unusable here, same reasoning as `scan_screen.dart`'s
-  // capture flow. Since this screen (unlike the always-landscape scan
-  // screen) now allows the user to hold it either way, a single fixed
-  // lock doesn't work either — instead, re-derive the lock from Flutter's
-  // own settled orientation (from `PlatformDispatcher`'s reported view
-  // size, which only flips when the OS actually commits to a rotation,
-  // not the raw jittery accelerometer) every time the device's reported
-  // orientation changes, via `didChangeMetrics` below.
-  DeviceOrientation _bestGuessOrientation() {
-    final size =
-        WidgetsBinding.instance.platformDispatcher.views.first.physicalSize;
-    return size.width < size.height
-        ? DeviceOrientation.portraitUp
-        : DeviceOrientation.landscapeLeft;
+  Future<void> _releaseCamera() async {
+    final controller = _controller;
+    _controller = null;
+    if (mounted) setState(() {});
+    await controller?.dispose();
+  }
+
+  Future<void> _retryCamera() {
+    setState(() => _cameraError = null);
+    return _cameraLifecycle.retry();
   }
 
   Future<void> _syncCaptureOrientation() async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     try {
-      await controller.lockCaptureOrientation(_bestGuessOrientation());
+      await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
       if (mounted) setState(() {});
     } catch (_) {}
   }
@@ -120,23 +142,38 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    _controller?.dispose();
+    unawaited(_cameraLifecycle.dispose());
     super.dispose();
   }
 
   Future<void> _capture() async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    final xFile = await _controller!.takePicture();
-    final bytes = await xFile.readAsBytes();
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) return;
+    final controller = _controller;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.isTakingPicture ||
+        !_cameraLifecycle.isActive) {
+      return;
+    }
+    try {
+      final xFile = await controller.takePicture();
+      final bytes = await xFile.readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (!mounted || decoded == null) return;
 
-    setState(() {
-      _capturedBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: 90));
-      _capturedImage = decoded;
-      _phase = _TDPhase.align;
-      _imageTransform = Matrix4.identity();
-    });
+      setState(() {
+        _capturedBytes = Uint8List.fromList(
+          img.encodeJpg(decoded, quality: 90),
+        );
+        _capturedImage = decoded;
+        _phase = _TDPhase.align;
+        _imageTransform = Matrix4.identity();
+      });
+    } catch (error) {
+      if (!mounted || !_cameraLifecycle.isActive) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('撮影できませんでした。もう一度お試しください。')));
+    }
   }
 
   bool _isImporting = false;
@@ -385,6 +422,27 @@ class _TrainingDataScreenState extends State<TrainingDataScreen>
 
   Widget _buildCamera() {
     if (kIsWeb) return PhotoInput(busy: _isImporting, onPick: _pickPhoto);
+    if (_cameraError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_cameraError!, textAlign: TextAlign.center),
+              if (widget.cameras.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.l),
+                FilledButton.icon(
+                  onPressed: _retryCamera,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('再試行'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
     final ready = _controller != null && _controller!.value.isInitialized;
     return Column(
       children: [
