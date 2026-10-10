@@ -6,6 +6,7 @@ class AppPreferences {
 
   static const _fileName = 'app_preferences.json';
   static const _showTrainingDataKey = 'show_training_data_actions';
+  static const _scanDiagnosticsKey = 'scan_diagnostics_enabled';
 
   static Future<LocalDocument> _file() async {
     final directory = await getApplicationSupportDirectory();
@@ -31,6 +32,18 @@ class AppPreferences {
   static Future<void> setShowTrainingDataActions(bool value) async {
     final values = await _read();
     values[_showTrainingDataKey] = value;
+    final file = await _file();
+    await file.writeAsString(jsonEncode(values), flush: true);
+  }
+
+  static Future<bool> scanDiagnosticsEnabled() async {
+    final values = await _read();
+    return values[_scanDiagnosticsKey] as bool? ?? false;
+  }
+
+  static Future<void> setScanDiagnosticsEnabled(bool value) async {
+    final values = await _read();
+    values[_scanDiagnosticsKey] = value;
     final file = await _file();
     await file.writeAsString(jsonEncode(values), flush: true);
   }

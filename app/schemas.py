@@ -500,3 +500,4 @@ class MyDataDeletionResponse(BaseModel):
     deleted_score_feedback: int
     deleted_recognition_feedback: int
     deleted_dataset_uploads: int
+    deleted_scan_diagnostics: int = 0
