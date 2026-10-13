@@ -16,7 +16,15 @@ String? tileAssetPath(String tileCode) {
     return 'assets/tiles/Mpu${t[0]}${t[1]}.png';
   }
 
-  const honors = {'E': '1', 'S': '2', 'W': '3', 'N': '4', 'P': '5', 'F': '6', 'C': '7'};
+  const honors = {
+    'E': '1',
+    'S': '2',
+    'W': '3',
+    'N': '4',
+    'P': '5',
+    'F': '6',
+    'C': '7',
+  };
   final honor = honors[t];
   if (honor != null) {
     return 'assets/tiles/Mpu${honor}z.png';
@@ -25,8 +33,11 @@ String? tileAssetPath(String tileCode) {
   return null;
 }
 
-String doraTileFromIndicator(String indicator) {
+String doraTileFromIndicator(String indicator, {bool sanma = false}) {
   final tile = _normalizeRed(indicator);
+  if (sanma && (tile == "1m" || tile == "9m")) {
+    return tile == "1m" ? "9m" : "1m";
+  }
   if (RegExp(r'^[1-9][mps]$').hasMatch(tile)) {
     final number = int.parse(tile[0]);
     return '${number == 9 ? 1 : number + 1}${tile[1]}';
@@ -38,8 +49,11 @@ String doraTileFromIndicator(String indicator) {
   return index == -1 ? tile : order[(index + 1) % order.length];
 }
 
-String doraIndicatorFromTile(String doraTile) {
+String doraIndicatorFromTile(String doraTile, {bool sanma = false}) {
   final tile = _normalizeRed(doraTile);
+  if (sanma && (tile == "1m" || tile == "9m")) {
+    return tile == "1m" ? "9m" : "1m";
+  }
   if (RegExp(r'^[1-9][mps]$').hasMatch(tile)) {
     final number = int.parse(tile[0]);
     return '${number == 1 ? 9 : number - 1}${tile[1]}';
@@ -58,14 +72,43 @@ String _normalizeRed(String tile) {
 }
 
 const _tileDisplayNames = <String, String>{
-  '1m': '一萬', '2m': '二萬', '3m': '三萬', '4m': '四萬', '5m': '五萬',
-  '6m': '六萬', '7m': '七萬', '8m': '八萬', '9m': '九萬', '5mr': '赤五萬',
-  '1p': '一筒', '2p': '二筒', '3p': '三筒', '4p': '四筒', '5p': '五筒',
-  '6p': '六筒', '7p': '七筒', '8p': '八筒', '9p': '九筒', '5pr': '赤五筒',
-  '1s': '一索', '2s': '二索', '3s': '三索', '4s': '四索', '5s': '五索',
-  '6s': '六索', '7s': '七索', '8s': '八索', '9s': '九索', '5sr': '赤五索',
-  'E': '東', 'S': '南', 'W': '西', 'N': '北',
-  'P': '白', 'F': '發', 'C': '中',
+  '1m': '一萬',
+  '2m': '二萬',
+  '3m': '三萬',
+  '4m': '四萬',
+  '5m': '五萬',
+  '6m': '六萬',
+  '7m': '七萬',
+  '8m': '八萬',
+  '9m': '九萬',
+  '5mr': '赤五萬',
+  '1p': '一筒',
+  '2p': '二筒',
+  '3p': '三筒',
+  '4p': '四筒',
+  '5p': '五筒',
+  '6p': '六筒',
+  '7p': '七筒',
+  '8p': '八筒',
+  '9p': '九筒',
+  '5pr': '赤五筒',
+  '1s': '一索',
+  '2s': '二索',
+  '3s': '三索',
+  '4s': '四索',
+  '5s': '五索',
+  '6s': '六索',
+  '7s': '七索',
+  '8s': '八索',
+  '9s': '九索',
+  '5sr': '赤五索',
+  'E': '東',
+  'S': '南',
+  'W': '西',
+  'N': '北',
+  'P': '白',
+  'F': '發',
+  'C': '中',
 };
 
 /// Japanese display name for a tile code (e.g. `N` -> `北`, `5mr` -> `赤五萬`),

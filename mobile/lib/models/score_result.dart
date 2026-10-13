@@ -5,19 +5,18 @@ class YakuItem {
   YakuItem({required this.name, required this.han});
 
   factory YakuItem.fromJson(Map<String, dynamic> json) {
-    return YakuItem(
-      name: json['name'] as String,
-      han: json['han'] as int,
-    );
+    return YakuItem(name: json['name'] as String, han: json['han'] as int);
   }
 }
 
 class DoraBreakdown {
+  final int nukiDora;
   final int dora;
   final int akaDora;
   final int uraDora;
 
   DoraBreakdown({
+    this.nukiDora = 0,
     required this.dora,
     required this.akaDora,
     required this.uraDora,
@@ -25,6 +24,7 @@ class DoraBreakdown {
 
   factory DoraBreakdown.fromJson(Map<String, dynamic> json) {
     return DoraBreakdown(
+      nukiDora: json["nuki_dora"] as int? ?? 0,
       dora: json['dora'] as int,
       akaDora: json['aka_dora'] as int,
       uraDora: json['ura_dora'] as int,
@@ -39,10 +39,7 @@ class FuBreakdownItem {
   FuBreakdownItem({required this.name, required this.fu});
 
   factory FuBreakdownItem.fromJson(Map<String, dynamic> json) {
-    return FuBreakdownItem(
-      name: json['name'] as String,
-      fu: json['fu'] as int,
-    );
+    return FuBreakdownItem(name: json['name'] as String, fu: json['fu'] as int);
   }
 }
 
@@ -121,13 +118,13 @@ class ScoreResult {
     return ScoreResult(
       han: json['han'] as int,
       fu: json['fu'] as int,
-      fuBreakdown: (json['fu_breakdown'] as List?)
+      fuBreakdown:
+          (json['fu_breakdown'] as List?)
               ?.map((e) => FuBreakdownItem.fromJson(e))
               .toList() ??
           [],
-      yaku: (json['yaku'] as List?)
-              ?.map((e) => YakuItem.fromJson(e))
-              .toList() ??
+      yaku:
+          (json['yaku'] as List?)?.map((e) => YakuItem.fromJson(e)).toList() ??
           [],
       yakuman: (json['yakuman'] as List?)?.cast<String>() ?? [],
       dora: DoraBreakdown.fromJson(json['dora']),

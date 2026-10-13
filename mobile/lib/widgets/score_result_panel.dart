@@ -175,6 +175,11 @@ class _ResultCard extends StatelessWidget {
   String _paymentCaption(ScoreResult result) {
     final points = result.points;
     if (!isTsumo) return '放銃者の支払い';
+    if (panel.ruleSettings.rules.isSanma) {
+      return points.tsumoDealerPay == points.tsumoNonDealerPay
+          ? '子2人それぞれの支払い'
+          : '子1人 / 親1人の支払い';
+    }
     if (points.tsumoDealerPay == points.tsumoNonDealerPay) return '子それぞれの支払い';
     return '子の支払い / 親の支払い';
   }
@@ -189,7 +194,9 @@ class _ResultCard extends StatelessWidget {
     final allStar = red >= 3 ? 2 : 0;
     final chips = red + ura + ippatsu + allStar;
     final equivalent = chips * 1000;
-    final payment = isTsumo ? '各$chips枚・合計${chips * 3}枚' : '$chips枚';
+    final payment = isTsumo
+        ? '各$chips枚・合計${chips * (panel.ruleSettings.rules.isSanma ? 2 : 3)}枚'
+        : '$chips枚';
     return 'チップ: $payment（$chipsチップ点 / 素点$equivalent点相当）';
   }
 

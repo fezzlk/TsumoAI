@@ -64,6 +64,16 @@ class ApiClient {
     return AuthService.idToken();
   }
 
+  Future<bool> supportsSanma() async {
+    try {
+      final response = await _dio.get('$_baseUrl/api/v1/capabilities');
+      return (response.data['mahjong_variants'] as List?)?.contains('sanma') ==
+          true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// AI chat is login-only, so a missing token fails before any request.
   Future<Map<String, String>> _aiHeaders() async {
     final token = await _authTokenProvider();
@@ -93,6 +103,9 @@ class ApiClient {
   /// (wrong tile count, conflicting conditions, no yaku, ...) throw a
   /// [HandRequestException] with a message for the user.
   Future<ScoreResponse?> calculateScore(ScoreRequest request) async {
+    if (request.rules.isSanma && !await supportsSanma()) {
+      throw StateError("接続先の三人麻雀対応を確認できません");
+    }
     try {
       final response = await _dio.post(
         '$_baseUrl/api/v1/score',
@@ -191,10 +204,14 @@ class ApiClient {
     required ConfirmedHandStateV1 state,
     required ContextInput context,
     required RuleSet rules,
+    List<String> extractedTiles = const [],
   }) async {
+    if (rules.isSanma && !await supportsSanma()) {
+      throw StateError("接続先の三人麻雀対応を確認できません");
+    }
     return _postAnalysis(
       '/api/v1/tenpai/analyze',
-      _analysisPayload(state, context, rules),
+      _analysisPayload(state, context, rules, extractedTiles),
     );
   }
 
@@ -202,10 +219,14 @@ class ApiClient {
     required ConfirmedHandStateV1 state,
     required ContextInput context,
     required RuleSet rules,
+    List<String> extractedTiles = const [],
   }) async {
+    if (rules.isSanma && !await supportsSanma()) {
+      throw StateError("接続先の三人麻雀対応を確認できません");
+    }
     return _postAnalysis(
       '/api/v1/discards/analyze',
-      _analysisPayload(state, context, rules),
+      _analysisPayload(state, context, rules, extractedTiles),
     );
   }
 
@@ -213,10 +234,14 @@ class ApiClient {
     required ConfirmedHandStateV1 state,
     required ContextInput context,
     required RuleSet rules,
+    List<String> extractedTiles = const [],
   }) async {
+    if (rules.isSanma && !await supportsSanma()) {
+      throw StateError("接続先の三人麻雀対応を確認できません");
+    }
     return _postAnalysis(
       '/api/v1/calls/analyze',
-      _analysisPayload(state, context, rules),
+      _analysisPayload(state, context, rules, extractedTiles),
     );
   }
 
@@ -296,7 +321,9 @@ class ApiClient {
     ConfirmedHandStateV1 state,
     ContextInput context,
     RuleSet rules,
+    List<String> extractedTiles,
   ) => {
+    "extracted_tiles": extractedTiles,
     'closed_tiles': state.hand.closedTiles,
     'melds': state.hand.melds
         .map((meld) => meld.toAnalysisJson())

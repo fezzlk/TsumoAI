@@ -96,7 +96,7 @@ def test_ura_dora_requires_riichi_and_aka_dora_obeys_rules():
     payload["context"].update(ura_dora_indicators=["1p"], aka_dora_count=1)
     payload["rules"]["aka_ari"] = False
     result = score_result(payload)
-    assert result["dora"] == {"dora": 0, "aka_dora": 0, "ura_dora": 0}
+    assert result["dora"] == {"dora": 0, "aka_dora": 0, "ura_dora": 0, "nuki_dora": 0}
     assert result["han"] == 1
 
 

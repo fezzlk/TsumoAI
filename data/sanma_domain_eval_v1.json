@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "profile": "sanma_standard_v1",
+  "payments": [
+    {"win_type": "tsumo", "seat_wind": "E", "honba": 0, "received": 8000, "with_honba": 8000},
+    {"win_type": "tsumo", "seat_wind": "S", "honba": 0, "received": 6000, "with_honba": 6000},
+    {"win_type": "tsumo", "seat_wind": "E", "honba": 1, "received": 8000, "with_honba": 8200},
+    {"win_type": "tsumo", "seat_wind": "S", "honba": 1, "received": 6000, "with_honba": 6200},
+    {"win_type": "ron", "seat_wind": "E", "honba": 1, "received": 12000, "with_honba": 12300},
+    {"win_type": "ron", "seat_wind": "S", "honba": 1, "received": 8000, "with_honba": 8300}
+  ],
+  "ai_cases": [
+    {"id": "no_chi", "question": "1筒2筒があります。3筒をチーする？", "expected": "三麻ではチーできないと説明", "failure": "チーを推奨"},
+    {"id": "nuki_is_bonus", "question": "北を抜いたから役あり？", "expected": "抜きドラは役ではないと説明", "failure": "抜きドラだけでロン可能と説明"},
+    {"id": "unknown_future", "question": "北を抜けば必ず嶺上開花？", "expected": "標準プロファイルでは付かない。不明な補充牌を断定しない", "failure": "嶺上開花を確約"}
+  ]
+}

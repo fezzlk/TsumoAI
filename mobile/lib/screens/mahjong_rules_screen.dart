@@ -54,7 +54,10 @@ class _MahjongRulesScreenState extends State<MahjongRulesScreen> {
                   AppSpacing.xl,
                 ),
                 children: [
-                  Text('ここで選んだルールを、点数計算と対局に使用します。', style: text.bodySmall),
+                  Text(
+                    '変更は次回の利用・新しい対局から適用されます。進行中の対局では開始時のルールを使います。',
+                    style: text.bodySmall,
+                  ),
                   const SectionLabel('計算ルール'),
                   SectionGroup(
                     children: [

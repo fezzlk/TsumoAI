@@ -46,6 +46,8 @@ import '../services/diagnostic_log.dart';
 import '../services/performance_trace.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
+import 'north_count_screen.dart';
+import '../widgets/north_count_counter.dart';
 import '../services/hand_error_messages.dart';
 import '../services/purpose_switch.dart';
 import '../widgets/purpose_switch_dialogs.dart';
@@ -75,6 +77,7 @@ class ScanScreen extends StatefulWidget {
   final ValueChanged<int>? onScoreConfirmed;
   final String? historyRoundLabel;
   final MahjongRuleSettings ruleSettings;
+  final int initialNorthCount;
 
   const ScanScreen({
     super.key,
@@ -90,7 +93,8 @@ class ScanScreen extends StatefulWidget {
     this.onScoreConfirmed,
     this.historyRoundLabel,
     this.ruleSettings = const MahjongRuleSettings(),
-  });
+    this.initialNorthCount = 0,
+  }) : assert(initialNorthCount >= 0 && initialNorthCount <= 4);
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -394,6 +398,9 @@ class _ScanScreenState extends State<ScanScreen> {
           isDealer: true,
         );
     _selectedWinnerIndex = widget.initialWinnerIndex;
+    _extractedNorthCount = widget.ruleSettings.rules.isSanma
+        ? widget.initialNorthCount
+        : 0;
     _cameraLifecycle = CameraLifecycle(
       open: () async {
         // Permission dialogs also emit resume. A denial must wait for an
@@ -1437,6 +1444,7 @@ class _ScanScreenState extends State<ScanScreen> {
     }
     final addedTile = await TileImagePicker.show(
       context,
+      sanma: widget.ruleSettings.rules.isSanma,
       title: '${_purpose.label}は$required枚で行います。足りない牌を選択',
     );
     if (addedTile == null || !mounted) return null;
@@ -1458,6 +1466,17 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  void _setNorthCount(int count) {
+    if (count == _extractedNorthCount) return;
+    setState(() {
+      _extractedNorthCount = count;
+      _invalidateAnalysisAndMaybeRecalculate();
+    });
+  }
+
+  int _extractedNorthCount = 0;
+  List<String> get _extractedTiles => List.filled(_extractedNorthCount, "N");
+
   Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
     if (_interpretation == null) return;
     setState(_keepWinningTileOutsideMelds);
@@ -1466,6 +1485,22 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
 
+    if (widget.ruleSettings.rules.isSanma) {
+      final codes = _tiles.whereType<String>().toList();
+      if (codes.any((t) => RegExp(r'^[2-8]m$|^5mr$').hasMatch(t))) {
+        _showError('3人麻雀では2〜8萬・赤5萬は使えません。認識結果を修正してください');
+        return;
+      }
+      if (codes.where((t) => t == 'N').length + _extractedNorthCount > 4) {
+        _showError('手牌と抜き北の合計が4枚を超えています');
+        return;
+      }
+      if (_context.seatWind == 'N' ||
+          _confirmedMelds.any((m) => m.type == 'chi')) {
+        _showError('3人麻雀では自風北・チーは使えません');
+        return;
+      }
+    }
     final observation = _buildObservation();
     final confirmation = ConfirmationV1(
       operation: _operation,
@@ -1525,6 +1560,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 )
                 .toList(growable: false),
             winTile: winTile,
+            extractedTiles: _extractedTiles,
           );
           final baseContext = _context.copyWith(akaDora: akaDoraCount);
           // ツモ and ロン are scored separately: one may be refused while the
@@ -1586,6 +1622,7 @@ class _ScanScreenState extends State<ScanScreen> {
             state: state,
             context: _context,
             rules: rules,
+            extractedTiles: _extractedTiles,
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
@@ -1599,6 +1636,7 @@ class _ScanScreenState extends State<ScanScreen> {
             state: state,
             context: _context,
             rules: rules,
+            extractedTiles: _extractedTiles,
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
@@ -1612,6 +1650,7 @@ class _ScanScreenState extends State<ScanScreen> {
             state: state,
             context: _context,
             rules: rules,
+            extractedTiles: _extractedTiles,
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
@@ -1685,6 +1724,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
     await _saveHistoryWithoutBlockingResult(
       HistoryEntry(
+        variant: widget.ruleSettings.rules.variant,
         id: _historyEntryId,
         createdAt: _historyCreatedAt,
         updatedAt: DateTime.now().toUtc(),
@@ -1698,8 +1738,12 @@ class _ScanScreenState extends State<ScanScreen> {
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
           'recognition_model': _recognitionModelMetadata,
-          'context': _context.toJson(),
+          'context': {
+            ..._context.toJson(),
+            'variant': widget.ruleSettings.rules.variant,
+          },
           'rule_settings': widget.ruleSettings.toJson(),
+          'extracted_tiles': _extractedTiles,
           'tsumo': resultDetails(tsumoResponse),
           'ron': resultDetails(ronResponse),
         },
@@ -1716,6 +1760,7 @@ class _ScanScreenState extends State<ScanScreen> {
     };
     await _saveHistoryWithoutBlockingResult(
       HistoryEntry(
+        variant: widget.ruleSettings.rules.variant,
         id: _historyEntryId,
         createdAt: _historyCreatedAt,
         updatedAt: DateTime.now().toUtc(),
@@ -1726,8 +1771,12 @@ class _ScanScreenState extends State<ScanScreen> {
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
           'recognition_model': _recognitionModelMetadata,
-          'context': _context.toJson(),
+          'context': {
+            ..._context.toJson(),
+            'variant': widget.ruleSettings.rules.variant,
+          },
           'rule_settings': widget.ruleSettings.toJson(),
+          'extracted_tiles': _extractedTiles,
           'result': result,
           if (_chatMessages.isNotEmpty)
             'ai_conversation': _chatMessages
@@ -1766,7 +1815,11 @@ class _ScanScreenState extends State<ScanScreen> {
       context,
       purpose: _purpose == ScanPurpose.callAdvice ? 'call_advice' : 'discard',
       tiles: _tiles.whereType<String>().toList(growable: false),
-      roundContext: _context.toJson(),
+      roundContext: {
+        ..._context.toJson(),
+        "rules": widget.ruleSettings.rules.toJson(),
+        "extracted_tiles": _extractedTiles,
+      },
       analysis: {...result, 'selected_call': ?selectedCall},
       initialMessages: _chatMessages,
       initialSituationTags: [?discardFocus],
@@ -1843,7 +1896,11 @@ class _ScanScreenState extends State<ScanScreen> {
           _showError('これ以上牌を追加できません');
           return;
         }
-        addedTile = await TileImagePicker.show(context, title: '追加するツモ牌を選択');
+        addedTile = await TileImagePicker.show(
+          context,
+          sanma: widget.ruleSettings.rules.isSanma,
+          title: '追加するツモ牌を選択',
+        );
         if (addedTile == null || !mounted) return;
     }
 
@@ -1935,6 +1992,7 @@ class _ScanScreenState extends State<ScanScreen> {
         _operation == HandOperation.score && _hasScoreCalculation;
     final selected = await TileImagePicker.show(
       context,
+      sanma: widget.ruleSettings.rules.isSanma,
       currentTile: _tiles[index],
     );
     if (selected != null && mounted) {
@@ -1959,11 +2017,21 @@ class _ScanScreenState extends State<ScanScreen> {
     _invalidateAnalysisAndMaybeRecalculate();
   }
 
-  void _selectWinner(int index) {
+  Future<void> _selectWinner(int index) async {
     if (index < 0 || index >= widget.winnerOptions.length) return;
+    final sameWinner = index == _selectedWinnerIndex;
+    final northCount = !widget.ruleSettings.rules.isSanma
+        ? 0
+        : sameWinner
+        ? _extractedNorthCount
+        : await Navigator.of(context).push<int>(
+            MaterialPageRoute(builder: (_) => const NorthCountScreen()),
+          );
+    if (!mounted || northCount == null) return;
     final winnerContext = widget.winnerOptions[index].context;
     setState(() {
       _selectedWinnerIndex = index;
+      _extractedNorthCount = northCount;
       _updateContext(
         _context.copyWith(
           roundWind: winnerContext.roundWind,
@@ -2186,6 +2254,10 @@ class _ScanScreenState extends State<ScanScreen> {
     required String type,
     required bool open,
   }) {
+    if (widget.ruleSettings.rules.isSanma && type == "chi") {
+      _showError("3人麻雀ではチーできません");
+      return;
+    }
     final observationIds = (selection.toList()..sort())
         .map((index) => 'tile-${index.toString().padLeft(3, '0')}')
         .toList(growable: false);
@@ -2272,7 +2344,8 @@ class _ScanScreenState extends State<ScanScreen> {
                       FilledButton(
                         onPressed:
                             detection == MeldDetection.pon ||
-                                detection == MeldDetection.chi
+                                (detection == MeldDetection.chi &&
+                                    !widget.ruleSettings.rules.isSanma)
                             ? () => addMeld(
                                 detection == MeldDetection.pon ? 'pon' : 'chi',
                                 open: true,
@@ -3127,6 +3200,13 @@ class _ScanScreenState extends State<ScanScreen> {
       children: [
         _stepHeading(ura ? '裏ドラ' : '表ドラ', ura ? '裏ドラを選択' : '表ドラを選択'),
         const SizedBox(height: AppSpacing.l),
+        if (!ura && widget.ruleSettings.rules.isSanma) ...[
+          NorthCountCounter(
+            value: _extractedNorthCount,
+            onChanged: _setNorthCount,
+          ),
+          const SizedBox(height: AppSpacing.m),
+        ],
         Row(
           children: [
             Expanded(child: Text(label, style: _text.titleSmall)),
@@ -3195,6 +3275,7 @@ class _ScanScreenState extends State<ScanScreen> {
         SizedBox(
           height: 300,
           child: TileImagePicker(
+            sanma: widget.ruleSettings.rules.isSanma,
             showHeader: false,
             onTileSelected: (tile) => _selectConditionTile(tile, ura: ura),
           ),
@@ -3234,7 +3315,9 @@ class _ScanScreenState extends State<ScanScreen> {
           children: [
             ScreenHeader(
               title: _purpose.label,
-              subtitle: '手牌の写真から確認',
+              subtitle: widget.ruleSettings.rules.isSanma
+                  ? '3人麻雀'
+                  : '手牌の写真から確認',
               trailing: HeaderHomeButton(
                 onPressed: () => Navigator.maybePop(context),
               ),
@@ -3254,7 +3337,7 @@ class _ScanScreenState extends State<ScanScreen> {
         children: [
           ScreenHeader(
             title: _purpose.label,
-            subtitle: '手牌を読み取り',
+            subtitle: widget.ruleSettings.rules.isSanma ? '3人麻雀' : '手牌を読み取り',
             trailing: HeaderHomeButton(
               onPressed: () => Navigator.maybePop(context),
             ),
@@ -3805,7 +3888,8 @@ class _ScanScreenState extends State<ScanScreen> {
         children: [
           ScreenHeader(
             title: _resultsTitle,
-            subtitle: isScore ? '認識・条件を変更可能' : '認識結果を変更可能',
+            subtitle:
+                '${widget.ruleSettings.rules.variantLabel} · ${isScore ? '認識・条件を変更可能' : '認識結果を変更可能'}',
             onBack: _backToCamera,
             trailing: HeaderHomeButton(
               onPressed: () => Navigator.maybePop(context),
@@ -3828,6 +3912,9 @@ class _ScanScreenState extends State<ScanScreen> {
                   // Winds and 表ドラ for every check (the analysis API uses the
                   // context); 裏ドラ and the win-time chips only for scoring.
                   GameStatePanel(
+                    sanma: widget.ruleSettings.rules.isSanma,
+                    northCount: _extractedNorthCount,
+                    onNorthCountChanged: _setNorthCount,
                     context_: _context,
                     onChanged: (c) => setState(() => _updateContext(c)),
                     conditionChips: isScore ? _conditionChips() : const [],

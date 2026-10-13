@@ -1361,3 +1361,8 @@ def download_model_file(filename: str) -> Response:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/capabilities")
+def get_capabilities():
+    return {"mahjong_variants": ["yonma", "sanma"], "sanma_profile": "sanma_standard_v1", "extracted_tiles": "manual_north"}

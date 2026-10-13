@@ -42,7 +42,7 @@ def _point_label_from_han_fu(han: int, fu: int, rules: RuleSet) -> str:
 def _calc_points(
     context: ContextInput, han: int, fu: int, rules: RuleSet, base_override: int | None = None
 ) -> tuple[Points, Payments]:
-    return calculate_payments(context, han, fu, base_override, kazoe_yakuman_ari=rules.kazoe_yakuman_ari)
+    return calculate_payments(context, han, fu, base_override, kazoe_yakuman_ari=rules.kazoe_yakuman_ari, player_count=3 if rules.variant == "sanma" else 4)
 
 
 def _calc_fu_for_pattern(
@@ -61,6 +61,8 @@ def _calc_fu_for_pattern(
 
 def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> ScoreResult:
     """Hand shape -> score. This module must not parse image bytes."""
+    from app.hand_validation import validate_rule_state
+    validate_rule_state(hand.closed_tiles, hand.melds, hand.extracted_tiles, rules, context)
     yakuman_hits, yakuman_multiplier = _yakuman_hits(hand, context, rules)
     if yakuman_hits:
         han = 13 * yakuman_multiplier
@@ -120,7 +122,7 @@ def score_hand_shape(hand: HandInput, context: ContextInput, rules: RuleSet) -> 
     # Dora (same for all interpretations)
     dora, dora_items = evaluate_dora(hand, context, rules)
     dora_yaku = list(dora_items)
-    dora_han_total = dora.dora + dora.aka_dora + dora.ura_dora
+    dora_han_total = dora.dora + dora.aka_dora + dora.ura_dora + dora.nuki_dora
 
     # Enumerate all interpretations, pick the one with highest points
     best_received = -1

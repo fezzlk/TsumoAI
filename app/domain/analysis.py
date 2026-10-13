@@ -20,27 +20,31 @@ class DiscardAnalysis:
 
 
 def enumerate_improving_tiles(
-    counts: tuple[int, ...], completed_melds: int = 0, visible_counts: tuple[int, ...] | None = None
+    counts: tuple[int, ...], completed_melds: int = 0, visible_counts: tuple[int, ...] | None = None,
+    tile_supply: tuple[int, ...] | None = None
 ) -> tuple[Wait, ...]:
     validate_counts(counts)
     visible = visible_counts or counts
+    supply = tile_supply or (4,) * 34
     current = calculate_shanten(counts, completed_melds)
     waits: list[Wait] = []
     for index in range(34):
-        if counts[index] >= 4:
+        if counts[index] >= supply[index]:
             continue
         work = list(counts)
         work[index] += 1
         if calculate_shanten(tuple(work), completed_melds) < current:
-            waits.append(Wait(index_to_tile(index), max(0, 4 - visible[index])))
+            waits.append(Wait(index_to_tile(index), max(0, supply[index] - visible[index])))
     return tuple(waits)
 
 
 def analyze_discards(
-    counts: tuple[int, ...], completed_melds: int = 0, visible_counts: tuple[int, ...] | None = None
+    counts: tuple[int, ...], completed_melds: int = 0, visible_counts: tuple[int, ...] | None = None,
+    tile_supply: tuple[int, ...] | None = None
 ) -> tuple[DiscardAnalysis, ...]:
     validate_counts(counts)
     visible = visible_counts or counts
+    supply = tile_supply or (4,) * 34
     results: list[DiscardAnalysis] = []
     for index, count in enumerate(counts):
         if not count:
@@ -52,7 +56,7 @@ def analyze_discards(
             DiscardAnalysis(
                 discard=index_to_tile(index),
                 shanten=calculate_shanten(reduced, completed_melds),
-                waits=enumerate_improving_tiles(reduced, completed_melds, visible),
+                waits=enumerate_improving_tiles(reduced, completed_melds, visible, supply),
             )
         )
     return tuple(sorted(results, key=lambda item: (item.shanten, -sum(wait.remaining for wait in item.waits), item.discard)))

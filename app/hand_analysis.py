@@ -5,7 +5,8 @@ from app.domain.analysis import analyze_discards, enumerate_improving_tiles
 from app.domain.shanten import calculate_shanten
 from app.domain.tiles import index_to_tile, tile_to_index, tiles_to_counts
 from app.hand_scoring import score_hand_shape
-from app.hand_validation import validate_hand_context, validate_hand_tiles_and_melds, validate_winning_hand
+from app.hand_validation import validate_hand_context, validate_hand_tiles_and_melds, validate_winning_hand, validate_rule_state
+from app.domain.rules import ResolvedRules
 from app.schemas import (
     AnalysisRequestBase,
     CallAnalysisRequest,
@@ -25,11 +26,11 @@ from app.schemas import (
 )
 
 
-_BONUS_YAKU_NAMES = {"ドラ", "赤ドラ", "裏ドラ"}
+_BONUS_YAKU_NAMES = {"ドラ", "赤ドラ", "裏ドラ", "抜きドラ"}
 
 
 def _all_visible_counts(request: AnalysisRequestBase) -> tuple[int, ...]:
-    tiles = list(request.closed_tiles)
+    tiles = [*request.closed_tiles, *request.extracted_tiles]
     for meld in request.melds:
         tiles.extend(meld.tiles)
     return tiles_to_counts(tiles)
@@ -38,7 +39,7 @@ def _all_visible_counts(request: AnalysisRequestBase) -> tuple[int, ...]:
 def _score_wait(request: AnalysisRequestBase, base_tiles: list[str], tile: str):
     if not request.include_score_predictions or request.context is None:
         return None, None
-    hand = HandInput(closed_tiles=[*base_tiles, tile], melds=request.melds, win_tile=tile)
+    hand = HandInput(closed_tiles=[*base_tiles, tile], melds=request.melds, win_tile=tile, extracted_tiles=request.extracted_tiles)
     try:
         validate_winning_hand(hand, request.context)
         return score_hand_shape(hand, request.context, request.rules), None
@@ -163,6 +164,7 @@ def _validated_counts(request: AnalysisRequestBase, expected: int, operation: st
     if any(value > 4 for value in visible_counts):
         index = next(index for index, value in enumerate(visible_counts) if value > 4)
         raise ValueError(f"tile appears more than four times: {index_to_tile(index)}")
+    validate_rule_state(request.closed_tiles, request.melds, request.extracted_tiles, request.rules, request.context)
     return closed_counts, visible_counts
 
 
@@ -171,7 +173,7 @@ def analyze_tenpai(request: TenpaiAnalysisRequest) -> TenpaiAnalysisResponse:
     expected = 13 - completed_melds * 3
     closed_counts, visible_counts = _validated_counts(request, expected, "tenpai analysis")
     shanten = calculate_shanten(closed_counts, completed_melds)
-    waits = enumerate_improving_tiles(closed_counts, completed_melds, visible_counts)
+    waits = enumerate_improving_tiles(closed_counts, completed_melds, visible_counts, ResolvedRules(request.rules.variant).tile_supply)
     scoring_requests = {}
     for win_type in ("ron", "tsumo"):
         context = request.context
@@ -220,7 +222,7 @@ def analyze_discard_options(request: DiscardAnalysisRequest) -> DiscardAnalysisR
     expected = 14 - completed_melds * 3
     closed_counts, visible_counts = _validated_counts(request, expected, "discard analysis")
     discard_results = []
-    for result in analyze_discards(closed_counts, completed_melds, visible_counts):
+    for result in analyze_discards(closed_counts, completed_melds, visible_counts, ResolvedRules(request.rules.variant).tile_supply):
         reduced = list(request.closed_tiles)
         removed_index = next(
             index for index, tile in enumerate(reduced) if tile_to_index(tile) == tile_to_index(result.discard)
@@ -259,7 +261,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                 "chankan": False, "tenhou": False, "chiihou": False,
             })
         current = analyze_tenpai(TenpaiAnalysisRequest(
-            closed_tiles=request.closed_tiles, melds=request.melds,
+            closed_tiles=request.closed_tiles, melds=request.melds, extracted_tiles=request.extracted_tiles,
             context=context, rules=request.rules, include_score_predictions=True,
         ))
         for wait in current.improving_tiles:
@@ -314,7 +316,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
         )
         visible = list(visible_counts)
         visible[call_tile_index] += 1
-        discard_options = analyze_discards(tuple(reduced), completed_melds + 1, tuple(visible))
+        discard_options = analyze_discards(tuple(reduced), completed_melds + 1, tuple(visible), ResolvedRules(request.rules.variant).tile_supply)
         best_shanten = discard_options[0].shanten
         best_discards = [item for item in discard_options if item.shanten == best_shanten]
         discard_results: list[DiscardAnalysisResult] = []
@@ -355,7 +357,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
         )
 
     for call_index in range(34):
-        if visible_counts[call_index] >= 4 or call_index in ron_tiles:
+        if visible_counts[call_index] >= ResolvedRules(request.rules.variant).tile_supply[call_index] or call_index in ron_tiles:
             continue
         if closed_counts[call_index] >= 2:
             add_open_call(call_index, "pon", [call_index, call_index])
@@ -375,7 +377,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
             visible = list(visible_counts)
             visible[call_index] += 1
             replacement_tiles = enumerate_improving_tiles(
-                tuple(reduced), completed_melds + 1, tuple(visible)
+                tuple(reduced), completed_melds + 1, tuple(visible), ResolvedRules(request.rules.variant).tile_supply
             )
             replacement_shanten = calculate_shanten(tuple(reduced), completed_melds + 1)
             replacement_results, tsumo_results = _call_wait_results(
@@ -400,7 +402,7 @@ def analyze_call_options(request: CallAnalysisRequest) -> CallAnalysisResponse:
                 )
             )
 
-        if call_index >= 27:
+        if call_index >= 27 or not ResolvedRules(request.rules.variant).chi_allowed:
             continue
         rank = call_index % 9
         suit_start = call_index - rank
