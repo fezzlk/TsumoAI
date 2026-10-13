@@ -12,11 +12,14 @@ def evaluate_dora(
     rules = rules or RuleSet()
     ura_eligible = (context.riichi or context.double_riichi) and not any(meld.open for meld in hand.melds)
     breakdown = DoraBreakdown(
-        dora=_count_dora(hand, context.dora_indicators),
+        nuki_dora=len(hand.extracted_tiles),
+        dora=_count_dora(hand, context.dora_indicators, rules),
         aka_dora=context.aka_dora_count if rules.aka_ari else 0,
-        ura_dora=_count_dora(hand, context.ura_dora_indicators) if ura_eligible else 0,
+        ura_dora=_count_dora(hand, context.ura_dora_indicators, rules) if ura_eligible else 0,
     )
     items = []
+    if breakdown.nuki_dora:
+        items.append(YakuItem(name="抜きドラ", han=breakdown.nuki_dora))
     if breakdown.dora:
         items.append(YakuItem(name="ドラ", han=breakdown.dora))
     if breakdown.aka_dora:
@@ -26,9 +29,9 @@ def evaluate_dora(
     return breakdown, tuple(items)
 
 
-def _count_dora(hand: HandInput, indicators: list[str]) -> int:
-    counts = Counter(_all_tiles(hand))
-    return sum(counts.get(_next_dora(indicator), 0) for indicator in indicators)
+def _count_dora(hand: HandInput, indicators: list[str], rules: RuleSet | None = None) -> int:
+    counts = Counter([*_all_tiles(hand), *hand.extracted_tiles])
+    return sum(counts.get(_next_dora(indicator, rules), 0) for indicator in indicators)
 
 
 def _all_tiles(hand: HandInput) -> list[str]:
@@ -38,8 +41,10 @@ def _all_tiles(hand: HandInput) -> list[str]:
     return tiles
 
 
-def _next_dora(indicator: str) -> str:
+def _next_dora(indicator: str, rules: RuleSet | None = None) -> str:
     tile = normalize_tile(indicator)
+    if rules is not None and rules.variant == "sanma" and tile in {"1m", "9m"}:
+        return "9m" if tile == "1m" else "1m"
     if len(tile) == 2:
         number = int(tile[0])
         return f"{1 if number == 9 else number + 1}{tile[1]}"

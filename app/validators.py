@@ -4,7 +4,7 @@ from fastapi import HTTPException
 
 from app.domain.decomposition import is_winning_hand
 from app.domain.tiles import tiles_to_counts
-from app.hand_validation import validate_tile_code, validate_winning_hand
+from app.hand_validation import validate_tile_code, validate_winning_hand, validate_rule_state
 from app.schemas import HandInput, ScoreRequest
 
 
@@ -23,5 +23,6 @@ def validate_score_request(req: ScoreRequest) -> None:
     req.context.is_dealer = req.context.seat_wind == "E"
     try:
         validate_winning_hand(req.hand, req.context)
+        validate_rule_state(req.hand.closed_tiles, req.hand.melds, req.hand.extracted_tiles, req.rules, req.context)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -13,7 +13,7 @@ from app.schemas import (
 from app.scoring.payments import calculate_payments
 
 
-BONUS_NAMES = {"ドラ", "赤ドラ", "裏ドラ"}
+BONUS_NAMES = {"ドラ", "赤ドラ", "裏ドラ", "抜きドラ"}
 NO_YAKU_ERROR = "No yaku: dora-only hands cannot win"
 
 
@@ -177,7 +177,7 @@ def assess_call_branch(
     estimate = None
     if prospects and request.context is not None and request.include_score_predictions:
         ron_context = request.context.model_copy(update={"win_type": "ron"})
-        points = [calculate_payments(ron_context, item.han, fu, kazoe_yakuman_ari=request.rules.kazoe_yakuman_ari)[0].ron
+        points = [calculate_payments(ron_context, item.han, fu, kazoe_yakuman_ari=request.rules.kazoe_yakuman_ari, player_count=3 if request.rules.variant == "sanma" else 4)[0].ron
                   for item in prospects for fu in (30, 40)]
         estimate = CallScoreEstimate(min_points=min(points), max_points=max(points),
                                     basis=f"{_basis(request)}。各候補役が単独で成立した場合の参考値（30〜40符・ドラなし）。役の複合・実際の符で変動。")

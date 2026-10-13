@@ -45,6 +45,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  late MahjongRuleSettings _ruleSettings;
   late bool _autoClassify;
   late bool _showTrainingDataActions;
   bool _checkingAdmin = true;
@@ -53,9 +54,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _ruleSettings = widget.ruleSettings;
     _autoClassify = widget.autoClassify;
     _showTrainingDataActions = widget.showTrainingDataActions;
     _loadAdminClaim();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ruleSettings != widget.ruleSettings) {
+      _ruleSettings = widget.ruleSettings;
+    }
+  }
+
+  void _setRuleSettings(MahjongRuleSettings value) {
+    setState(() => _ruleSettings = value);
+    widget.onRuleSettingsChanged(value);
   }
 
   Future<void> _loadAdminClaim() async {
@@ -128,8 +143,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => MahjongRulesScreen(
-                              settings: widget.ruleSettings,
-                              onChanged: widget.onRuleSettingsChanged,
+                              settings: _ruleSettings,
+                              onChanged: _setRuleSettings,
                             ),
                           ),
                         ),

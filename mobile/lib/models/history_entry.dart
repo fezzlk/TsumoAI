@@ -1,5 +1,12 @@
 class HistoryEntry {
+  final String variant;
+  String get variantLabel => switch (variant) {
+    "sanma" => "3人麻雀",
+    "yonma" => "4人麻雀",
+    _ => "人数不明",
+  };
   const HistoryEntry({
+    this.variant = "yonma",
     required this.id,
     required this.createdAt,
     required this.updatedAt,
@@ -22,6 +29,7 @@ class HistoryEntry {
   final String? accountUid;
 
   factory HistoryEntry.fromJson(Map<String, dynamic> json) => HistoryEntry(
+    variant: json["variant"] as String? ?? "yonma",
     id: json['id'] as String,
     createdAt: DateTime.parse(json['created_at'] as String),
     updatedAt: DateTime.parse(
@@ -39,6 +47,7 @@ class HistoryEntry {
     if (includeId) 'id': id,
     'created_at': createdAt.toUtc().toIso8601String(),
     'updated_at': updatedAt.toUtc().toIso8601String(),
+    'variant': variant,
     'purpose': purpose,
     'title': title,
     'summary': summary,
@@ -52,6 +61,7 @@ class HistoryEntry {
     Map<String, dynamic>? details,
     String? accountUid,
   }) => HistoryEntry(
+    variant: variant,
     id: id,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,

@@ -68,8 +68,10 @@ void main() {
   ) async {
     await tester.pumpWidget(const TsumoAIApp());
 
+    await tester.scrollUntilVisible(find.text('利用履歴'), 150);
     expect(find.text('利用履歴'), findsOneWidget);
 
+    await tester.scrollUntilVisible(find.byTooltip('設定'), -150);
     await tester.tap(find.byTooltip('設定'));
     await tester.pumpAndSettle();
 

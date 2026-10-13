@@ -26,6 +26,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   late final HistoryService _service = widget.service ?? HistoryService();
   List<HistoryEntry> _entries = [];
   String _filter = 'all';
+  String _variantFilter = 'all';
   bool _loading = true;
   bool _syncing = false;
 
@@ -78,9 +79,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final entries = _filter == 'all'
-        ? _entries
-        : _entries.where((entry) => entry.purpose == _filter).toList();
+    final entries = _entries
+        .where(
+          (entry) =>
+              (_filter == 'all' || entry.purpose == _filter) &&
+              (_variantFilter == 'all' || entry.variant == _variantFilter),
+        )
+        .toList();
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -113,6 +118,29 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         ),
                         children: [
                           _signedOutNotice(),
+                          Text(
+                            'この端末に保存・同期された履歴を表示',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: AppSpacing.s),
+                          SegmentedButton<String>(
+                            key: const ValueKey('history-variant-filter'),
+                            segments: const [
+                              ButtonSegment(value: 'all', label: Text('すべて')),
+                              ButtonSegment(
+                                value: 'sanma',
+                                label: Text('3人麻雀'),
+                              ),
+                              ButtonSegment(
+                                value: 'yonma',
+                                label: Text('4人麻雀'),
+                              ),
+                            ],
+                            selected: {_variantFilter},
+                            onSelectionChanged: (values) =>
+                                setState(() => _variantFilter = values.single),
+                          ),
+                          const SizedBox(height: AppSpacing.m),
                           if (entries.isEmpty)
                             Padding(
                               padding: const EdgeInsets.symmetric(
@@ -120,12 +148,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               ),
                               child: Center(
                                 child: Text(
-                                  '履歴はまだありません',
+                                  _entries.isEmpty
+                                      ? '履歴はまだありません'
+                                      : '条件に一致する履歴はありません',
                                   style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                               ),
-                            )
-                          else
+                            ),
+                          if (entries.isEmpty && _entries.isNotEmpty)
+                            TextButton(
+                              onPressed: () => setState(() {
+                                _filter = 'all';
+                                _variantFilter = 'all';
+                              }),
+                              child: const Text('絞り込みを解除'),
+                            ),
+                          if (entries.isNotEmpty)
                             for (final group in _groupByDay(entries)) ...[
                               SectionLabel(group.$1),
                               SectionGroup(
@@ -157,7 +195,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
         padding: const EdgeInsets.all(AppSpacing.l),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
           borderRadius: BorderRadius.circular(AppRadius.xLarge),
         ),
         child: Row(
@@ -244,16 +284,34 @@ class _HistoryScreenState extends State<HistoryScreen> {
         if (entry.roundLabel != null) entry.roundLabel!,
         entry.summary,
       ].join('  '),
-      trailing: Row(
+      trailing: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(
-            _timeLabel(entry.createdAt),
-            style: Theme.of(context).textTheme.bodySmall,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(AppRadius.chip),
+            ),
+            child: Text(
+              entry.variantLabel,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
           ),
-          Icon(
-            Icons.chevron_right,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _timeLabel(entry.createdAt),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ],
           ),
         ],
       ),
@@ -345,7 +403,9 @@ class _FilterTab extends StatelessWidget {
                   label,
                   maxLines: 1,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+                    color: selected
+                        ? scheme.onPrimary
+                        : scheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -385,7 +445,13 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
         .map((tile) => tile.toString())
         .toList(growable: false);
     final analysis = _historyMap(_entry.details['result']);
-    final roundContext = _historyMap(_entry.details['context']);
+    final roundContext = {
+      ..._historyMap(_entry.details['context']),
+      'rules':
+          _historyMap(_entry.details['rule_settings'])['rules'] ??
+          {'variant': _entry.variant},
+      'extracted_tiles': _entry.details['extracted_tiles'] ?? [],
+    };
     await AIChatSheet.show(
       context,
       purpose: _entry.purpose,
@@ -420,7 +486,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
     final analysis = _historyMap(_entry.details['result']);
     final contextDetails = _historyMap(_entry.details['context']);
     return Scaffold(
-      appBar: AppBar(title: Text(_entry.title)),
+      appBar: AppBar(title: Text("${_entry.title} · ${_entry.variantLabel}")),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),

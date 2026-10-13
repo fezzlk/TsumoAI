@@ -112,6 +112,7 @@ class Meld(BaseModel):
 
 
 class HandInput(BaseModel):
+    extracted_tiles: list[TileCode] = Field(default_factory=list, max_length=4)
     closed_tiles: list[TileCode]
     melds: list[Meld] = Field(default_factory=list)
     win_tile: TileCode
@@ -139,6 +140,7 @@ class ContextInput(BaseModel):
 
 
 class RuleSet(BaseModel):
+    variant: Literal["yonma", "sanma"] = "yonma"
     aka_ari: bool = True
     kuitan_ari: bool = True
     double_yakuman_ari: bool = True
@@ -174,6 +176,7 @@ class YakuItem(BaseModel):
 
 
 class DoraBreakdown(BaseModel):
+    nuki_dora: int = 0
     dora: int
     aka_dora: int
     ura_dora: int
@@ -219,6 +222,7 @@ class ScoreResponse(BaseModel):
 
 
 class AnalysisRequestBase(BaseModel):
+    extracted_tiles: list[TileCode] = Field(default_factory=list, max_length=4)
     closed_tiles: list[TileCode]
     melds: list[Meld] = Field(default_factory=list)
     context: ContextInput | None = None
@@ -336,6 +340,7 @@ class CallAnalysisResponse(BaseModel):
 
 
 class HistoryItemUpsert(BaseModel):
+    variant: Literal["yonma", "sanma"] = "yonma"
     created_at: datetime
     purpose: Literal["score", "wait", "discard", "call_advice"]
     title: str = Field(min_length=1, max_length=80)

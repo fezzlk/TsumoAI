@@ -57,7 +57,7 @@ def test_dora_component_handles_normal_red_and_ura_dora():
     breakdown, items = evaluate_dora(
         hand, context(riichi=True, dora_indicators=["4m"], ura_dora_indicators=["1p"], aka_dora_count=1)
     )
-    assert breakdown.model_dump() == {"dora": 2, "aka_dora": 1, "ura_dora": 1}
+    assert breakdown.model_dump() == {"dora": 2, "aka_dora": 1, "ura_dora": 1, "nuki_dora": 0}
     assert [item.name for item in items] == ["ドラ", "赤ドラ", "裏ドラ"]
 
 
