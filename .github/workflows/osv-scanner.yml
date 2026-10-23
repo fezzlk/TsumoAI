@@ -1,0 +1,40 @@
+name: OSV-Scanner
+
+# Report-only dependency vulnerability scan (FEZ-217).
+# Findings never fail CI and are not uploaded to Code Scanning; they are
+# written to the job summary. Revisit once the false-positive rate is known.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # The reusable workflows in osv-scanner-action require
+      # security-events: write even with upload-sarif disabled, so the
+      # scanner action is called directly to keep the token read-only.
+      - name: Scan dependencies
+        uses: google/osv-scanner-action/osv-scanner-action@v2.7.0
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --recursive
+            --format=markdown
+            --output-file=osv-results.md
+            ./
+      - name: Write results to job summary
+        if: always()
+        run: |
+          if [ -f osv-results.md ]; then
+            cat osv-results.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "OSV-Scanner produced no results file." >> "$GITHUB_STEP_SUMMARY"
+          fi
