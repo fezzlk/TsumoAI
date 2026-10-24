@@ -118,6 +118,14 @@ class _ResultCard extends StatelessWidget {
               _paymentCaption(result),
               style: text.bodySmall?.copyWith(color: ink),
             ),
+            if (result.payments.kyotakuBonus > 0) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '供託 +${_format(result.payments.kyotakuBonus)}・'
+                '受け取り合計 ${_format(result.payments.totalReceived)}',
+                style: text.bodySmall?.copyWith(color: ink),
+              ),
+            ],
             if (_isNamedLimit(result.pointLabel)) ...[
               const SizedBox(height: AppSpacing.s),
               Container(
@@ -163,16 +171,33 @@ class _ResultCard extends StatelessWidget {
     );
   }
 
+  /// 本場 each payer adds on top of `points`: the server's honba_bonus is the
+  /// winner's total, split evenly across the tsumo payers.
+  int _honbaPerPayer(ScoreResult result) {
+    final bonus = result.payments.honbaBonus;
+    if (!isTsumo) return bonus;
+    return bonus ~/ (panel.ruleSettings.rules.isSanma ? 2 : 3);
+  }
+
   String _payment(ScoreResult result) {
     final points = result.points;
-    if (!isTsumo) return _format(points.ron);
+    final honba = _honbaPerPayer(result);
+    if (!isTsumo) return _format(points.ron + honba);
+    final nonDealer = points.tsumoNonDealerPay + honba;
+    final dealer = points.tsumoDealerPay + honba;
     if (points.tsumoDealerPay == points.tsumoNonDealerPay) {
-      return '${_format(points.tsumoNonDealerPay)} オール';
+      return '${_format(nonDealer)} オール';
     }
-    return '${_format(points.tsumoNonDealerPay)} / ${_format(points.tsumoDealerPay)}';
+    return '${_format(nonDealer)} / ${_format(dealer)}';
   }
 
   String _paymentCaption(ScoreResult result) {
+    final honba = _honbaPerPayer(result);
+    final suffix = honba > 0 ? '（本場 +${_format(honba)}込み）' : '';
+    return '${_payerCaption(result)}$suffix';
+  }
+
+  String _payerCaption(ScoreResult result) {
     final points = result.points;
     if (!isTsumo) return '放銃者の支払い';
     if (panel.ruleSettings.rules.isSanma) {
