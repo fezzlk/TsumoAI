@@ -44,6 +44,8 @@ import '../services/app_preferences.dart';
 import '../services/scan_diagnostics_client.dart';
 import '../services/diagnostic_log.dart';
 import '../services/performance_trace.dart';
+import '../services/test_hand_image.dart';
+import '../services/test_hands.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
 import 'north_count_screen.dart';
@@ -222,6 +224,11 @@ class _ScanScreenState extends State<ScanScreen> {
   int? _selectedWinnerIndex;
   bool _resumeWinConditionsAfterRetake = false;
 
+  // FEZ-256: developers can load a fixed hand instead of photographing one.
+  // A loaded hand is never sent as training data or saved to history.
+  bool _isDeveloper = false;
+  bool _isTestHand = false;
+
   bool get _usesWinConditionWizard =>
       widget.onScoreConfirmed != null && widget.purpose == ScanPurpose.score;
 
@@ -398,6 +405,9 @@ class _ScanScreenState extends State<ScanScreen> {
           isDealer: true,
         );
     _selectedWinnerIndex = widget.initialWinnerIndex;
+    AuthService.isAdmin().then((isAdmin) {
+      if (mounted && isAdmin) setState(() => _isDeveloper = true);
+    });
     _extractedNorthCount = widget.ruleSettings.rules.isSanma
         ? widget.initialNorthCount
         : 0;
@@ -712,9 +722,14 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  void _acceptPhoto(Uint8List framedBytes, img.Image decoded) {
+  void _acceptPhoto(
+    Uint8List framedBytes,
+    img.Image decoded, {
+    bool testHand = false,
+  }) {
     setState(() {
       final resumeWinConditions = _resumeWinConditionsAfterRetake;
+      _isTestHand = testHand;
       _capturedBytes = framedBytes;
       _capturedImage = decoded;
       _phase = _ScanPhase.detecting;
@@ -778,13 +793,68 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  Future<void> _chooseTestHand() async {
+    if (_isCapturing) return;
+    final hands = testHandsFor(sanma: widget.ruleSettings.rules.isSanma);
+    final hand = await showModalBottomSheet<TestHand>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(
+                title: Text('テスト牌姿'),
+                subtitle: Text('撮影の代わりに決まった牌姿を読み込みます（開発者のみ）'),
+              ),
+              for (final hand in hands)
+                ListTile(
+                  title: Text(hand.label),
+                  subtitle: Text(hand.description),
+                  onTap: () => Navigator.pop(sheetContext, hand),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (hand == null || !mounted) return;
+    await _loadTestHand(hand);
+  }
+
+  Future<void> _loadTestHand(TestHand hand) async {
+    setState(() => _isCapturing = true);
+    try {
+      final tiles = hand.tilesFor(
+        _expectedTileCount ?? _purpose.defaultTileCount,
+      );
+      final rendered = await renderTestHand(tiles);
+      if (!mounted) return;
+      _acceptPhoto(rendered.bytes, rendered.image, testHand: true);
+      await _classifyBoxesAndFinish(rendered.boxes, knownTiles: tiles);
+    } catch (error) {
+      if (mounted) _showError('テスト牌姿を読み込めませんでした: $error');
+    } finally {
+      if (mounted) setState(() => _isCapturing = false);
+    }
+  }
+
   /// Crop and on-device-classify each of [boxes] (in `_capturedImage`'s pixel
   /// coordinate space), populating `_tiles`/`_croppedImages`/`_tileQuads`,
   /// then move to the results phase. [angleHints] has one entry per box —
   /// see `segmentTilesWithHints`.
+  ///
+  /// [knownTiles] (a developer test hand) fills `_tiles` directly instead of
+  /// running the classifier.
   Future<void> _classifyBoxesAndFinish(
     List<Rect> boxes, {
     List<double>? angleHints,
+    List<String>? knownTiles,
   }) async {
     final srcImage = _capturedImage;
     if (srcImage == null) return;
@@ -827,7 +897,15 @@ class _ScanScreenState extends State<ScanScreen> {
     if (!_usesWinConditionWizard) {
       setState(() => _phase = _ScanPhase.results);
     }
-    if (widget.autoClassify && boxes.isNotEmpty) {
+    if (knownTiles != null) {
+      setState(() {
+        for (int i = 0; i < knownTiles.length && i < _maxPhysicalTiles; i++) {
+          _tiles[i] = knownTiles[i];
+          _predictedTiles[i] = knownTiles[i];
+        }
+        _invalidateInterpretation();
+      });
+    } else if (widget.autoClassify && boxes.isNotEmpty) {
       await _runClassification();
     }
     if (_usesWinConditionWizard && mounted) {
@@ -1789,6 +1867,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _saveHistoryWithoutBlockingResult(HistoryEntry entry) async {
+    if (_isTestHand) return;
     final saved = await _historyService.trySave(entry);
     if (!saved && mounted) {
       _showError('結果は確認できますが、履歴を保存できませんでした。端末の空き容量や保存設定を確認してください。');
@@ -1831,6 +1910,7 @@ class _ScanScreenState extends State<ScanScreen> {
         // Each write is isolated: one failed save must not leave the queue
         // in an error state that silently skips every later conversation.
         _historyUpdateQueue = _historyUpdateQueue.then((_) async {
+          if (_isTestHand) return;
           try {
             await _historyService.updateDetails(_historyEntryId, {
               'ai_conversation': messages
@@ -3446,6 +3526,20 @@ class _ScanScreenState extends State<ScanScreen> {
                   textAlign: TextAlign.center,
                   style: _text.labelMedium,
                 ),
+                if (_isDeveloper) ...[
+                  const SizedBox(height: AppSpacing.s),
+                  Center(
+                    child: TextButton.icon(
+                      key: const ValueKey('test-hand-button'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: _colors.developer.color,
+                      ),
+                      onPressed: _isCapturing ? null : _chooseTestHand,
+                      icon: const Icon(Icons.science_outlined),
+                      label: const Text('テスト牌姿'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -3869,7 +3963,9 @@ class _ScanScreenState extends State<ScanScreen> {
               message: '読み取り結果が合っていれば、下の「実行」を押してください。違う牌はタップして直せます。',
             ),
           ],
-          if (widget.showTrainingDataActions && _trainingTilesReady)
+          if (widget.showTrainingDataActions &&
+              !_isTestHand &&
+              _trainingTilesReady)
             Align(
               alignment: Alignment.centerRight,
               child: _trainingDataButton(),
@@ -3901,6 +3997,13 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_isTestHand) ...[
+                    const StatusBanner(
+                      kind: StatusKind.info,
+                      message: 'テスト牌姿です（履歴・学習データには保存しません）',
+                    ),
+                    const SizedBox(height: AppSpacing.s),
+                  ],
                   _recognitionCard(),
                   const SizedBox(height: AppSpacing.m),
 
