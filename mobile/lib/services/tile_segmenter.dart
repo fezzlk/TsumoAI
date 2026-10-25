@@ -1,8 +1,11 @@
 // On-device tile segmentation: given a photo of a mahjong hand, find the
 // pixel-space bounding box of each individual tile.
 //
-// This mirrors `app/tile_recognizer_local.py`'s `_segment_tiles` (server
-// side, Python) 1:1, including the joint tile-count constraint
+// This started as a 1:1 port of `app/tile_recognizer_local.py`'s
+// `_segment_tiles` (server side, Python). Since FEZ-245 it goes further —
+// multiple rows, tile backs, a thickness-based pitch guess and a fallback
+// that keeps a selected tile count — and the app only uses this version.
+// It keeps the joint tile-count constraint
 // used to resolve ambiguity no single blob's own periodicity signal can
 // resolve alone (harmonic-locked autocorrelation, or a blob with no
 // periodicity of its own such as an unrelated object in frame). See that
@@ -62,7 +65,8 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
   final maskRaw = Uint8List(mW * mH);
   for (int my = 0; my < mH; my++) {
     for (int mx = 0; mx < mW; mx++) {
-      if (_isWhitePixel(image, mx * scale, my * scale)) {
+      final px = mx * scale, py = my * scale;
+      if (_isWhitePixel(image, px, py) || _isTileBackPixel(image, px, py)) {
         maskRaw[my * mW + mx] = 1;
       }
     }
@@ -153,19 +157,32 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
   final vertical = (spanMaxY - spanMinY) >= (spanMaxX - spanMinX);
 
   // Drop components whose extent along the run axis substantially overlaps
-  // an already-kept larger component (glare/reflection noise).
+  // an already-kept larger component in the SAME row (glare/reflection
+  // noise). A component beside it across the row axis is a second row of
+  // tiles (melds set below the hand, a two-row layout), not noise: dropping
+  // those lost whole rows (FEZ-245).
   final sortedByArea = [...filtered]..sort((a, b) => b.area.compareTo(a.area));
   final kept = <_Comp>[];
   for (final c in sortedByArea) {
     final lo = vertical ? c.y : c.x;
     final hi = vertical ? c.y + c.h : c.x + c.w;
     final span = hi - lo;
+    final crossLo = vertical ? c.x : c.y;
+    final crossHi = vertical ? c.x + c.w : c.y + c.h;
     bool overlap = false;
     for (final k in kept) {
       final klo = vertical ? k.y : k.x;
       final khi = vertical ? k.y + k.h : k.x + k.w;
       final inter = math.max(0, math.min(hi, khi) - math.max(lo, klo));
-      if (span > 0 && inter / span > 0.5) {
+      final kCrossLo = vertical ? k.x : k.y;
+      final kCrossHi = vertical ? k.x + k.w : k.y + k.h;
+      final crossInter = math.max(
+        0,
+        math.min(crossHi, kCrossHi) - math.max(crossLo, kCrossLo),
+      );
+      final sameRow =
+          crossInter >= 0.5 * math.min(crossHi - crossLo, kCrossHi - kCrossLo);
+      if (sameRow && span > 0 && inter / span > 0.5) {
         overlap = true;
         break;
       }
@@ -181,11 +198,16 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
     for (final c in kept) _blobPitch(maskRaw, mW, c.x, c.y, c.w, c.h, vertical),
   ];
   final dims = [for (final bp in blobPitches) bp.$3.toDouble()];
+  final centerlines = [
+    for (final c in kept)
+      _blobCenterline(mask, mW, c.x, c.y, c.w, c.h, vertical),
+  ];
   final tileCounts = _resolveTileCounts(
     dims,
     blobPitches,
     expectedTileCount: expectedTileCount,
     allowExtendedAuto: allowExtendedAuto,
+    thicknesses: [for (final line in centerlines) line.extent],
   );
 
   // Subdivide each kept component into individual tiles, scaling back up
@@ -228,7 +250,7 @@ List<Rect> segmentTiles(img.Image image, {int? expectedTileCount}) =>
     final n = tileCounts[i];
     if (n <= 0) continue;
     final c = kept[i];
-    final centerline = _blobCenterline(mask, mW, c.x, c.y, c.w, c.h, vertical);
+    final centerline = centerlines[i];
     final halfExtent = centerline.extent / 2;
     if (vertical) {
       final subH = c.h / n;
@@ -753,6 +775,23 @@ double _bestStraighteningAngleDegrees(List<(int, int)> points) {
 
 // ───────── White-pixel test (RGB, low saturation / high value) ─────────
 
+/// A face-down tile seen from its back (暗槓, or a tile turned over): bright,
+/// strongly coloured yellow-orange, as on common two-colour sets. Without it
+/// a 暗槓 showed only its two face-up tiles (FEZ-245, case-007). Green backs
+/// cannot be told from the felt and stay invisible.
+bool _isTileBackPixel(img.Image image, int x, int y) {
+  final px = image.getPixel(x, y);
+  final r = px.r.toInt(), g = px.g.toInt(), b = px.b.toInt();
+  final maxC = math.max(r, math.max(g, b));
+  final minC = math.min(r, math.min(g, b));
+  if (maxC < 150 || maxC - minC < 0.4 * maxC) return false;
+  // Hue between ~15° and ~65° (orange to yellow): red is the largest
+  // channel, green in between, blue the smallest.
+  if (r != maxC || b != minC) return false;
+  final hue = 60.0 * (g - b) / (maxC - minC);
+  return hue >= 15 && hue <= 65;
+}
+
 bool _isWhitePixel(img.Image image, int x, int y) {
   final px = image.getPixel(x, y);
   final r = px.r.toInt(), g = px.g.toInt(), b = px.b.toInt();
@@ -1116,11 +1155,17 @@ double _median(List<double> values) {
 /// has a known total tile count. Without an explicit count this retains the
 /// original 13/14 behavior. See `_resolve_tile_counts` in
 /// `app/tile_recognizer_local.py` for the full rationale.
+/// Width-to-height ratios of an upright tile seen from above at an angle;
+/// a blob's thickness times these is a pitch guess that needs no visible
+/// seams (FEZ-245: touching tiles often show none).
+const List<double> _tileAspects = [0.64, 0.74];
+
 List<int> _resolveTileCounts(
   List<double> dims,
   List<(int?, double, int)> blobPitches, {
   int? expectedTileCount,
   bool allowExtendedAuto = false,
+  List<double>? thicknesses,
 }) {
   const referenceConfidence = 0.50;
   const minConfidence = 0.30;
@@ -1137,6 +1182,11 @@ List<int> _resolveTileCounts(
       ? _median(confidentPitches)
       : null;
   final fallbackPitch = ownPitches.isNotEmpty ? _median(ownPitches) : null;
+  // The row's thickness is shared by every blob (they are all tiles of one
+  // hand), so its median guards against a blob whose own outline is off.
+  final shapePitches = thicknesses == null || thicknesses.isEmpty
+      ? const <double>[]
+      : [for (final a in _tileAspects) _median(thicknesses) * a];
 
   final perBlobCosts = <Map<int, double>>[];
   for (int i = 0; i < dims.length; i++) {
@@ -1147,11 +1197,20 @@ List<int> _resolveTileCounts(
       ?fallbackPitch,
       if (pitch != null) pitch / 2,
       if (pitch != null) pitch / 3,
+      ...shapePitches,
     ];
     final costs = _pitchCountCosts(dims[i], hypotheses);
     if (costs.isNotEmpty) {
       final minCost = costs.values.reduce(math.min);
-      costs[0] = math.max(_dropMinCost, _dropCostMultiplier * minCost);
+      // Dropping a blob means calling it noise; the more tiles it would
+      // hold, the less likely that is.
+      final likelyTiles = shapePitches.isEmpty
+          ? 0.0
+          : dims[i] / _median(shapePitches);
+      costs[0] = math.max(
+        math.max(_dropMinCost, _dropCostMultiplier * minCost),
+        0.25 * likelyTiles,
+      );
     }
     perBlobCosts.add(costs);
   }
@@ -1190,6 +1249,12 @@ List<int> _resolveTileCounts(
     return bestCombo!;
   }
 
+  // A selected count is a strong prior even when no pitch hypothesis fits:
+  // share it across the blobs by their length rather than giving up.
+  if (expectedTileCount != null && dims.isNotEmpty) {
+    return _shareByLength(dims, expectedTileCount);
+  }
+
   final resolved = <int>[];
   for (int i = 0; i < dims.length; i++) {
     final (pitch, confidence, _) = blobPitches[i];
@@ -1204,4 +1269,22 @@ List<int> _resolveTileCounts(
     }
   }
   return resolved;
+}
+
+/// [total] tiles split across blobs in proportion to their [dims] (largest
+/// remainder), so the sum is exactly [total].
+List<int> _shareByLength(List<double> dims, int total) {
+  final sum = dims.fold<double>(0, (a, b) => a + b);
+  if (sum <= 0) return [total, for (var i = 1; i < dims.length; i++) 0];
+  final exact = [for (final d in dims) d / sum * total];
+  final counts = [for (final e in exact) e.floor()];
+  var left = total - counts.fold<int>(0, (a, b) => a + b);
+  final order = List<int>.generate(dims.length, (i) => i)
+    ..sort((a, b) => (exact[b] - counts[b]).compareTo(exact[a] - counts[a]));
+  for (final i in order) {
+    if (left == 0) break;
+    counts[i]++;
+    left--;
+  }
+  return counts;
 }

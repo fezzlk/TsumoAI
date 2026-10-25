@@ -26,3 +26,6 @@ data/eval_images_tilted/
 
 # scripts/evaluate_red_five.py image cache
 .cache/
+
+# FEZ-245 synthetic segmentation set: regenerate with scripts/generate_segmentation_eval_set.py
+data/segmentation_eval_v1/
