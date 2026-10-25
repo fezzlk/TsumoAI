@@ -87,6 +87,11 @@ class Payments {
       totalReceived: json['total_received'] as int,
     );
   }
+
+  /// 本場 each payer adds on top of `Points`: [honbaBonus] is the winner's
+  /// total, split evenly across the tsumo payers.
+  int honbaPerPayer({required bool tsumo, required bool sanma}) =>
+      tsumo ? honbaBonus ~/ (sanma ? 2 : 3) : honbaBonus;
 }
 
 class ScoreResult {

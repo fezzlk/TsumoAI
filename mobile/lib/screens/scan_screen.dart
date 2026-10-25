@@ -1786,16 +1786,26 @@ class _ScanScreenState extends State<ScanScreen> {
         ? '$winType: 不成立'
         : '$winType: ${response.result.han}翻${response.result.fu}符 '
               '${response.result.pointLabel}';
-    Map<String, dynamic>? resultDetails(ScoreResponse? response) {
+    Map<String, dynamic>? resultDetails(
+      ScoreResponse? response, {
+      required bool tsumo,
+    }) {
       if (response == null) return null;
       final result = response.result;
       return {
         'han': result.han,
         'fu': result.fu,
         'point_label': result.pointLabel,
+        // Hand points without 本場; each payer adds `honba_per_payer`.
         'ron': result.points.ron,
         'tsumo_dealer_pay': result.points.tsumoDealerPay,
         'tsumo_non_dealer_pay': result.points.tsumoNonDealerPay,
+        'honba_per_payer': result.payments.honbaPerPayer(
+          tsumo: tsumo,
+          sanma: widget.ruleSettings.rules.isSanma,
+        ),
+        'kyotaku_bonus': result.payments.kyotakuBonus,
+        'total_received': result.payments.totalReceived,
         'yaku': result.yaku.map((item) => item.name).toList(growable: false),
       };
     }
@@ -1822,8 +1832,8 @@ class _ScanScreenState extends State<ScanScreen> {
           },
           'rule_settings': widget.ruleSettings.toJson(),
           'extracted_tiles': _extractedTiles,
-          'tsumo': resultDetails(tsumoResponse),
-          'ron': resultDetails(ronResponse),
+          'tsumo': resultDetails(tsumoResponse, tsumo: true),
+          'ron': resultDetails(ronResponse, tsumo: false),
         },
         accountUid: AuthService.currentUser?.uid,
       ),

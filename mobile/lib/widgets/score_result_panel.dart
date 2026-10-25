@@ -171,13 +171,10 @@ class _ResultCard extends StatelessWidget {
     );
   }
 
-  /// 本場 each payer adds on top of `points`: the server's honba_bonus is the
-  /// winner's total, split evenly across the tsumo payers.
-  int _honbaPerPayer(ScoreResult result) {
-    final bonus = result.payments.honbaBonus;
-    if (!isTsumo) return bonus;
-    return bonus ~/ (panel.ruleSettings.rules.isSanma ? 2 : 3);
-  }
+  int _honbaPerPayer(ScoreResult result) => result.payments.honbaPerPayer(
+    tsumo: isTsumo,
+    sanma: panel.ruleSettings.rules.isSanma,
+  );
 
   String _payment(ScoreResult result) {
     final points = result.points;
@@ -228,8 +225,11 @@ class _ResultCard extends StatelessWidget {
   static bool _isNamedLimit(String label) =>
       RegExp(r'満|跳|倍|役満').hasMatch(label);
 
-  static String _format(int value) => value.toString().replaceAllMapped(
-    RegExp(r'(\d)(?=(\d{3})+$)'),
-    (match) => '${match[1]},',
-  );
+  static String _format(int value) => formatPoints(value);
 }
+
+/// Points with thousands separators (`2600` → `2,600`).
+String formatPoints(int value) => value.toString().replaceAllMapped(
+  RegExp(r'(\d)(?=(\d{3})+$)'),
+  (match) => '${match[1]},',
+);
