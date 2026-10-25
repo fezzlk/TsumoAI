@@ -9,6 +9,7 @@ import '../services/tile_assets.dart';
 /// [show] opens it as a bottom sheet with a centred title and a close
 /// button (tile-correction mockup).
 class TileImagePicker extends StatelessWidget {
+  final bool sanma;
   final String? currentTile;
   final ValueChanged<String> onTileSelected;
   final String title;
@@ -22,6 +23,7 @@ class TileImagePicker extends StatelessWidget {
 
   const TileImagePicker({
     super.key,
+    this.sanma = false,
     this.currentTile,
     required this.onTileSelected,
     this.title = '牌を選択',
@@ -43,6 +45,7 @@ class TileImagePicker extends StatelessWidget {
 
   static Future<String?> show(
     BuildContext context, {
+    bool sanma = false,
     String? currentTile,
     String title = '牌を選択',
   }) {
@@ -52,6 +55,7 @@ class TileImagePicker extends StatelessWidget {
         maxHeight: MediaQuery.of(context).size.height * 0.95,
       ),
       builder: (sheetContext) => TileImagePicker(
+        sanma: sanma,
         currentTile: currentTile,
         title: title,
         onTileSelected: (tile) => Navigator.pop(sheetContext, tile),
@@ -125,7 +129,17 @@ class TileImagePicker extends StatelessWidget {
               for (var i = 0; i < _rows.length; i++) ...[
                 if (i == 3) const SizedBox(height: AppSpacing.s),
                 if (i > 0) const SizedBox(height: _rowSpacing),
-                _buildRow(context, _rows[i], cellWidth, cellHeight),
+                _buildRow(
+                  context,
+                  _rows[i]
+                      .where(
+                        (tile) =>
+                            !sanma || !RegExp(r'^[2-8]m$|^5mr$').hasMatch(tile),
+                      )
+                      .toList(),
+                  cellWidth,
+                  cellHeight,
+                ),
               ],
             ],
           );

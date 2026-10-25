@@ -42,6 +42,15 @@
       "without_context": true,
       "status": "unknown",
       "estimate": false
+    },
+    {
+      "id": "lost_sanshoku_shows_nearby_routes_without_claiming_yaku",
+      "tiles": ["2m", "3m", "4m", "2p", "3p", "4p", "2s", "3s", "4s", "6s", "7s", "F", "F"],
+      "call": ["chi", "1m", ["2m", "3m"]],
+      "status": "no_yaku",
+      "nearby_yaku": ["役牌 發", "三色同順"],
+      "excluded_nearby_yaku": ["断么九", "対々和"],
+      "estimate": false
     }
   ]
 }

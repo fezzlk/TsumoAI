@@ -127,8 +127,8 @@ def test_call_analysis_reports_only_deterministically_scored_possible_yaku():
         "/api/v1/calls/analyze",
         json={
             "closed_tiles": [
-                "P", "P", "1m", "2m", "3m", "4m", "5m", "6m",
-                "7p", "8p", "9p", "E", "E",
+                "P", "P", "2m", "3m", "4m", "5p", "6p", "7p",
+                "6s", "7s", "8s", "3p", "4p",
             ],
             "context": {
                 "win_type": "ron", "is_dealer": False,

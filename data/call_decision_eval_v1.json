@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "ron_shanpon_is_not_pon",
+      "tiles": ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "F", "F", "E", "E"],
+      "ron_tiles": ["E", "F"],
+      "no_yaku_tiles": []
+    },
+    {
+      "id": "only_yaku_side_of_open_wait_is_ron",
+      "tiles": ["3p", "4p", "5p", "4s", "5s", "7p", "7p", "7p", "9s", "9s"],
+      "melds": [{"type": "chi", "tiles": ["3m", "4m", "5m"], "open": true}],
+      "ron_tiles": ["3s"],
+      "no_yaku_tiles": ["6s"],
+      "retained_call": ["chi", "6s"]
+    },
+    {
+      "id": "hatsu_pair_pon_adds_yaku_without_breaking_tenpai",
+      "tiles": ["2m", "3m", "4m", "5p", "6p", "7p", "6s", "7s", "8s", "3p", "4p", "F", "F"],
+      "ron_tiles": [],
+      "no_yaku_tiles": ["2p", "5p", "8p"],
+      "retained_call": ["pon", "F"],
+      "tenpai_effect": "adds_yaku"
+    },
+    {
+      "id": "menzen_tsumo_only_does_not_hide_chi",
+      "tiles": ["1m", "1m", "1m", "2p", "3p", "4p", "5s", "6s", "7s", "9m", "9m", "7p", "8p"],
+      "ron_tiles": [],
+      "no_yaku_tiles": ["6p", "9p"],
+      "retained_call": ["chi", "6p"]
+    }
+  ]
+}

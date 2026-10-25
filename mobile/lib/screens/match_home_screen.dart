@@ -12,6 +12,7 @@ import '../widgets/screen_header.dart';
 import '../widgets/tile_glyph.dart';
 import '../widgets/tile_image_picker.dart';
 import 'scan_screen.dart';
+import 'north_count_screen.dart';
 
 class MatchHomeScreen extends StatefulWidget {
   const MatchHomeScreen({
@@ -36,10 +37,18 @@ class MatchHomeScreen extends StatefulWidget {
 }
 
 class _MatchHomeScreenState extends State<MatchHomeScreen> {
-  late final MatchState _match = widget.matchState ?? MatchState();
+  late final MatchState _match =
+      widget.matchState ??
+      MatchState(variant: widget.ruleSettings.rules.variant);
   bool _showDoraTiles = false;
 
   Future<void> _openScore(TableSeat winner) async {
+    final northCount = widget.ruleSettings.rules.isSanma
+        ? await Navigator.of(context).push<int>(
+            MaterialPageRoute(builder: (_) => const NorthCountScreen()),
+          )
+        : 0;
+    if (!mounted || northCount == null) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => ScanScreen(
@@ -47,7 +56,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           autoClassify: true,
           purpose: ScanPurpose.score,
           initialContext: _match.current.contextFor(winner),
-          winnerOptions: TableSeat.values
+          winnerOptions: _match.current.activeSeats
               .map(
                 (seat) => ScoreWinnerOption(
                   label: _seatLabel(seat),
@@ -55,18 +64,27 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
                 ),
               )
               .toList(growable: false),
-          initialWinnerIndex: winner.index,
+          initialWinnerIndex: _match.current.activeSeats.indexOf(winner),
+          initialNorthCount: northCount,
           historyRoundLabel: _match.current.roundLabel,
           showTrainingDataActions: widget.showTrainingDataActions,
           ruleSettings: widget.ruleSettings,
-          onScoreConfirmed: (winnerIndex) =>
-              setState(() => _match.recordWin(TableSeat.values[winnerIndex])),
+          onScoreConfirmed: (winnerIndex) => setState(
+            () => _match.recordWin(_match.current.activeSeats[winnerIndex]),
+          ),
         ),
       ),
     );
   }
 
   Future<void> _openQuickCheck(ScanPurpose purpose) async {
+    final northCount =
+        purpose == ScanPurpose.score && widget.ruleSettings.rules.isSanma
+        ? await Navigator.of(context).push<int>(
+            MaterialPageRoute(builder: (_) => const NorthCountScreen()),
+          )
+        : 0;
+    if (!mounted || northCount == null) return;
     final referenceSeat = _match.current.dealerSeat;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -75,6 +93,7 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
           autoClassify: widget.autoClassify,
           purpose: purpose,
           initialContext: _match.current.contextFor(referenceSeat),
+          initialNorthCount: northCount,
           historyRoundLabel: _match.current.roundLabel,
           showTrainingDataActions: widget.showTrainingDataActions,
           ruleSettings: widget.ruleSettings,
@@ -132,11 +151,15 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
     if (_match.current.doraIndicators.length >= 4) return;
     final selected = await TileImagePicker.show(
       context,
+      sanma: widget.ruleSettings.rules.isSanma,
       title: _showDoraTiles ? 'ドラ牌を選択' : 'ドラ表示牌を選択',
     );
     if (selected == null) return;
     final indicator = _showDoraTiles
-        ? doraIndicatorFromTile(selected)
+        ? doraIndicatorFromTile(
+            selected,
+            sanma: widget.ruleSettings.rules.isSanma,
+          )
         : selected;
     setState(() {
       _match.setDoraIndicators([..._match.current.doraIndicators, indicator]);
@@ -153,7 +176,11 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            const ScreenHeader(title: '対局', backLabel: 'ホーム'),
+            ScreenHeader(
+              title: '対局',
+              subtitle: widget.ruleSettings.rules.variantLabel,
+              backLabel: 'ホーム',
+            ),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(
@@ -283,11 +310,12 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
                       child: _roundPlate(state),
                     ),
                     for (final (seat, left, top) in [
-                      (
-                        TableSeat.opposite,
-                        centerX,
-                        plateTop - seatHeight * 0.6,
-                      ),
+                      if (state.activeSeats.contains(TableSeat.opposite))
+                        (
+                          TableSeat.opposite,
+                          centerX,
+                          plateTop - seatHeight * 0.6,
+                        ),
                       (TableSeat.left, 0.0, sideTop),
                       (TableSeat.right, width - seatWidth, sideTop),
                       (
@@ -399,7 +427,14 @@ class _MatchHomeScreenState extends State<MatchHomeScreen> {
     final colors = context.appColors;
     final tint = colors.conditional;
     final shownTiles = state.doraIndicators
-        .map((tile) => _showDoraTiles ? doraTileFromIndicator(tile) : tile)
+        .map(
+          (tile) => _showDoraTiles
+              ? doraTileFromIndicator(
+                  tile,
+                  sanma: widget.ruleSettings.rules.isSanma,
+                )
+              : tile,
+        )
         .toList(growable: false);
     Widget segment(String label, bool selected) => Expanded(
       child: Semantics(

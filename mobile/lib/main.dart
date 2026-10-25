@@ -17,6 +17,7 @@ import 'screens/scan_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/training_data_screen.dart';
 import 'services/app_preferences.dart';
+import 'services/api_client.dart';
 import 'services/auth_service.dart';
 import 'services/diagnostic_log.dart';
 import 'services/question_template_service.dart';
@@ -111,6 +112,7 @@ Future<void> main() async {
       startupError: startupError,
       initialShowTrainingDataActions: showTrainingDataActions,
       initialRuleSettings: initialRuleSettings,
+      initialVariant: await AppPreferences.mahjongVariant(),
     ),
   );
   unawaited(DiagnosticLog.instance.record(DiagnosticEvent.appReady));
@@ -120,11 +122,13 @@ class TsumoAIApp extends StatefulWidget {
   const TsumoAIApp({
     super.key,
     this.startupError,
+    this.initialVariant = "yonma",
     this.initialShowTrainingDataActions = false,
     this.initialRuleSettings = const MahjongRuleSettings(),
   });
 
   final String? startupError;
+  final String initialVariant;
   final bool initialShowTrainingDataActions;
   final MahjongRuleSettings initialRuleSettings;
 
@@ -133,6 +137,8 @@ class TsumoAIApp extends StatefulWidget {
 }
 
 class _TsumoAIAppState extends State<TsumoAIApp> {
+  String _variant = "yonma";
+  MahjongRuleSettings? _matchRules;
   bool _autoClassify = true;
   bool _showTrainingDataActions = false;
   String _roundWind = 'E';
@@ -148,7 +154,26 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
     super.initState();
     _showTrainingDataActions = widget.initialShowTrainingDataActions;
     _ruleSettings = widget.initialRuleSettings;
+    _variant = widget.initialVariant;
+    _matchState = MatchState(variant: _variant);
   }
+
+  void _setVariant(String value) {
+    if (_matchActive) return;
+    setState(() {
+      _variant = value;
+      _matchState = MatchState(variant: value);
+    });
+    unawaited(
+      AppPreferences.setMahjongVariant(value).catchError((Object error) {
+        debugPrint("人数の選択を保存できませんでした: $error");
+      }),
+    );
+  }
+
+  MahjongRuleSettings get _selectedRules => _ruleSettings.copyWith(
+    rules: _ruleSettings.rules.copyWith(variant: _variant),
+  );
 
   void _setShowTrainingDataActions(bool value) {
     setState(() => _showTrainingDataActions = value);
@@ -171,6 +196,8 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
 
   @override
   Widget build(BuildContext context) {
+    final rulesForStart = _matchActive ? _matchRules! : _selectedRules;
+    final stateForStart = _matchState;
     return MaterialApp(
       title: 'TsumoAI',
       debugShowCheckedModeBanner: false,
@@ -181,7 +208,10 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
         autoClassify: _autoClassify,
         roundWind: _roundWind,
         showTrainingDataActions: _showTrainingDataActions,
-        ruleSettings: _ruleSettings,
+        ruleSettings: _selectedRules,
+        matchRuleSettings: _matchRules,
+        variant: _variant,
+        onVariantChanged: _setVariant,
         matchState: _matchState,
         matchActive: _matchActive,
         onAutoClassifyChanged: (value) => setState(() => _autoClassify = value),
@@ -189,11 +219,19 @@ class _TsumoAIAppState extends State<TsumoAIApp> {
         onShowTrainingDataActionsChanged: _setShowTrainingDataActions,
         onRuleSettingsChanged: _setRuleSettings,
         onAuthenticationChanged: _synchronizeRuleSettings,
-        onMatchStarted: () => setState(() => _matchActive = true),
+        onMatchStarted: () => setState(() {
+          if (!_matchActive) {
+            _matchRules = rulesForStart;
+            _matchState = stateForStart;
+            _variant = stateForStart.current.variant;
+          }
+          _matchActive = true;
+        }),
         onMatchReturned: () => setState(() {}),
         onMatchEnded: () => setState(() {
           _matchActive = false;
-          _matchState = MatchState();
+          _matchRules = null;
+          _matchState = MatchState(variant: _variant);
         }),
       ),
     );
@@ -204,6 +242,9 @@ class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
     required this.cameras,
+    this.variant = "yonma",
+    this.onVariantChanged,
+    this.matchRuleSettings,
     this.startupError,
     required this.autoClassify,
     required this.roundWind,
@@ -221,6 +262,9 @@ class HomeScreen extends StatelessWidget {
     required this.onMatchEnded,
   });
 
+  final String variant;
+  final ValueChanged<String>? onVariantChanged;
+  final MahjongRuleSettings? matchRuleSettings;
   final List<CameraDescription> cameras;
   final String? startupError;
   final bool autoClassify;
@@ -303,6 +347,22 @@ class HomeScreen extends StatelessWidget {
               action: matchActive ? '対局ホームへ' : '対局を始める',
               onTap: () => _openMatch(context),
             ),
+            const SizedBox(height: AppSpacing.s),
+            SegmentedButton<String>(
+              key: const ValueKey('mahjong-variant-switch'),
+              segments: const [
+                ButtonSegment(value: 'sanma', label: Text('3人麻雀')),
+                ButtonSegment(value: 'yonma', label: Text('4人麻雀')),
+              ],
+              selected: {variant},
+              onSelectionChanged: matchActive || onVariantChanged == null
+                  ? null
+                  : (values) => onVariantChanged!(values.single),
+            ),
+            if (matchActive)
+              const Text('対局中は変更できません', textAlign: TextAlign.center)
+            else if (variant == 'sanma')
+              const Text('萬子2〜8なし・チーなし・北抜きあり', textAlign: TextAlign.center),
             // History moved here from settings (device check 2026-10-04).
             const SizedBox(height: AppSpacing.m),
             SectionGroup(
@@ -443,7 +503,20 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  Future<bool> _checkVariant(BuildContext context) async {
+    if (variant != 'sanma') return true;
+    final available = await ApiClient().supportsSanma();
+    if (!context.mounted) return false;
+    if (!available) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('接続先が三人麻雀に対応していないか、接続できません。')),
+      );
+    }
+    return available;
+  }
+
   Future<void> _openScan(BuildContext context, ScanPurpose purpose) async {
+    if (!await _checkVariant(context)) return;
     unawaited(DiagnosticLog.instance.record(DiagnosticEvent.scanOpened));
     final showDeveloperActions =
         showTrainingDataActions && await AuthService.isAdmin();
@@ -465,6 +538,7 @@ class HomeScreen extends StatelessWidget {
   }
 
   Future<void> _openMatch(BuildContext context) async {
+    if (!await _checkVariant(context)) return;
     unawaited(DiagnosticLog.instance.record(DiagnosticEvent.matchOpened));
     final showDeveloperActions =
         showTrainingDataActions && await AuthService.isAdmin();
@@ -477,7 +551,7 @@ class HomeScreen extends StatelessWidget {
           cameras: cameras,
           autoClassify: autoClassify,
           showTrainingDataActions: showDeveloperActions,
-          ruleSettings: ruleSettings,
+          ruleSettings: matchRuleSettings ?? ruleSettings,
           matchState: matchState,
           onMatchEnded: onMatchEnded,
         ),

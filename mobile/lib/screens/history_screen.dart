@@ -10,6 +10,7 @@ import '../widgets/tile_glyph.dart';
 import '../widgets/ai_chat_sheet.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/score_result_panel.dart';
 import '../widgets/screen_header.dart';
 import '../widgets/section_list.dart';
 
@@ -26,6 +27,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   late final HistoryService _service = widget.service ?? HistoryService();
   List<HistoryEntry> _entries = [];
   String _filter = 'all';
+  String _variantFilter = 'all';
   bool _loading = true;
   bool _syncing = false;
 
@@ -78,9 +80,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final entries = _filter == 'all'
-        ? _entries
-        : _entries.where((entry) => entry.purpose == _filter).toList();
+    final entries = _entries
+        .where(
+          (entry) =>
+              (_filter == 'all' || entry.purpose == _filter) &&
+              (_variantFilter == 'all' || entry.variant == _variantFilter),
+        )
+        .toList();
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -113,6 +119,29 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         ),
                         children: [
                           _signedOutNotice(),
+                          Text(
+                            'この端末に保存・同期された履歴を表示',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: AppSpacing.s),
+                          SegmentedButton<String>(
+                            key: const ValueKey('history-variant-filter'),
+                            segments: const [
+                              ButtonSegment(value: 'all', label: Text('すべて')),
+                              ButtonSegment(
+                                value: 'sanma',
+                                label: Text('3人麻雀'),
+                              ),
+                              ButtonSegment(
+                                value: 'yonma',
+                                label: Text('4人麻雀'),
+                              ),
+                            ],
+                            selected: {_variantFilter},
+                            onSelectionChanged: (values) =>
+                                setState(() => _variantFilter = values.single),
+                          ),
+                          const SizedBox(height: AppSpacing.m),
                           if (entries.isEmpty)
                             Padding(
                               padding: const EdgeInsets.symmetric(
@@ -120,12 +149,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               ),
                               child: Center(
                                 child: Text(
-                                  '履歴はまだありません',
+                                  _entries.isEmpty
+                                      ? '履歴はまだありません'
+                                      : '条件に一致する履歴はありません',
                                   style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                               ),
-                            )
-                          else
+                            ),
+                          if (entries.isEmpty && _entries.isNotEmpty)
+                            TextButton(
+                              onPressed: () => setState(() {
+                                _filter = 'all';
+                                _variantFilter = 'all';
+                              }),
+                              child: const Text('絞り込みを解除'),
+                            ),
+                          if (entries.isNotEmpty)
                             for (final group in _groupByDay(entries)) ...[
                               SectionLabel(group.$1),
                               SectionGroup(
@@ -157,7 +196,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
         padding: const EdgeInsets.all(AppSpacing.l),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
           borderRadius: BorderRadius.circular(AppRadius.xLarge),
         ),
         child: Row(
@@ -244,16 +285,34 @@ class _HistoryScreenState extends State<HistoryScreen> {
         if (entry.roundLabel != null) entry.roundLabel!,
         entry.summary,
       ].join('  '),
-      trailing: Row(
+      trailing: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(
-            _timeLabel(entry.createdAt),
-            style: Theme.of(context).textTheme.bodySmall,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(AppRadius.chip),
+            ),
+            child: Text(
+              entry.variantLabel,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
           ),
-          Icon(
-            Icons.chevron_right,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _timeLabel(entry.createdAt),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ],
           ),
         ],
       ),
@@ -345,7 +404,9 @@ class _FilterTab extends StatelessWidget {
                   label,
                   maxLines: 1,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+                    color: selected
+                        ? scheme.onPrimary
+                        : scheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -385,7 +446,13 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
         .map((tile) => tile.toString())
         .toList(growable: false);
     final analysis = _historyMap(_entry.details['result']);
-    final roundContext = _historyMap(_entry.details['context']);
+    final roundContext = {
+      ..._historyMap(_entry.details['context']),
+      'rules':
+          _historyMap(_entry.details['rule_settings'])['rules'] ??
+          {'variant': _entry.variant},
+      'extracted_tiles': _entry.details['extracted_tiles'] ?? [],
+    };
     await AIChatSheet.show(
       context,
       purpose: _entry.purpose,
@@ -420,7 +487,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
     final analysis = _historyMap(_entry.details['result']);
     final contextDetails = _historyMap(_entry.details['context']);
     return Scaffold(
-      appBar: AppBar(title: Text(_entry.title)),
+      appBar: AppBar(title: Text("${_entry.title} · ${_entry.variantLabel}")),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -539,19 +606,47 @@ class _ScoreHistoryDetails extends StatelessWidget {
     children: [
       _ScoreHistorySection(
         label: 'ツモの場合',
+        tsumo: true,
         result: _historyMap(details['tsumo']),
       ),
       const SizedBox(height: 12),
-      _ScoreHistorySection(label: 'ロンの場合', result: _historyMap(details['ron'])),
+      _ScoreHistorySection(
+        label: 'ロンの場合',
+        tsumo: false,
+        result: _historyMap(details['ron']),
+      ),
     ],
   );
 }
 
 class _ScoreHistorySection extends StatelessWidget {
-  const _ScoreHistorySection({required this.label, required this.result});
+  const _ScoreHistorySection({
+    required this.label,
+    required this.tsumo,
+    required this.result,
+  });
 
   final String label;
+  final bool tsumo;
   final Map<String, dynamic> result;
+
+  /// What each payer hands over, including 本場. Entries saved before
+  /// `honba_per_payer` existed show hand points only.
+  String? get _payment {
+    final honba = _historyInt(result['honba_per_payer']);
+    final suffix = honba > 0 ? '（本場 +${formatPoints(honba)}込み）' : '';
+    if (!tsumo) {
+      final ron = _historyInt(result['ron']);
+      return ron > 0 ? '${formatPoints(ron + honba)}$suffix' : null;
+    }
+    final dealer = _historyInt(result['tsumo_dealer_pay']);
+    final nonDealer = _historyInt(result['tsumo_non_dealer_pay']);
+    if (dealer <= 0 && nonDealer <= 0) return null;
+    final text = dealer == nonDealer
+        ? '${formatPoints(nonDealer + honba)} オール'
+        : '${formatPoints(nonDealer + honba)} / ${formatPoints(dealer + honba)}';
+    return '$text$suffix';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -575,6 +670,17 @@ class _ScoreHistorySection extends StatelessWidget {
                 '${result['point_label'] ?? ''}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
+              if (_payment case final payment?) ...[
+                const SizedBox(height: 4),
+                Text(payment),
+              ],
+              if (_historyInt(result['kyotaku_bonus']) > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '供託 +${formatPoints(_historyInt(result['kyotaku_bonus']))}・'
+                  '受け取り合計 ${formatPoints(_historyInt(result['total_received']))}',
+                ),
+              ],
               if (yaku.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(yaku.join('・')),

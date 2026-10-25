@@ -5,29 +5,28 @@ class Meld {
 
   Meld({required this.type, required this.tiles, required this.open});
 
-  Map<String, dynamic> toJson() => {
-        'type': type,
-        'tiles': tiles,
-        'open': open,
-      };
+  Map<String, dynamic> toJson() => {'type': type, 'tiles': tiles, 'open': open};
 }
 
 class HandInput {
+  final List<String> extractedTiles;
   final List<String> closedTiles;
   final List<Meld> melds;
   final String winTile;
 
   HandInput({
+    this.extractedTiles = const [],
     required this.closedTiles,
     required this.melds,
     required this.winTile,
   });
 
   Map<String, dynamic> toJson() => {
-        'closed_tiles': closedTiles,
-        'melds': melds.map((m) => m.toJson()).toList(),
-        'win_tile': winTile,
-      };
+    'extracted_tiles': extractedTiles,
+    'closed_tiles': closedTiles,
+    'melds': melds.map((m) => m.toJson()).toList(),
+    'win_tile': winTile,
+  };
 }
 
 class ContextInput {
@@ -114,28 +113,31 @@ class ContextInput {
   }
 
   Map<String, dynamic> toJson() => {
-        'win_type': winType,
-        'is_dealer': isDealer,
-        'round_wind': roundWind,
-        'seat_wind': seatWind,
-        'riichi': riichi,
-        'double_riichi': doubleRiichi,
-        'ippatsu': ippatsu,
-        'haitei': haitei,
-        'houtei': houtei,
-        'rinshan': rinshan,
-        'chankan': chankan,
-        'chiihou': chiihou,
-        'tenhou': tenhou,
-        'dora_indicators': doraIndicators,
-        'ura_dora_indicators': uraDoraIndicators,
-        'aka_dora_count': akaDora,
-        'honba': honba,
-        'kyotaku': kyotaku,
-      };
+    'win_type': winType,
+    'is_dealer': isDealer,
+    'round_wind': roundWind,
+    'seat_wind': seatWind,
+    'riichi': riichi,
+    'double_riichi': doubleRiichi,
+    'ippatsu': ippatsu,
+    'haitei': haitei,
+    'houtei': houtei,
+    'rinshan': rinshan,
+    'chankan': chankan,
+    'chiihou': chiihou,
+    'tenhou': tenhou,
+    'dora_indicators': doraIndicators,
+    'ura_dora_indicators': uraDoraIndicators,
+    'aka_dora_count': akaDora,
+    'honba': honba,
+    'kyotaku': kyotaku,
+  };
 }
 
 class RuleSet {
+  final String variant;
+  bool get isSanma => variant == "sanma";
+  String get variantLabel => isSanma ? "3人麻雀" : "4人麻雀";
   final bool akaAri;
   final bool kuitanAri;
   final bool doubleYakumanAri;
@@ -143,6 +145,7 @@ class RuleSet {
   final int renpuFu;
 
   const RuleSet({
+    this.variant = "yonma",
     this.akaAri = true,
     this.kuitanAri = true,
     this.doubleYakumanAri = true,
@@ -151,34 +154,38 @@ class RuleSet {
   });
 
   Map<String, dynamic> toJson() => {
-        'aka_ari': akaAri,
-        'kuitan_ari': kuitanAri,
-        'double_yakuman_ari': doubleYakumanAri,
-        'kazoe_yakuman_ari': kazoeYakumanAri,
-        'renpu_fu': renpuFu,
-      };
+    'variant': variant,
+    'aka_ari': akaAri,
+    'kuitan_ari': kuitanAri,
+    'double_yakuman_ari': doubleYakumanAri,
+    'kazoe_yakuman_ari': kazoeYakumanAri,
+    'renpu_fu': renpuFu,
+  };
 
   factory RuleSet.fromJson(Map<String, dynamic> json) => RuleSet(
-        akaAri: json['aka_ari'] as bool? ?? true,
-        kuitanAri: json['kuitan_ari'] as bool? ?? true,
-        doubleYakumanAri: json['double_yakuman_ari'] as bool? ?? true,
-        kazoeYakumanAri: json['kazoe_yakuman_ari'] as bool? ?? true,
-        renpuFu: json['renpu_fu'] as int? ?? 4,
-      );
+    variant: json["variant"] as String? ?? "yonma",
+    akaAri: json['aka_ari'] as bool? ?? true,
+    kuitanAri: json['kuitan_ari'] as bool? ?? true,
+    doubleYakumanAri: json['double_yakuman_ari'] as bool? ?? true,
+    kazoeYakumanAri: json['kazoe_yakuman_ari'] as bool? ?? true,
+    renpuFu: json['renpu_fu'] as int? ?? 4,
+  );
 
   RuleSet copyWith({
+    String? variant,
     bool? akaAri,
     bool? kuitanAri,
     bool? doubleYakumanAri,
     bool? kazoeYakumanAri,
     int? renpuFu,
   }) => RuleSet(
-        akaAri: akaAri ?? this.akaAri,
-        kuitanAri: kuitanAri ?? this.kuitanAri,
-        doubleYakumanAri: doubleYakumanAri ?? this.doubleYakumanAri,
-        kazoeYakumanAri: kazoeYakumanAri ?? this.kazoeYakumanAri,
-        renpuFu: renpuFu ?? this.renpuFu,
-      );
+    variant: variant ?? this.variant,
+    akaAri: akaAri ?? this.akaAri,
+    kuitanAri: kuitanAri ?? this.kuitanAri,
+    doubleYakumanAri: doubleYakumanAri ?? this.doubleYakumanAri,
+    kazoeYakumanAri: kazoeYakumanAri ?? this.kazoeYakumanAri,
+    renpuFu: renpuFu ?? this.renpuFu,
+  );
 }
 
 class MahjongRuleSettings {
@@ -201,17 +208,16 @@ class MahjongRuleSettings {
         ),
         tobiEnd: json['tobi_end'] as bool? ?? true,
         chipsEnabled: json['chips_enabled'] as bool? ?? false,
-        openHandChipsEnabled:
-            json['open_hand_chips_enabled'] as bool? ?? true,
+        openHandChipsEnabled: json['open_hand_chips_enabled'] as bool? ?? true,
       );
 
   Map<String, dynamic> toJson() => {
-        'version': 1,
-        'rules': rules.toJson(),
-        'tobi_end': tobiEnd,
-        'chips_enabled': chipsEnabled,
-        'open_hand_chips_enabled': openHandChipsEnabled,
-      };
+    'version': 1,
+    'rules': rules.toJson(),
+    'tobi_end': tobiEnd,
+    'chips_enabled': chipsEnabled,
+    'open_hand_chips_enabled': openHandChipsEnabled,
+  };
 
   MahjongRuleSettings copyWith({
     RuleSet? rules,
@@ -219,12 +225,11 @@ class MahjongRuleSettings {
     bool? chipsEnabled,
     bool? openHandChipsEnabled,
   }) => MahjongRuleSettings(
-        rules: rules ?? this.rules,
-        tobiEnd: tobiEnd ?? this.tobiEnd,
-        chipsEnabled: chipsEnabled ?? this.chipsEnabled,
-        openHandChipsEnabled:
-            openHandChipsEnabled ?? this.openHandChipsEnabled,
-      );
+    rules: rules ?? this.rules,
+    tobiEnd: tobiEnd ?? this.tobiEnd,
+    chipsEnabled: chipsEnabled ?? this.chipsEnabled,
+    openHandChipsEnabled: openHandChipsEnabled ?? this.openHandChipsEnabled,
+  );
 }
 
 class ScoreRequest {
@@ -239,8 +244,8 @@ class ScoreRequest {
   });
 
   Map<String, dynamic> toJson() => {
-        'hand': hand.toJson(),
-        'context': context.toJson(),
-        'rules': rules.toJson(),
-      };
+    'hand': hand.toJson(),
+    'context': context.toJson(),
+    'rules': rules.toJson(),
+  };
 }

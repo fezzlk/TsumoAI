@@ -37,14 +37,19 @@ import '../services/scan_observation_builder.dart';
 import '../services/request_epoch.dart';
 import '../services/history_service.dart';
 import '../services/auth_service.dart';
+import '../services/camera_lifecycle.dart';
 import '../services/capture_framing.dart';
 import '../services/guided_capture.dart';
 import '../services/app_preferences.dart';
 import '../services/scan_diagnostics_client.dart';
 import '../services/diagnostic_log.dart';
 import '../services/performance_trace.dart';
+import '../services/test_hand_image.dart';
+import '../services/test_hands.dart';
 import 'tile_box_editor_screen.dart';
 import 'photo_crop_screen.dart';
+import 'north_count_screen.dart';
+import '../widgets/north_count_counter.dart';
 import '../services/hand_error_messages.dart';
 import '../services/purpose_switch.dart';
 import '../widgets/purpose_switch_dialogs.dart';
@@ -74,6 +79,7 @@ class ScanScreen extends StatefulWidget {
   final ValueChanged<int>? onScoreConfirmed;
   final String? historyRoundLabel;
   final MahjongRuleSettings ruleSettings;
+  final int initialNorthCount;
 
   const ScanScreen({
     super.key,
@@ -89,7 +95,8 @@ class ScanScreen extends StatefulWidget {
     this.onScoreConfirmed,
     this.historyRoundLabel,
     this.ruleSettings = const MahjongRuleSettings(),
-  });
+    this.initialNorthCount = 0,
+  }) : assert(initialNorthCount >= 0 && initialNorthCount <= 4);
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -111,6 +118,7 @@ class _ScanScreenState extends State<ScanScreen> {
   /// Up to four 槓子; each adds one physical tile to the purpose's base.
   static const int _maxKans = 4;
   CameraController? _controller;
+  late final CameraLifecycle _cameraLifecycle;
   String? _cameraInitError;
   final TileClassifier _classifier = TileClassifier();
   late final Future<void> _classifierInitialization;
@@ -215,6 +223,11 @@ class _ScanScreenState extends State<ScanScreen> {
   int _doraSlotCount = 1;
   int? _selectedWinnerIndex;
   bool _resumeWinConditionsAfterRetake = false;
+
+  // FEZ-256: developers can load a fixed hand instead of photographing one.
+  // A loaded hand is never sent as training data or saved to history.
+  bool _isDeveloper = false;
+  bool _isTestHand = false;
 
   bool get _usesWinConditionWizard =>
       widget.onScoreConfirmed != null && widget.purpose == ScanPurpose.score;
@@ -392,7 +405,31 @@ class _ScanScreenState extends State<ScanScreen> {
           isDealer: true,
         );
     _selectedWinnerIndex = widget.initialWinnerIndex;
-    if (!kIsWeb) _initCamera();
+    AuthService.isAdmin().then((isAdmin) {
+      if (mounted && isAdmin) setState(() => _isDeveloper = true);
+    });
+    _extractedNorthCount = widget.ruleSettings.rules.isSanma
+        ? widget.initialNorthCount
+        : 0;
+    _cameraLifecycle = CameraLifecycle(
+      open: () async {
+        // Permission dialogs also emit resume. A denial must wait for an
+        // explicit retry instead of immediately asking for permission again.
+        if (_cameraInitError == null) await _initCamera();
+      },
+      close: _releaseCamera,
+      onError: (error, stack) {
+        debugPrint('Camera lifecycle error: $error');
+        unawaited(
+          DiagnosticLog.instance.record(
+            DiagnosticEvent.cameraFailed,
+            error: error,
+            stack: stack,
+          ),
+        );
+      },
+    );
+    if (!kIsWeb) unawaited(_cameraLifecycle.start());
     _classifierInitialization = _initClassifier();
   }
 
@@ -420,6 +457,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _initCamera([CameraDescription? camera]) async {
+    if (!mounted || !_cameraLifecycle.isActive) return;
     if (widget.cameras.isEmpty) {
       if (mounted) {
         setState(() => _cameraInitError = '利用できるカメラが見つかりませんでした');
@@ -427,10 +465,6 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
     final selectedCamera = camera ?? _preferredCamera();
-    final previousController = _controller;
-    if (previousController != null) {
-      await previousController.dispose();
-    }
     if (mounted) {
       setState(() {
         _controller = null;
@@ -455,6 +489,7 @@ class _ScanScreenState extends State<ScanScreen> {
     _controller = controller;
     try {
       await controller.initialize();
+      if (!mounted || !_cameraLifecycle.isActive) return;
       // The phone is held nearly flat, pointed down at tiles on a table —
       // the accelerometer can't reliably tell landscape from portrait in
       // that position, so ambient device-orientation detection (what both
@@ -484,10 +519,24 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  /// Releases the camera while the app is in the background (the plugin
+  /// requires it); [CameraLifecycle] reopens it on resume.
+  Future<void> _releaseCamera() async {
+    final controller = _controller;
+    _controller = null;
+    if (mounted) setState(() {});
+    await controller?.dispose();
+  }
+
+  Future<void> _retryCamera() {
+    setState(() => _cameraInitError = null);
+    return _cameraLifecycle.retry();
+  }
+
   @override
   void dispose() {
     _scoreRecalculationTimer?.cancel();
-    _controller?.dispose();
+    unawaited(_cameraLifecycle.dispose());
     _classifier.dispose();
     super.dispose();
   }
@@ -497,7 +546,8 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _capture() async {
     if (_controller == null ||
         !_controller!.value.isInitialized ||
-        _isCapturing) {
+        _isCapturing ||
+        !_cameraLifecycle.isActive) {
       return;
     }
     final captureMode = _captureMode;
@@ -672,9 +722,14 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  void _acceptPhoto(Uint8List framedBytes, img.Image decoded) {
+  void _acceptPhoto(
+    Uint8List framedBytes,
+    img.Image decoded, {
+    bool testHand = false,
+  }) {
     setState(() {
       final resumeWinConditions = _resumeWinConditionsAfterRetake;
+      _isTestHand = testHand;
       _capturedBytes = framedBytes;
       _capturedImage = decoded;
       _phase = _ScanPhase.detecting;
@@ -738,13 +793,68 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  Future<void> _chooseTestHand() async {
+    if (_isCapturing) return;
+    final hands = testHandsFor(sanma: widget.ruleSettings.rules.isSanma);
+    final hand = await showModalBottomSheet<TestHand>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(
+                title: Text('テスト牌姿'),
+                subtitle: Text('撮影の代わりに決まった牌姿を読み込みます（開発者のみ）'),
+              ),
+              for (final hand in hands)
+                ListTile(
+                  title: Text(hand.label),
+                  subtitle: Text(hand.description),
+                  onTap: () => Navigator.pop(sheetContext, hand),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (hand == null || !mounted) return;
+    await _loadTestHand(hand);
+  }
+
+  Future<void> _loadTestHand(TestHand hand) async {
+    setState(() => _isCapturing = true);
+    try {
+      final tiles = hand.tilesFor(
+        _expectedTileCount ?? _purpose.defaultTileCount,
+      );
+      final rendered = await renderTestHand(tiles);
+      if (!mounted) return;
+      _acceptPhoto(rendered.bytes, rendered.image, testHand: true);
+      await _classifyBoxesAndFinish(rendered.boxes, knownTiles: tiles);
+    } catch (error) {
+      if (mounted) _showError('テスト牌姿を読み込めませんでした: $error');
+    } finally {
+      if (mounted) setState(() => _isCapturing = false);
+    }
+  }
+
   /// Crop and on-device-classify each of [boxes] (in `_capturedImage`'s pixel
   /// coordinate space), populating `_tiles`/`_croppedImages`/`_tileQuads`,
   /// then move to the results phase. [angleHints] has one entry per box —
   /// see `segmentTilesWithHints`.
+  ///
+  /// [knownTiles] (a developer test hand) fills `_tiles` directly instead of
+  /// running the classifier.
   Future<void> _classifyBoxesAndFinish(
     List<Rect> boxes, {
     List<double>? angleHints,
+    List<String>? knownTiles,
   }) async {
     final srcImage = _capturedImage;
     if (srcImage == null) return;
@@ -787,7 +897,15 @@ class _ScanScreenState extends State<ScanScreen> {
     if (!_usesWinConditionWizard) {
       setState(() => _phase = _ScanPhase.results);
     }
-    if (widget.autoClassify && boxes.isNotEmpty) {
+    if (knownTiles != null) {
+      setState(() {
+        for (int i = 0; i < knownTiles.length && i < _maxPhysicalTiles; i++) {
+          _tiles[i] = knownTiles[i];
+          _predictedTiles[i] = knownTiles[i];
+        }
+        _invalidateInterpretation();
+      });
+    } else if (widget.autoClassify && boxes.isNotEmpty) {
       await _runClassification();
     }
     if (_usesWinConditionWizard && mounted) {
@@ -1404,6 +1522,7 @@ class _ScanScreenState extends State<ScanScreen> {
     }
     final addedTile = await TileImagePicker.show(
       context,
+      sanma: widget.ruleSettings.rules.isSanma,
       title: '${_purpose.label}は$required枚で行います。足りない牌を選択',
     );
     if (addedTile == null || !mounted) return null;
@@ -1425,6 +1544,17 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  void _setNorthCount(int count) {
+    if (count == _extractedNorthCount) return;
+    setState(() {
+      _extractedNorthCount = count;
+      _invalidateAnalysisAndMaybeRecalculate();
+    });
+  }
+
+  int _extractedNorthCount = 0;
+  List<String> get _extractedTiles => List.filled(_extractedNorthCount, "N");
+
   Future<void> _confirmAndAnalyze({bool showResultDialog = true}) async {
     if (_interpretation == null) return;
     setState(_keepWinningTileOutsideMelds);
@@ -1433,6 +1563,22 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
 
+    if (widget.ruleSettings.rules.isSanma) {
+      final codes = _tiles.whereType<String>().toList();
+      if (codes.any((t) => RegExp(r'^[2-8]m$|^5mr$').hasMatch(t))) {
+        _showError('3人麻雀では2〜8萬・赤5萬は使えません。認識結果を修正してください');
+        return;
+      }
+      if (codes.where((t) => t == 'N').length + _extractedNorthCount > 4) {
+        _showError('手牌と抜き北の合計が4枚を超えています');
+        return;
+      }
+      if (_context.seatWind == 'N' ||
+          _confirmedMelds.any((m) => m.type == 'chi')) {
+        _showError('3人麻雀では自風北・チーは使えません');
+        return;
+      }
+    }
     final observation = _buildObservation();
     final confirmation = ConfirmationV1(
       operation: _operation,
@@ -1492,6 +1638,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 )
                 .toList(growable: false),
             winTile: winTile,
+            extractedTiles: _extractedTiles,
           );
           final baseContext = _context.copyWith(akaDora: akaDoraCount);
           // ツモ and ロン are scored separately: one may be refused while the
@@ -1553,6 +1700,7 @@ class _ScanScreenState extends State<ScanScreen> {
             state: state,
             context: _context,
             rules: rules,
+            extractedTiles: _extractedTiles,
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
@@ -1566,6 +1714,7 @@ class _ScanScreenState extends State<ScanScreen> {
             state: state,
             context: _context,
             rules: rules,
+            extractedTiles: _extractedTiles,
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
@@ -1579,6 +1728,7 @@ class _ScanScreenState extends State<ScanScreen> {
             state: state,
             context: _context,
             rules: rules,
+            extractedTiles: _extractedTiles,
           );
           if (mounted && _requestEpoch.isCurrent(requestEpoch)) {
             setState(() => _analysisResult = result);
@@ -1636,22 +1786,33 @@ class _ScanScreenState extends State<ScanScreen> {
         ? '$winType: 不成立'
         : '$winType: ${response.result.han}翻${response.result.fu}符 '
               '${response.result.pointLabel}';
-    Map<String, dynamic>? resultDetails(ScoreResponse? response) {
+    Map<String, dynamic>? resultDetails(
+      ScoreResponse? response, {
+      required bool tsumo,
+    }) {
       if (response == null) return null;
       final result = response.result;
       return {
         'han': result.han,
         'fu': result.fu,
         'point_label': result.pointLabel,
+        // Hand points without 本場; each payer adds `honba_per_payer`.
         'ron': result.points.ron,
         'tsumo_dealer_pay': result.points.tsumoDealerPay,
         'tsumo_non_dealer_pay': result.points.tsumoNonDealerPay,
+        'honba_per_payer': result.payments.honbaPerPayer(
+          tsumo: tsumo,
+          sanma: widget.ruleSettings.rules.isSanma,
+        ),
+        'kyotaku_bonus': result.payments.kyotakuBonus,
+        'total_received': result.payments.totalReceived,
         'yaku': result.yaku.map((item) => item.name).toList(growable: false),
       };
     }
 
     await _saveHistoryWithoutBlockingResult(
       HistoryEntry(
+        variant: widget.ruleSettings.rules.variant,
         id: _historyEntryId,
         createdAt: _historyCreatedAt,
         updatedAt: DateTime.now().toUtc(),
@@ -1665,10 +1826,14 @@ class _ScanScreenState extends State<ScanScreen> {
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
           'recognition_model': _recognitionModelMetadata,
-          'context': _context.toJson(),
+          'context': {
+            ..._context.toJson(),
+            'variant': widget.ruleSettings.rules.variant,
+          },
           'rule_settings': widget.ruleSettings.toJson(),
-          'tsumo': resultDetails(tsumoResponse),
-          'ron': resultDetails(ronResponse),
+          'extracted_tiles': _extractedTiles,
+          'tsumo': resultDetails(tsumoResponse, tsumo: true),
+          'ron': resultDetails(ronResponse, tsumo: false),
         },
         accountUid: AuthService.currentUser?.uid,
       ),
@@ -1683,6 +1848,7 @@ class _ScanScreenState extends State<ScanScreen> {
     };
     await _saveHistoryWithoutBlockingResult(
       HistoryEntry(
+        variant: widget.ruleSettings.rules.variant,
         id: _historyEntryId,
         createdAt: _historyCreatedAt,
         updatedAt: DateTime.now().toUtc(),
@@ -1693,8 +1859,12 @@ class _ScanScreenState extends State<ScanScreen> {
         details: {
           'tiles': _tiles.whereType<String>().toList(growable: false),
           'recognition_model': _recognitionModelMetadata,
-          'context': _context.toJson(),
+          'context': {
+            ..._context.toJson(),
+            'variant': widget.ruleSettings.rules.variant,
+          },
           'rule_settings': widget.ruleSettings.toJson(),
+          'extracted_tiles': _extractedTiles,
           'result': result,
           if (_chatMessages.isNotEmpty)
             'ai_conversation': _chatMessages
@@ -1707,6 +1877,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _saveHistoryWithoutBlockingResult(HistoryEntry entry) async {
+    if (_isTestHand) return;
     final saved = await _historyService.trySave(entry);
     if (!saved && mounted) {
       _showError('結果は確認できますが、履歴を保存できませんでした。端末の空き容量や保存設定を確認してください。');
@@ -1733,7 +1904,11 @@ class _ScanScreenState extends State<ScanScreen> {
       context,
       purpose: _purpose == ScanPurpose.callAdvice ? 'call_advice' : 'discard',
       tiles: _tiles.whereType<String>().toList(growable: false),
-      roundContext: _context.toJson(),
+      roundContext: {
+        ..._context.toJson(),
+        "rules": widget.ruleSettings.rules.toJson(),
+        "extracted_tiles": _extractedTiles,
+      },
       analysis: {...result, 'selected_call': ?selectedCall},
       initialMessages: _chatMessages,
       initialSituationTags: [?discardFocus],
@@ -1745,6 +1920,7 @@ class _ScanScreenState extends State<ScanScreen> {
         // Each write is isolated: one failed save must not leave the queue
         // in an error state that silently skips every later conversation.
         _historyUpdateQueue = _historyUpdateQueue.then((_) async {
+          if (_isTestHand) return;
           try {
             await _historyService.updateDetails(_historyEntryId, {
               'ai_conversation': messages
@@ -1810,7 +1986,11 @@ class _ScanScreenState extends State<ScanScreen> {
           _showError('これ以上牌を追加できません');
           return;
         }
-        addedTile = await TileImagePicker.show(context, title: '追加するツモ牌を選択');
+        addedTile = await TileImagePicker.show(
+          context,
+          sanma: widget.ruleSettings.rules.isSanma,
+          title: '追加するツモ牌を選択',
+        );
         if (addedTile == null || !mounted) return;
     }
 
@@ -1902,6 +2082,7 @@ class _ScanScreenState extends State<ScanScreen> {
         _operation == HandOperation.score && _hasScoreCalculation;
     final selected = await TileImagePicker.show(
       context,
+      sanma: widget.ruleSettings.rules.isSanma,
       currentTile: _tiles[index],
     );
     if (selected != null && mounted) {
@@ -1926,11 +2107,21 @@ class _ScanScreenState extends State<ScanScreen> {
     _invalidateAnalysisAndMaybeRecalculate();
   }
 
-  void _selectWinner(int index) {
+  Future<void> _selectWinner(int index) async {
     if (index < 0 || index >= widget.winnerOptions.length) return;
+    final sameWinner = index == _selectedWinnerIndex;
+    final northCount = !widget.ruleSettings.rules.isSanma
+        ? 0
+        : sameWinner
+        ? _extractedNorthCount
+        : await Navigator.of(context).push<int>(
+            MaterialPageRoute(builder: (_) => const NorthCountScreen()),
+          );
+    if (!mounted || northCount == null) return;
     final winnerContext = widget.winnerOptions[index].context;
     setState(() {
       _selectedWinnerIndex = index;
+      _extractedNorthCount = northCount;
       _updateContext(
         _context.copyWith(
           roundWind: winnerContext.roundWind,
@@ -2153,6 +2344,10 @@ class _ScanScreenState extends State<ScanScreen> {
     required String type,
     required bool open,
   }) {
+    if (widget.ruleSettings.rules.isSanma && type == "chi") {
+      _showError("3人麻雀ではチーできません");
+      return;
+    }
     final observationIds = (selection.toList()..sort())
         .map((index) => 'tile-${index.toString().padLeft(3, '0')}')
         .toList(growable: false);
@@ -2239,7 +2434,8 @@ class _ScanScreenState extends State<ScanScreen> {
                       FilledButton(
                         onPressed:
                             detection == MeldDetection.pon ||
-                                detection == MeldDetection.chi
+                                (detection == MeldDetection.chi &&
+                                    !widget.ruleSettings.rules.isSanma)
                             ? () => addMeld(
                                 detection == MeldDetection.pon ? 'pon' : 'chi',
                                 open: true,
@@ -3094,6 +3290,13 @@ class _ScanScreenState extends State<ScanScreen> {
       children: [
         _stepHeading(ura ? '裏ドラ' : '表ドラ', ura ? '裏ドラを選択' : '表ドラを選択'),
         const SizedBox(height: AppSpacing.l),
+        if (!ura && widget.ruleSettings.rules.isSanma) ...[
+          NorthCountCounter(
+            value: _extractedNorthCount,
+            onChanged: _setNorthCount,
+          ),
+          const SizedBox(height: AppSpacing.m),
+        ],
         Row(
           children: [
             Expanded(child: Text(label, style: _text.titleSmall)),
@@ -3162,6 +3365,7 @@ class _ScanScreenState extends State<ScanScreen> {
         SizedBox(
           height: 300,
           child: TileImagePicker(
+            sanma: widget.ruleSettings.rules.isSanma,
             showHeader: false,
             onTileSelected: (tile) => _selectConditionTile(tile, ura: ura),
           ),
@@ -3201,7 +3405,9 @@ class _ScanScreenState extends State<ScanScreen> {
           children: [
             ScreenHeader(
               title: _purpose.label,
-              subtitle: '手牌の写真から確認',
+              subtitle: widget.ruleSettings.rules.isSanma
+                  ? '3人麻雀'
+                  : '手牌の写真から確認',
               trailing: HeaderHomeButton(
                 onPressed: () => Navigator.maybePop(context),
               ),
@@ -3221,7 +3427,7 @@ class _ScanScreenState extends State<ScanScreen> {
         children: [
           ScreenHeader(
             title: _purpose.label,
-            subtitle: '手牌を読み取り',
+            subtitle: widget.ruleSettings.rules.isSanma ? '3人麻雀' : '手牌を読み取り',
             trailing: HeaderHomeButton(
               onPressed: () => Navigator.maybePop(context),
             ),
@@ -3330,6 +3536,20 @@ class _ScanScreenState extends State<ScanScreen> {
                   textAlign: TextAlign.center,
                   style: _text.labelMedium,
                 ),
+                if (_isDeveloper) ...[
+                  const SizedBox(height: AppSpacing.s),
+                  Center(
+                    child: TextButton.icon(
+                      key: const ValueKey('test-hand-button'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: _colors.developer.color,
+                      ),
+                      onPressed: _isCapturing ? null : _chooseTestHand,
+                      icon: const Icon(Icons.science_outlined),
+                      label: const Text('テスト牌姿'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -3403,7 +3623,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   if (widget.cameras.isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.l),
                     FilledButton.icon(
-                      onPressed: _initCamera,
+                      onPressed: _retryCamera,
                       icon: const Icon(Icons.refresh),
                       label: const Text('再試行'),
                     ),
@@ -3753,7 +3973,9 @@ class _ScanScreenState extends State<ScanScreen> {
               message: '読み取り結果が合っていれば、下の「実行」を押してください。違う牌はタップして直せます。',
             ),
           ],
-          if (widget.showTrainingDataActions && _trainingTilesReady)
+          if (widget.showTrainingDataActions &&
+              !_isTestHand &&
+              _trainingTilesReady)
             Align(
               alignment: Alignment.centerRight,
               child: _trainingDataButton(),
@@ -3772,7 +3994,8 @@ class _ScanScreenState extends State<ScanScreen> {
         children: [
           ScreenHeader(
             title: _resultsTitle,
-            subtitle: isScore ? '認識・条件を変更可能' : '認識結果を変更可能',
+            subtitle:
+                '${widget.ruleSettings.rules.variantLabel} · ${isScore ? '認識・条件を変更可能' : '認識結果を変更可能'}',
             onBack: _backToCamera,
             trailing: HeaderHomeButton(
               onPressed: () => Navigator.maybePop(context),
@@ -3784,6 +4007,13 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_isTestHand) ...[
+                    const StatusBanner(
+                      kind: StatusKind.info,
+                      message: 'テスト牌姿です（履歴・学習データには保存しません）',
+                    ),
+                    const SizedBox(height: AppSpacing.s),
+                  ],
                   _recognitionCard(),
                   const SizedBox(height: AppSpacing.m),
 
@@ -3795,6 +4025,9 @@ class _ScanScreenState extends State<ScanScreen> {
                   // Winds and 表ドラ for every check (the analysis API uses the
                   // context); 裏ドラ and the win-time chips only for scoring.
                   GameStatePanel(
+                    sanma: widget.ruleSettings.rules.isSanma,
+                    northCount: _extractedNorthCount,
+                    onNorthCountChanged: _setNorthCount,
                     context_: _context,
                     onChanged: (c) => setState(() => _updateContext(c)),
                     conditionChips: isScore ? _conditionChips() : const [],

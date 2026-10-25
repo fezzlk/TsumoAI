@@ -34,11 +34,11 @@ def base_points(han: int, fu: int, *, kazoe_yakuman_ari: bool = True) -> int:
 
 def calculate_payments(
     context: ContextInput, han: int, fu: int, base_override: int | None = None,
-    *, kazoe_yakuman_ari: bool = True,
+    *, kazoe_yakuman_ari: bool = True, player_count: int = 4,
 ) -> tuple[Points, Payments]:
     base = base_override if base_override is not None else base_points(han, fu, kazoe_yakuman_ari=kazoe_yakuman_ari)
     is_dealer = context.seat_wind.value == "E"
-    honba_bonus = context.honba * 300
+    honba_bonus = context.honba * (300 if context.win_type == "ron" else 100 * (player_count - 1))
     kyotaku_bonus = context.kyotaku * 1000
 
     if context.win_type == "ron":
@@ -46,12 +46,12 @@ def calculate_payments(
         points = Points(ron=received)
     elif is_dealer:
         each = _round_hundred(base * 2)
-        received = each * 3
+        received = each * (player_count - 1)
         points = Points(tsumo_dealer_pay=each, tsumo_non_dealer_pay=each)
     else:
         dealer = _round_hundred(base * 2)
         non_dealer = _round_hundred(base)
-        received = dealer + non_dealer * 2
+        received = dealer + non_dealer * (player_count - 2)
         points = Points(tsumo_dealer_pay=dealer, tsumo_non_dealer_pay=non_dealer)
 
     with_honba = received + honba_bonus

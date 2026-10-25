@@ -98,9 +98,7 @@ void main() {
     expectNoOverflow(tester);
   });
 
-  testWidgets('home header keeps login and settings on screen', (
-    tester,
-  ) async {
+  testWidgets('home header keeps login and settings on screen', (tester) async {
     tester.platformDispatcher.textScaleFactorTestValue = 1.3;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
@@ -214,7 +212,10 @@ void main() {
     await tester.pumpAndSettle();
 
     for (final label in ['すべて', '点数', '待ち', '何切る', '鳴き']) {
-      expect(find.text(label), findsOneWidget);
+      expect(
+        find.text(label),
+        label == 'すべて' ? findsNWidgets(2) : findsOneWidget,
+      );
     }
     expectNoOverflow(tester);
   });

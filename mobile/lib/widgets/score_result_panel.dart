@@ -118,6 +118,14 @@ class _ResultCard extends StatelessWidget {
               _paymentCaption(result),
               style: text.bodySmall?.copyWith(color: ink),
             ),
+            if (result.payments.kyotakuBonus > 0) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '供託 +${_format(result.payments.kyotakuBonus)}・'
+                '受け取り合計 ${_format(result.payments.totalReceived)}',
+                style: text.bodySmall?.copyWith(color: ink),
+              ),
+            ],
             if (_isNamedLimit(result.pointLabel)) ...[
               const SizedBox(height: AppSpacing.s),
               Container(
@@ -163,18 +171,37 @@ class _ResultCard extends StatelessWidget {
     );
   }
 
+  int _honbaPerPayer(ScoreResult result) => result.payments.honbaPerPayer(
+    tsumo: isTsumo,
+    sanma: panel.ruleSettings.rules.isSanma,
+  );
+
   String _payment(ScoreResult result) {
     final points = result.points;
-    if (!isTsumo) return _format(points.ron);
+    final honba = _honbaPerPayer(result);
+    if (!isTsumo) return _format(points.ron + honba);
+    final nonDealer = points.tsumoNonDealerPay + honba;
+    final dealer = points.tsumoDealerPay + honba;
     if (points.tsumoDealerPay == points.tsumoNonDealerPay) {
-      return '${_format(points.tsumoNonDealerPay)} オール';
+      return '${_format(nonDealer)} オール';
     }
-    return '${_format(points.tsumoNonDealerPay)} / ${_format(points.tsumoDealerPay)}';
+    return '${_format(nonDealer)} / ${_format(dealer)}';
   }
 
   String _paymentCaption(ScoreResult result) {
+    final honba = _honbaPerPayer(result);
+    final suffix = honba > 0 ? '（本場 +${_format(honba)}込み）' : '';
+    return '${_payerCaption(result)}$suffix';
+  }
+
+  String _payerCaption(ScoreResult result) {
     final points = result.points;
     if (!isTsumo) return '放銃者の支払い';
+    if (panel.ruleSettings.rules.isSanma) {
+      return points.tsumoDealerPay == points.tsumoNonDealerPay
+          ? '子2人それぞれの支払い'
+          : '子1人 / 親1人の支払い';
+    }
     if (points.tsumoDealerPay == points.tsumoNonDealerPay) return '子それぞれの支払い';
     return '子の支払い / 親の支払い';
   }
@@ -189,15 +216,20 @@ class _ResultCard extends StatelessWidget {
     final allStar = red >= 3 ? 2 : 0;
     final chips = red + ura + ippatsu + allStar;
     final equivalent = chips * 1000;
-    final payment = isTsumo ? '各$chips枚・合計${chips * 3}枚' : '$chips枚';
+    final payment = isTsumo
+        ? '各$chips枚・合計${chips * (panel.ruleSettings.rules.isSanma ? 2 : 3)}枚'
+        : '$chips枚';
     return 'チップ: $payment（$chipsチップ点 / 素点$equivalent点相当）';
   }
 
   static bool _isNamedLimit(String label) =>
       RegExp(r'満|跳|倍|役満').hasMatch(label);
 
-  static String _format(int value) => value.toString().replaceAllMapped(
-    RegExp(r'(\d)(?=(\d{3})+$)'),
-    (match) => '${match[1]},',
-  );
+  static String _format(int value) => formatPoints(value);
 }
+
+/// Points with thousands separators (`2600` → `2,600`).
+String formatPoints(int value) => value.toString().replaceAllMapped(
+  RegExp(r'(\d)(?=(\d{3})+$)'),
+  (match) => '${match[1]},',
+);

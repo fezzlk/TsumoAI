@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/score_request.dart';
 import 'tile_glyph.dart';
+import 'north_count_counter.dart';
 import 'tile_image_picker.dart';
 
 /// Condition card of the results screen: 場風・自風 pills followed by the
@@ -10,6 +11,9 @@ import 'tile_image_picker.dart';
 /// scrolling row, then the 表ドラ / 裏ドラ indicator fields side by side
 /// (decided 2026-09-26: chips sit in the wind row and scroll sideways).
 class GameStatePanel extends StatelessWidget {
+  final bool sanma;
+  final int northCount;
+  final ValueChanged<int>? onNorthCountChanged;
   final ContextInput context_;
   final ValueChanged<ContextInput> onChanged;
 
@@ -22,6 +26,9 @@ class GameStatePanel extends StatelessWidget {
 
   const GameStatePanel({
     super.key,
+    this.sanma = false,
+    this.northCount = 0,
+    this.onNorthCountChanged,
     required this.context_,
     required this.onChanged,
     this.conditionChips = const [],
@@ -104,6 +111,14 @@ class GameStatePanel extends StatelessWidget {
               ],
             ),
           ),
+          if (sanma && onNorthCountChanged != null) ...[
+            const SizedBox(height: AppSpacing.s),
+            const Divider(),
+            NorthCountCounter(
+              value: northCount,
+              onChanged: onNorthCountChanged!,
+            ),
+          ],
         ],
       ),
     );
@@ -115,7 +130,9 @@ class GameStatePanel extends StatelessWidget {
     String value,
     ValueChanged<String> onValueChanged,
   ) {
-    const winds = ['E', 'S', 'W', 'N'];
+    final winds = sanma && label == '自風'
+        ? ['E', 'S', 'W']
+        : ['E', 'S', 'W', 'N'];
     const windLabels = {'E': '東', 'S': '南', 'W': '西', 'N': '北'};
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
@@ -279,7 +296,10 @@ class GameStatePanel extends StatelessWidget {
                 tileBox(
                   tip: '$labelを追加',
                   onTap: () async {
-                    final tile = await TileImagePicker.show(context);
+                    final tile = await TileImagePicker.show(
+                      context,
+                      sanma: sanma,
+                    );
                     if (tile != null) onListChanged([...indicators, tile]);
                   },
                   child: Icon(Icons.add, size: 16, color: scheme.primary),

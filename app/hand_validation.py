@@ -5,7 +5,8 @@ from collections import Counter
 from app.domain.decomposition import is_winning_hand
 from app.domain.melds import validate_meld
 from app.domain.tiles import is_tile_code, normalize_tile, tiles_to_counts
-from app.schemas import ContextInput, HandInput, Meld
+from app.schemas import ContextInput, HandInput, Meld, RuleSet
+from app.domain.rules import ResolvedRules
 
 
 def validate_tile_code(tile: str) -> None:
@@ -67,3 +68,34 @@ def validate_winning_hand(hand: HandInput, context: ContextInput) -> None:
     validate_hand_context(hand.melds, context)
     if not is_winning_hand(tiles_to_counts(hand.closed_tiles), len(hand.melds)):
         raise ValueError("Hand is not a valid winning shape")
+
+
+def validate_rule_state(
+    closed_tiles: list[str],
+    melds: list[Meld],
+    extracted_tiles: list[str],
+    rules: RuleSet,
+    context: ContextInput | None = None,
+) -> None:
+    resolved = ResolvedRules(rules.variant)
+    if extracted_tiles and rules.variant != "sanma":
+        raise ValueError("Extracted tiles require three-player mahjong")
+    if any(tile != "N" for tile in extracted_tiles):
+        raise ValueError("Only north tiles can be extracted")
+    tiles = [*closed_tiles, *(t for m in melds for t in m.tiles), *extracted_tiles]
+    for tile in tiles:
+        validate_tile_code(tile)
+        if not resolved.allows_tile(tile):
+            raise ValueError(f"Tile is unavailable in {rules.variant}: {tile}")
+    counts = Counter(normalize_tile(tile) for tile in tiles)
+    if any(count > 4 for count in counts.values()):
+        raise ValueError("Owned tiles including extracted north exceed four copies")
+    if not resolved.chi_allowed and any(m.type == "chi" for m in melds):
+        raise ValueError("Chi is not allowed in three-player mahjong")
+    if context is not None:
+        if rules.variant == "sanma" and context.seat_wind == "N":
+            raise ValueError("North cannot be a seat wind in three-player mahjong")
+        for tile in [*context.dora_indicators, *context.ura_dora_indicators]:
+            validate_tile_code(tile)
+            if not resolved.allows_tile(tile):
+                raise ValueError(f"Dora indicator is unavailable: {tile}")

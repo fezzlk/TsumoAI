@@ -4,12 +4,18 @@ enum TableSeat { starting, right, opposite, left }
 
 class MatchSnapshot {
   const MatchSnapshot({
+    this.variant = "yonma",
     required this.roundWind,
     required this.handNumber,
     required this.honba,
     required this.dealerSeat,
     this.doraIndicators = const [],
   });
+
+  final String variant;
+  List<TableSeat> get activeSeats => variant == "sanma"
+      ? const [TableSeat.starting, TableSeat.right, TableSeat.left]
+      : TableSeat.values;
 
   final String roundWind;
   final int handNumber;
@@ -22,7 +28,10 @@ class MatchSnapshot {
   String get dealerLabel => seatLabel(dealerSeat);
 
   String seatWind(TableSeat seat) {
-    final offset = (seat.index - dealerSeat.index) % TableSeat.values.length;
+    if (!activeSeats.contains(seat)) throw ArgumentError.value(seat);
+    final offset =
+        (activeSeats.indexOf(seat) - activeSeats.indexOf(dealerSeat)) %
+        activeSeats.length;
     return const ['E', 'S', 'W', 'N'][offset];
   }
 
@@ -35,6 +44,7 @@ class MatchSnapshot {
   );
 
   MatchSnapshot withDoraIndicators(List<String> value) => MatchSnapshot(
+    variant: variant,
     roundWind: roundWind,
     handNumber: handNumber,
     honba: honba,
@@ -43,6 +53,7 @@ class MatchSnapshot {
   );
 
   MatchSnapshot dealerContinues() => MatchSnapshot(
+    variant: variant,
     roundWind: roundWind,
     handNumber: handNumber,
     honba: honba + 1,
@@ -55,15 +66,18 @@ class MatchSnapshot {
   MatchSnapshot dealerChanges({bool afterDraw = false}) {
     var nextWind = roundWind;
     var nextHand = handNumber + 1;
-    if (nextHand > 4) {
+    if (nextHand > activeSeats.length) {
       nextHand = 1;
       nextWind = _nextWind(roundWind);
     }
     return MatchSnapshot(
+      variant: variant,
       roundWind: nextWind,
       handNumber: nextHand,
       honba: afterDraw ? honba + 1 : 0,
-      dealerSeat: TableSeat.values[(dealerSeat.index + 1) % 4],
+      dealerSeat:
+          activeSeats[(activeSeats.indexOf(dealerSeat) + 1) %
+              activeSeats.length],
       doraIndicators: const [],
     );
   }
@@ -93,8 +107,9 @@ class MatchSnapshot {
 }
 
 class MatchState {
-  MatchState()
-    : _current = const MatchSnapshot(
+  MatchState({String variant = "yonma"})
+    : _current = MatchSnapshot(
+        variant: variant,
         roundWind: 'E',
         handNumber: 1,
         honba: 0,

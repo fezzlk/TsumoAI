@@ -112,6 +112,7 @@ class Meld(BaseModel):
 
 
 class HandInput(BaseModel):
+    extracted_tiles: list[TileCode] = Field(default_factory=list, max_length=4)
     closed_tiles: list[TileCode]
     melds: list[Meld] = Field(default_factory=list)
     win_tile: TileCode
@@ -139,6 +140,7 @@ class ContextInput(BaseModel):
 
 
 class RuleSet(BaseModel):
+    variant: Literal["yonma", "sanma"] = "yonma"
     aka_ari: bool = True
     kuitan_ari: bool = True
     double_yakuman_ari: bool = True
@@ -174,6 +176,7 @@ class YakuItem(BaseModel):
 
 
 class DoraBreakdown(BaseModel):
+    nuki_dora: int = 0
     dora: int
     aka_dora: int
     ura_dora: int
@@ -219,6 +222,7 @@ class ScoreResponse(BaseModel):
 
 
 class AnalysisRequestBase(BaseModel):
+    extracted_tiles: list[TileCode] = Field(default_factory=list, max_length=4)
     closed_tiles: list[TileCode]
     melds: list[Meld] = Field(default_factory=list)
     context: ContextInput | None = None
@@ -276,6 +280,7 @@ class CallOutlook(BaseModel):
     status: Literal["available", "conditional", "no_yaku", "unknown"]
     summary: str
     yaku: list[CallYakuProspect] = Field(default_factory=list)
+    nearby_yaku: list[CallYakuProspect] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     score_estimate: CallScoreEstimate | None = None
     winning_tiles: list[CallWinningTile] = Field(default_factory=list)
@@ -314,18 +319,28 @@ class CallAnalysisResult(BaseModel):
     consumed_tiles: list[TileCode]
     shanten_after_call: int
     recommendation: Literal["improves", "keeps", "worsens"]
+    tenpai_effect: Literal["adds_yaku", "keeps", "breaks"] | None = None
     possible_yaku: list[str] = Field(default_factory=list)
     outlook: CallOutlook | None = None
     discards: list[DiscardAnalysisResult] = Field(default_factory=list)
     replacement_tiles: list[WaitAnalysis] = Field(default_factory=list)
 
 
+class CallCurrentWait(BaseModel):
+    tile: TileCode
+    remaining: conint(ge=0, le=4)
+    ron_status: Literal["available", "no_yaku", "unknown"]
+    yaku: list[str] = Field(default_factory=list)
+
+
 class CallAnalysisResponse(BaseModel):
     current_shanten: int
+    current_waits: list[CallCurrentWait] = Field(default_factory=list)
     calls: list[CallAnalysisResult] = Field(default_factory=list)
 
 
 class HistoryItemUpsert(BaseModel):
+    variant: Literal["yonma", "sanma"] = "yonma"
     created_at: datetime
     purpose: Literal["score", "wait", "discard", "call_advice"]
     title: str = Field(min_length=1, max_length=80)
