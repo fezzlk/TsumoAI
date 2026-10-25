@@ -10,6 +10,7 @@ import '../widgets/tile_glyph.dart';
 import '../widgets/ai_chat_sheet.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/score_result_panel.dart';
 import '../widgets/screen_header.dart';
 import '../widgets/section_list.dart';
 
@@ -605,19 +606,47 @@ class _ScoreHistoryDetails extends StatelessWidget {
     children: [
       _ScoreHistorySection(
         label: 'ツモの場合',
+        tsumo: true,
         result: _historyMap(details['tsumo']),
       ),
       const SizedBox(height: 12),
-      _ScoreHistorySection(label: 'ロンの場合', result: _historyMap(details['ron'])),
+      _ScoreHistorySection(
+        label: 'ロンの場合',
+        tsumo: false,
+        result: _historyMap(details['ron']),
+      ),
     ],
   );
 }
 
 class _ScoreHistorySection extends StatelessWidget {
-  const _ScoreHistorySection({required this.label, required this.result});
+  const _ScoreHistorySection({
+    required this.label,
+    required this.tsumo,
+    required this.result,
+  });
 
   final String label;
+  final bool tsumo;
   final Map<String, dynamic> result;
+
+  /// What each payer hands over, including 本場. Entries saved before
+  /// `honba_per_payer` existed show hand points only.
+  String? get _payment {
+    final honba = _historyInt(result['honba_per_payer']);
+    final suffix = honba > 0 ? '（本場 +${formatPoints(honba)}込み）' : '';
+    if (!tsumo) {
+      final ron = _historyInt(result['ron']);
+      return ron > 0 ? '${formatPoints(ron + honba)}$suffix' : null;
+    }
+    final dealer = _historyInt(result['tsumo_dealer_pay']);
+    final nonDealer = _historyInt(result['tsumo_non_dealer_pay']);
+    if (dealer <= 0 && nonDealer <= 0) return null;
+    final text = dealer == nonDealer
+        ? '${formatPoints(nonDealer + honba)} オール'
+        : '${formatPoints(nonDealer + honba)} / ${formatPoints(dealer + honba)}';
+    return '$text$suffix';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -641,6 +670,17 @@ class _ScoreHistorySection extends StatelessWidget {
                 '${result['point_label'] ?? ''}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
+              if (_payment case final payment?) ...[
+                const SizedBox(height: 4),
+                Text(payment),
+              ],
+              if (_historyInt(result['kyotaku_bonus']) > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '供託 +${formatPoints(_historyInt(result['kyotaku_bonus']))}・'
+                  '受け取り合計 ${formatPoints(_historyInt(result['total_received']))}',
+                ),
+              ],
               if (yaku.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(yaku.join('・')),
