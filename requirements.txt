@@ -1,6 +1,7 @@
-fastapi==0.115.8
+fastapi==0.136.3
+starlette==1.10.0
 uvicorn[standard]==0.34.0
-python-multipart==0.0.20
+python-multipart==0.0.33
 pydantic==2.10.6
 pydantic-settings==2.7.1
 openai==1.63.0
