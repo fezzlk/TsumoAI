@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -109,6 +110,7 @@ user_settings_store = UserSettingsStore()
 question_template_store = QuestionTemplateStore()
 gcs_dataset_store = GCSFeedbackStore(prefix=settings.gcs_dataset_prefix)
 accuracy_store = GCSFeedbackStore(prefix=settings.gcs_accuracy_prefix)
+logger = logging.getLogger(__name__)
 recognition_feedback_store = RecognitionFeedbackStore()
 scan_diagnostics_store = ScanDiagnosticsStore()
 
@@ -1046,6 +1048,8 @@ async def upload_training_data(
 def list_training_data(
     tile_code: str | None = Query(None),
     source: str | None = Query(None),
+    model_version: str | None = Query(None),
+    corrected_only: bool = Query(False),
     limit: int = Query(500),
     refresh: bool = Query(False),
     _admin: dict = Depends(require_admin),
@@ -1053,7 +1057,13 @@ def list_training_data(
     try:
         if refresh:
             training_data_store.invalidate_cache()
-        entries = training_data_store.list_entries(tile_code=tile_code, source=source, limit=limit)
+        entries = training_data_store.list_entries(
+            tile_code=tile_code,
+            source=source,
+            limit=limit,
+            model_version=model_version,
+            corrected_only=corrected_only,
+        )
         stats = training_data_store.get_stats()
         timeline = training_data_store.get_daily_timeline()
     except ValueError as exc:
@@ -1132,17 +1142,17 @@ def delete_my_data(_user: dict = Depends(get_current_user)) -> MyDataDeletionRes
         ) from exc
 
 
-@app.get("/api/v1/metrics/accuracy-history")
-def get_accuracy_history(_admin: dict = Depends(require_admin)) -> dict:
-    bucket_name = accuracy_store.bucket_name
-    prefix = accuracy_store.prefix
-    if not bucket_name:
-        raise HTTPException(status_code=503, detail="GCS bucket is not configured")
-    client = accuracy_store._get_client()
-    bucket = client.bucket(bucket_name)
-    blobs = bucket.list_blobs(prefix=prefix + "/")
+def _is_model_version(version: str) -> bool:
+    return version.isdigit() and len(version) == 14
+
+
+def _load_accuracy_history(bucket) -> list[dict]:
+    """Read recorded recognition evaluations, oldest first.
+
+    Missing metrics stay ``None``; they are never reported as 0.
+    """
     history = []
-    for blob in blobs:
+    for blob in bucket.list_blobs(prefix=accuracy_store.prefix + "/"):
         if not blob.name.endswith(".json"):
             continue
         try:
@@ -1155,8 +1165,47 @@ def get_accuracy_history(_admin: dict = Depends(require_admin)) -> dict:
             "tile_accuracy": payload.get("tile_accuracy"),
             "exact_match_rate": payload.get("exact_match_rate"),
             "n": payload.get("n"),
+            # Evaluations identify the model by file hash, not by version.
+            "model_sha256": payload.get("model_sha256"),
+            "mode": payload.get("mode"),
         })
     history.sort(key=lambda h: h["evaluated_at"] or "")
+    return history
+
+
+@app.get("/api/v1/metrics/accuracy-history")
+def get_accuracy_history(
+    version: str | None = Query(None, description="Candidate model version (YYYYMMDDHHMMSS)"),
+    mode: str | None = Query(None, description="Evaluation mode recorded by the script: local or pipeline"),
+    _admin: dict = Depends(require_admin),
+) -> dict:
+    bucket_name = accuracy_store.bucket_name
+    if not bucket_name:
+        raise HTTPException(status_code=503, detail="GCS bucket is not configured")
+    if version is not None and not _is_model_version(version):
+        raise HTTPException(status_code=400, detail="invalid model version")
+    client = accuracy_store._get_client()
+    model_sha256 = None
+    if version is not None:
+        # Evaluations store only the model hash, so resolve the version
+        # through its candidate metadata.
+        candidate = client.bucket(settings.gcs_bucket_name or bucket_name).blob(
+            f"models/candidates/{version}.json"
+        )
+        if not candidate.exists():
+            raise HTTPException(status_code=404, detail="model candidate not found")
+        try:
+            model_sha256 = json.loads(candidate.download_as_text()).get("model_sha256")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="invalid model candidate metadata") from exc
+        if not model_sha256:
+            # Without a hash no evaluation can be attributed to this version.
+            return {"history": []}
+    history = _load_accuracy_history(client.bucket(bucket_name))
+    if model_sha256 is not None:
+        history = [h for h in history if h["model_sha256"] == model_sha256]
+    if mode is not None:
+        history = [h for h in history if h["mode"] == mode]
     return {"history": history}
 
 
@@ -1303,6 +1352,94 @@ def trigger_retrain(_admin: dict = Depends(require_admin)) -> dict:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cloud Build起動エラー: {e}")
+
+
+@app.get("/api/v1/model/candidates")
+def list_model_candidates(_admin: dict = Depends(require_admin)) -> dict:
+    """List model candidates with their serving and evaluation state.
+
+    ``status`` is ``serving`` for the version in ``models/latest.json``,
+    ``candidate`` otherwise, and ``invalid`` when the metadata is unreadable.
+    ``evaluation_status`` is ``evaluated`` / ``not_evaluated`` based on
+    recorded recognition evaluations matched by ``model_sha256``, or
+    ``unavailable`` when the evaluation records could not be read.
+    """
+    if not settings.gcs_bucket_name:
+        raise HTTPException(status_code=503, detail="GCS not configured")
+    try:
+        from google.cloud import storage
+        client = storage.Client(project=resolve_gcp_project())
+        bucket = client.bucket(settings.gcs_bucket_name)
+
+        latest_blob = bucket.blob("models/latest.json")
+        current = json.loads(latest_blob.download_as_text()) if latest_blob.exists() else None
+        current_version = current.get("version") if isinstance(current, dict) else None
+
+        history: list[dict] | None
+        try:
+            history = _load_accuracy_history(
+                client.bucket(accuracy_store.bucket_name or settings.gcs_bucket_name)
+            )
+        except Exception:
+            logger.warning("Failed to load accuracy history for model candidates", exc_info=True)
+            history = None
+
+        candidates = []
+        for blob in bucket.list_blobs(prefix="models/candidates/"):
+            if not blob.name.endswith(".json"):
+                continue
+            version = blob.name.rsplit("/", 1)[-1][: -len(".json")]
+            try:
+                meta = json.loads(blob.download_as_text())
+                if not isinstance(meta, dict):
+                    raise ValueError("candidate metadata is not an object")
+            except Exception:
+                candidates.append({
+                    "version": version,
+                    "status": "invalid",
+                    "approvable": False,
+                    "evaluation_status": "unavailable",
+                })
+                continue
+            model_sha256 = meta.get("model_sha256")
+            evaluations = None
+            if history is not None:
+                evaluations = [h for h in history if model_sha256 and h["model_sha256"] == model_sha256]
+            if evaluations is None:
+                evaluation_status = "unavailable"
+            elif evaluations:
+                evaluation_status = "evaluated"
+            else:
+                evaluation_status = "not_evaluated"
+            is_serving = version == current_version
+            candidates.append({
+                "version": version,
+                "created_at": meta.get("created_at"),
+                "status": "serving" if is_serving else "candidate",
+                "approvable": _is_model_version(version) and not is_serving,
+                "model_sha256": model_sha256,
+                "dataset_size": meta.get("dataset_size"),
+                # Training-time validation; see evaluation_scope for how it was split.
+                "val_accuracy": meta.get("val_accuracy"),
+                "evaluation_scope": meta.get("evaluation_scope"),
+                "evaluation_status": evaluation_status,
+                "evaluation_count": len(evaluations) if evaluations is not None else None,
+                "latest_evaluation": evaluations[-1] if evaluations else None,
+            })
+        candidates.sort(key=lambda c: c["version"], reverse=True)
+
+        current_summary = None
+        if isinstance(current, dict):
+            current_summary = {
+                "version": current_version,
+                "created_at": current.get("created_at"),
+                "approved_by": current.get("approved_by"),
+            }
+        return {"current": current_summary, "candidates": candidates}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/model/candidates/{version}/approve")

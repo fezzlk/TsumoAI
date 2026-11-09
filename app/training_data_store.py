@@ -119,7 +119,8 @@ class TrainingDataStore:
     # ── List (GCS primary, local fallback) ──
 
     def list_entries(self, tile_code: str | None = None, source: str | None = None,
-                     limit: int = 500) -> list[dict]:
+                     limit: int = 500, model_version: str | None = None,
+                     corrected_only: bool = False) -> list[dict]:
         entries: list[dict] = []
 
         try:
@@ -127,6 +128,13 @@ class TrainingDataStore:
         except Exception as exc:
             logger.warning("GCS list failed, falling back to local: %s", exc)
             entries.extend(self._list_local(tile_code=tile_code, source=source))
+
+        # Filter before applying the limit so a filtered page is not truncated
+        # by unrelated entries. Entries without the field never match.
+        if model_version:
+            entries = [e for e in entries if e.get("recognition_model_version") == model_version]
+        if corrected_only:
+            entries = [e for e in entries if e.get("was_corrected") is True]
 
         entries.sort(key=lambda e: e.get("tile_code", ""))
         return entries[:limit]
